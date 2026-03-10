@@ -1,0 +1,39 @@
+.anchor
+.DS_Store
+target
+**/*.rs.bk
+node_modules
+test-ledger
+.yarn
+.idea
+
+# Next.js build artifacts
+frontend/.next
+frontend/.next/**
+frontend/out
+frontend/build
+
+# Deployment configuration (contains private keys)
+deploy.config.json
+deploy.config.*.json
+!deploy.config.example.json
+deploy/.deployer-keypair.json
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Keypair files
+*-keypair.json
+!target/deploy/*-keypair.json
+
+# Test wallets (contain private keys)
+test-wallets/
+
+# Test scripts environment (may contain sensitive values)
+test-scripts/env.sh
+
+# Temporary files
+*.tmp
+*.log

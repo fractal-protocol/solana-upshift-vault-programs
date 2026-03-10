@@ -1,0 +1,23 @@
+{
+  "network": "devnet",
+  "rpcEndpoint": "https://api.devnet.solana.com",
+  "deployerPrivateKey": "YOUR_BASE58_PRIVATE_KEY_HERE",
+  "vanityPrefix": "up",
+  
+  "vaultConfig": {
+    "depositMint": "So11111111111111111111111111111111111111112",
+    "admin": "YOUR_ADMIN_PUBKEY",
+    "operator": "YOUR_OPERATOR_PUBKEY",
+    "feeRecipient": "YOUR_FEE_RECIPIENT_PUBKEY",
+    "shareTokenName": "Upshift Vault Token",
+    "shareTokenSymbol": "upVAULT",
+    "shareTokenUri": "https://example.com/metadata.json"
+  },
+
+  "deployOptions": {
+    "commitment": "confirmed",
+    "maxRetries": 3,
+    "initializeVault": true,
+    "createMetadata": true
+  }
+}

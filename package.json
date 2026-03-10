@@ -1,0 +1,53 @@
+{
+  "type": "module",
+  "license": "ISC",
+  "scripts": {
+    "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
+    "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
+    "build": "anchor build && ./scripts/sync-idl.sh",
+    "deploy": "node deploy/new-vault.mjs",
+    "deploy:devnet": "node deploy/new-vault.mjs --network devnet",
+    "deploy:mainnet": "node deploy/new-vault.mjs --network mainnet",
+    "upgrade": "node deploy/helpers/upgrade.mjs",
+    "upgrade:devnet": "node deploy/helpers/upgrade.mjs --network devnet",
+    "upgrade:mainnet": "node deploy/helpers/upgrade.mjs --network mainnet",
+    "initialize": "node deploy/helpers/initialize.mjs",
+    "initialize:devnet": "node deploy/helpers/initialize.mjs --network devnet",
+    "initialize:mainnet": "node deploy/helpers/initialize.mjs --network mainnet",
+    "meta": "node deploy/helpers/metadata.mjs",
+    "meta:devnet": "node deploy/helpers/metadata.mjs --network devnet",
+    "meta:mainnet": "node deploy/helpers/metadata.mjs --network mainnet",
+    "app:dev": "cd frontend && pnpm dev",
+    "app:build": "cd frontend && pnpm build",
+    "app:start": "cd frontend && pnpm start",
+    "app:install": "cd frontend && pnpm install",
+    "app:format": "cd frontend && pnpm format",
+    "app:format:check": "cd frontend && pnpm format:check",
+    "app:type-check": "cd frontend && pnpm type-check",
+    "app:lint": "cd frontend && pnpm lint",
+    "app:lint:fix": "cd frontend && pnpm lint:fix"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
+    "@metaplex-foundation/js": "^0.20.1",
+    "@metaplex-foundation/mpl-token-metadata": "^3.4.0",
+    "@metaplex-foundation/umi": "^1.4.1",
+    "@metaplex-foundation/umi-bundle-defaults": "^1.4.1",
+    "@solana/spl-token": "^0.4.13",
+    "@solana/web3.js": "^1.98.2",
+    "bignumber.js": "^9.3.1",
+    "bs58": "^6.0.0",
+    "js-sha256": "^0.11.1",
+    "litesvm": "^0.2.0"
+  },
+  "devDependencies": {
+    "@types/bn.js": "^5.1.0",
+    "@types/chai": "^4.3.0",
+    "@types/mocha": "^9.0.0",
+    "chai": "^4.3.4",
+    "mocha": "^9.0.3",
+    "prettier": "^2.6.2",
+    "ts-mocha": "^10.0.0",
+    "typescript": "^5.7.3"
+  }
+}
