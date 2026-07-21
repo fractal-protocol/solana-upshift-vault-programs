@@ -168,6 +168,28 @@ jobs:
             - name: Install JS deps
               run: pnpm install --frozen-lockfile
 
+            # Phase 1 — build with the COMMITTED (mainnet) program ID and run the
+            # Rust tests. The mainnet-fork guard injects real on-chain accounts
+            # whose PDAs derive from that ID, so it MUST run before the key rewrite.
+            - name: Build (SBF, committed program ID)
+              run: anchor build
+
+            - name: Check program size
+              run: |
+                  SO=$(find target/deploy -name '*.so' | head -1)
+                  SZ=$(wc -c < "$SO")
+                  echo "Program size: $((SZ / 1024))KB ($SZ bytes)"
+                  [ "$SZ" -le 1400000 ] || echo "::warning::program exceeds 1.4MB ($SZ bytes)"
+
+            - name: Rust unit tests (program-side math)
+              run: cargo test -p august-vault --lib
+
+            - name: LiteSVM integration tests (incl. mainnet-fork layout guard)
+              run: cargo test --manifest-path integration-tests/Cargo.toml --tests --locked
+
+            # Phase 2 — the real mainnet program keypair isn't in the repo, so
+            # rewrite declare_id! to a fresh localnet keypair and rebuild before
+            # `anchor test` deploys to the local validator.
             - name: Generate ephemeral localnet keypairs
               run: |
                   solana-keygen new --no-bip39-passphrase -o /tmp/deployer_keypair.json --force
@@ -181,21 +203,8 @@ jobs:
                   anchor keys sync
                   sed -i "s/^august_vault = \".*\"/august_vault = \"$PROGRAM_ID\"/" Anchor.toml
 
-            - name: Build (SBF)
+            - name: Rebuild with localnet program ID
               run: anchor build
-
-            - name: Check program size
-              run: |
-                  SO=$(find target/deploy -name '*.so' | head -1)
-                  SZ=$(wc -c < "$SO")
-                  echo "Program size: $((SZ / 1024))KB ($SZ bytes)"
-                  [ "$SZ" -le 1400000 ] || echo "::warning::program exceeds 1.4MB ($SZ bytes)"
-
-            - name: Rust unit tests (program-side math)
-              run: cargo test -p august-vault --lib
-
-            - name: LiteSVM integration tests (separate workspace)
-              run: cargo test --manifest-path integration-tests/Cargo.toml --tests --locked
 
             - name: TS end-to-end suite (local validator)
               run: anchor test --skip-build
