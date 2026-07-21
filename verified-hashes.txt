@@ -1,0 +1,19 @@
+# Expected hashes of each program's reproducible verifiable build.
+#
+# Toolchain: `solana-verify build` in the pinned base image
+#   solanafoundation/solana-verifiable-build@sha256:695f890e620db8c39afe5112e048599f8ee395a0cab5a2e572f30a72c6366cb4
+#   (Solana v2.3.0, container Rust 1.86.0), driven by the committed Cargo.lock.
+#
+# Columns (whitespace-separated):
+#   exec_sha256 — `solana-verify get-executable-hash` (trailing zero bytes
+#                 trimmed). Equals `solana-verify get-program-hash` for the
+#                 on-chain program, so this is the value used for on-chain
+#                 verification and asserted by the `reproducible-build` CI job.
+#   raw_sha256  — `shasum -a 256` of the full .so (byte-for-byte artifact identity).
+#   size        — byte length of the .so.
+#
+# On an intentional bytecode change, update this file in the SAME PR; CI fails
+# if a rebuilt hash disagrees. Reproduce locally: see VERIFY.md.
+#
+# program       exec_sha256                                                       raw_sha256                                                        size
+august_vault    fca11d73ae5ba0635ee76964945c52ddcf78a167eb4c60317ae63df4a4e7cc1d  1a6d69193603d2be74ed805386bda46c81b74c147fcef8b2c89272a76be8f535  505216

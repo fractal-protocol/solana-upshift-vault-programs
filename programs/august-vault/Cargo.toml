@@ -22,6 +22,7 @@ anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }
 anchor-spl = "0.31.1"
 bytemuck = "1.23.1"
 mpl-token-metadata = "5.1.1"
+solana-security-txt = "1.1.1"
 
 [dev-dependencies]
 test-case = "3.3"

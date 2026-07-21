@@ -78,6 +78,10 @@ pnpm run upgrade:mainnet
 - **Upgrade Authority**: Should be transferred to an admin multisig after production deployment.
 - **Token-2022**: Supported, but token extensions may require program upgrades for additional accounts.
 
+## Reproducible Builds & Verification
+
+The program builds reproducibly: `solana-verify build` in a pinned Docker image (Solana 2.3.0) yields a byte-identical `.so` whose SHA-256 is recorded in [`verified-hashes.txt`](verified-hashes.txt) and asserted in CI, and the program embeds a `security_txt!` contact + source-repo pointer in its bytecode. Because the program is **upgradeable**, on-chain verification is point-in-time. See **[VERIFY.md](VERIFY.md)** for the pinned toolchain, exact commands, expected hashes, and how to verify the live on-chain program.
+
 ## License
 
 See [LICENSE](LICENSE).

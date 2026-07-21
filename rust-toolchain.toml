@@ -1,0 +1,10 @@
+# Host toolchain for `cargo test` / clippy / fmt and the cargo side of
+# `anchor build`.
+#
+# NOTE: this file does NOT govern the verifiable on-chain bytecode. The SBF
+# build uses platform-tools' bundled Rust, and the reproducible build is fixed
+# by the pinned `solana-verify` Docker image (Solana 2.3.0 / Rust 1.86.0)
+# documented in VERIFY.md. This channel only pins host-side tooling.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]

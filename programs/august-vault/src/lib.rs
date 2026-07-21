@@ -33,6 +33,22 @@ use anchor_lang::prelude::*;
 // Mainnet: up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt
 declare_id!("up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt");
 
+// On-chain security contact + source provenance, queryable from the deployed
+// program (e.g. `solana-verify` / explorers). Gated out of CPI/library builds
+// via `no-entrypoint`, so it ships only in the deployable program.
+#[cfg(not(feature = "no-entrypoint"))]
+use solana_security_txt::security_txt;
+
+#[cfg(not(feature = "no-entrypoint"))]
+security_txt! {
+    name: "Upshift Vault (august_vault)",
+    project_url: "https://github.com/fractal-protocol/solana-upshift-vault-programs",
+    contacts: "email:alex@augustdigital.io,link:https://github.com/fractal-protocol/solana-upshift-vault-programs/security/advisories/new",
+    policy: "https://github.com/fractal-protocol/solana-upshift-vault-programs/security/policy",
+    source_code: "https://github.com/fractal-protocol/solana-upshift-vault-programs",
+    preferred_languages: "en"
+}
+
 #[program]
 pub mod august_vault {
     use super::*;
