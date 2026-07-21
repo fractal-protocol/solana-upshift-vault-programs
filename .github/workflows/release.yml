@@ -1,0 +1,219 @@
+name: Release & Attest
+
+# Push a version tag (e.g. `git tag v0.1.0 && git push origin v0.1.0`) to build
+# the program reproducibly, attest its provenance, and publish an immutable
+# GitHub release carrying the verified `.so`.
+#
+# On-chain deployment is deliberately NOT automated: the mainnet program's
+# upgrade authority is a Fordefi MPC key, so the verified upgrade + OtterSec
+# verify-PDA registration are performed by a human per docs/UPGRADE.md. This
+# workflow's job is to produce a reproducible, attested, hash-locked artifact to
+# deploy.
+#
+# Trust model (mirrors the Stellar Release & Attest workflow):
+#   guard   - the tagged commit is on the default branch AND ci.yml's real
+#             build/test + reproducible-build jobs succeeded for it.
+#   build   - UNPRIVILEGED. Runs cargo/Docker (build scripts, proc-macros, the
+#             verifiable-build container), so it has contents:read only, no
+#             token, no OIDC, no persisted checkout credentials. Rebuilds with
+#             solana-verify in the pinned image and asserts verified-hashes.txt.
+#   publish - PRIVILEGED, gated by the protected `release` environment. Does NOT
+#             execute repository code — only the downloaded artifact: attest,
+#             then publish one immutable release on the protected v* tag.
+#
+# Every nested action is pinned by SHA. See VERIFY.md to reproduce a hash.
+
+on:
+    push:
+        tags:
+            - "v*"
+
+concurrency:
+    group: release-${{ github.ref }}
+    cancel-in-progress: false
+
+env:
+    SOLANA_VERIFY_VERSION: "0.5.1"
+    VERIFIABLE_IMAGE: "solanafoundation/solana-verifiable-build@sha256:695f890e620db8c39afe5112e048599f8ee395a0cab5a2e572f30a72c6366cb4"
+    PACKAGE: august_vault
+
+jobs:
+    guard:
+        name: Guard — on default branch + CI green
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            actions: read
+        env:
+            GH_TOKEN: ${{ github.token }}
+            REPO: ${{ github.repository }}
+            SHA: ${{ github.sha }}
+            BASE: ${{ github.event.repository.default_branch }}
+        steps:
+            - name: Require the tagged commit to be on the default branch
+              run: |
+                  set -euo pipefail
+                  status=$(gh api "repos/$REPO/compare/$BASE...$SHA" --jq '.status')
+                  echo "compare $BASE...$SHA => $status"
+                  case "$status" in
+                    identical|behind) echo "Tagged commit is on $BASE." ;;
+                    *) echo "::error::Refusing to release: tagged commit $SHA is not on $BASE (status=$status)."; exit 1 ;;
+                  esac
+
+            - name: Require CI's real build/test jobs to have succeeded for this commit
+              run: |
+                  set -euo pipefail
+                  run_id=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=push&status=completed&per_page=100" \
+                    --jq 'first(.workflow_runs[] | select(.conclusion=="success") | .id) // empty')
+                  [ -n "$run_id" ] || { echo "::error::Refusing to release: no successful ci.yml (push) run for $SHA."; exit 1; }
+                  echo "ci.yml push run: $run_id"
+                  jobs=$(gh api "repos/$REPO/actions/runs/$run_id/jobs?per_page=100")
+                  for job in "Build & Test" "Reproducible Build" "CI Pass"; do
+                    c=$(printf '%s' "$jobs" | jq -r --arg j "$job" 'first(.jobs[] | select(.name==$j) | .conclusion) // "missing"')
+                    echo "  ci job '$job': $c"
+                    [ "$c" = "success" ] || { echo "::error::Refusing to release: ci.yml job '$job' was '$c' (need success) for $SHA."; exit 1; }
+                  done
+
+    build:
+        name: Build (unprivileged) — reproducible + hash-locked
+        needs: guard
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+        env:
+            TAG: ${{ github.ref_name }}
+        steps:
+            - name: Checkout the tagged commit (no persisted credentials)
+              uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+              with:
+                  ref: ${{ github.sha }}
+                  persist-credentials: false
+
+            - name: Install solana-verify (pinned)
+              run: cargo install solana-verify --version "$SOLANA_VERIFY_VERSION" --locked
+
+            - name: Reproducible build + assert verified-hashes.txt
+              run: |
+                  set -euo pipefail
+                  solana-verify build --library-name "$PACKAGE" --base-image "$VERIFIABLE_IMAGE"
+                  so="target/deploy/${PACKAGE}.so"
+                  exec_got=$(solana-verify get-executable-hash "$so")
+                  raw_got=$(sha256sum "$so" | cut -d' ' -f1)
+                  size_got=$(wc -c < "$so" | tr -d ' ')
+                  read -r _pkg exec_want raw_want size_want _ < <(grep -E "^${PACKAGE}[[:space:]]" verified-hashes.txt)
+                  if [ "$exec_got" != "$exec_want" ] || [ "$raw_got" != "$raw_want" ] || [ "$size_got" != "$size_want" ]; then
+                    echo "::error::release build does not match verified-hashes.txt (exec $exec_got/$exec_want raw $raw_got/$raw_want size $size_got/$size_want)"
+                    exit 1
+                  fi
+                  echo "verified: exec=$exec_got raw=$raw_got size=$size_got"
+                  mkdir -p dist
+                  cp "$so" "dist/${PACKAGE}_${TAG}.so"
+                  {
+                    echo "exec_sha256=$exec_got"
+                    echo "raw_sha256=$raw_got"
+                    echo "size=$size_got"
+                  } > "dist/${PACKAGE}_${TAG}.hashes.txt"
+
+            - name: Upload build artifact
+              uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+              with:
+                  name: program-so
+                  path: dist/*
+                  if-no-files-found: error
+                  retention-days: 7
+
+    publish:
+        name: Attest & publish (privileged)
+        needs: build
+        runs-on: ubuntu-latest
+        environment: release
+        permissions:
+            id-token: write # OIDC for the build attestation
+            contents: write # create the release
+            attestations: write # write the attestation
+        env:
+            GH_TOKEN: ${{ github.token }}
+            GH_REPO: ${{ github.repository }}
+            REPO: ${{ github.repository }}
+            SHA: ${{ github.sha }}
+            TAG: ${{ github.ref_name }}
+        steps:
+            # Fail CLOSED before any contents:write. GitHub auto-creates a
+            # *referenced* missing environment WITHOUT protection, so the gate
+            # alone can't be trusted; and the default GITHUB_TOKEN cannot read
+            # repo Administration settings. This step uses RELEASE_ADMIN_TOKEN (a
+            # `release`-environment secret: a fine-grained PAT with
+            # Administration:read + Actions:read) to verify the two
+            # protections it CAN check completely, and aborts otherwise.
+            #
+            # The v* tag ruleset (and its bypass-actor list) is a HUMAN-AUDITED
+            # prerequisite, deliberately NOT machine-checked here: a sound check
+            # requires bypass_actors, which GitHub returns only with WRITE access
+            # to the ruleset, and exact ref/exclusion matching is easy to get
+            # subtly wrong (false assurance). The runtime backstop against a
+            # mis-pointed or moved tag is the guard + publish jobs asserting the
+            # trigger tag resolves to the CI-green default-branch commit.
+            # See docs/UPGRADE.md § Repository protections.
+            - name: Assert release protections are provisioned
+              env:
+                  GH_TOKEN: ${{ secrets.RELEASE_ADMIN_TOKEN }}
+              run: |
+                  set -euo pipefail
+                  [ -n "${GH_TOKEN:-}" ] || { echo "::error::RELEASE_ADMIN_TOKEN is not set (fine-grained PAT with Administration:read + Actions:read, as a 'release'-environment secret). It is required to verify release protections."; exit 1; }
+
+                  reviewers=$(gh api "repos/$REPO/environments/release" \
+                    --jq '[.protection_rules[]? | select(.type=="required_reviewers")] | length')
+                  [ "${reviewers:-0}" -ge 1 ] || { echo "::error::the 'release' environment lacks required-reviewer protection"; exit 1; }
+
+                  imm=$(gh api "repos/$REPO/immutable-releases" --jq '.enabled')
+                  [ "$imm" = "true" ] || { echo "::error::immutable releases are not enabled for $REPO (published assets must be non-replaceable)"; exit 1; }
+
+                  echo "verified: required-reviewers=$reviewers immutable-releases=$imm (v* tag ruleset + bypass actors are a human-audited prerequisite — see docs/UPGRADE.md)"
+
+            - name: Download build artifact
+              uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+              with:
+                  name: program-so
+                  path: dist
+
+            - name: Resolve artifact
+              run: |
+                  set -euo pipefail
+                  SO=$(find dist -name "${PACKAGE}_${TAG}.so")
+                  [ -n "$SO" ] || { echo "::error::missing ${PACKAGE}_${TAG}.so"; exit 1; }
+                  echo "SO=$SO" >> "$GITHUB_ENV"
+                  sha256sum "$SO"
+
+            # Attest before publishing, so a published release is always attested.
+            - name: Attest build provenance
+              uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1.4.4
+              with:
+                  subject-path: dist/${{ env.PACKAGE }}_${{ github.ref_name }}.so
+
+            - name: Publish one immutable release on the protected tag
+              run: |
+                  set -euo pipefail
+                  # The v* tag is protected by the tag ruleset; it already exists
+                  # (it triggered this run) and points at $SHA — assert defensively.
+                  tagsha=$(gh api "repos/$REPO/commits/$TAG" --jq '.sha')
+                  [ "$tagsha" = "$SHA" ] || { echo "::error::trigger tag $TAG points to $tagsha, not $SHA"; exit 1; }
+
+                  EXEC=$(grep -o 'exec_sha256=.*' "dist/${PACKAGE}_${TAG}.hashes.txt" | cut -d= -f2)
+                  NOTES=$(printf 'Reproducible build of %s at commit %s (solana-verify %s, image %s).\n\nExecutable hash (get-program-hash / get-executable-hash): `%s`.\n\nReproduce: check out this tag and follow VERIFY.md.\n\nDeploying on-chain: this artifact is NOT auto-deployed. The mainnet upgrade authority is a Fordefi MPC key; perform the verified upgrade + OtterSec registration per docs/UPGRADE.md. Verification is point-in-time (the program is upgradeable).' \
+                    "$PACKAGE" "$SHA" "$SOLANA_VERIFY_VERSION" "$VERIFIABLE_IMAGE" "$EXEC")
+
+                  if gh release view "$TAG" >/dev/null 2>&1; then
+                    echo "Release $TAG already exists — verifying its asset."
+                  else
+                    gh release create "$TAG" \
+                      "dist/${PACKAGE}_${TAG}.so" "dist/${PACKAGE}_${TAG}.hashes.txt" \
+                      --target "$SHA" --title "$TAG" --notes "$NOTES"
+                  fi
+
+                  # Read back the published .so and confirm it matches what we built.
+                  vrf=$(mktemp -d)
+                  gh release download "$TAG" --pattern "${PACKAGE}_${TAG}.so" --dir "$vrf" --clobber
+                  got=$(sha256sum "$vrf/${PACKAGE}_${TAG}.so" | cut -d' ' -f1)
+                  want=$(sha256sum "dist/${PACKAGE}_${TAG}.so" | cut -d' ' -f1)
+                  [ "$got" = "$want" ] || { echo "::error::published asset ($got) != built ($want)"; exit 1; }
+                  echo "Published $TAG; asset raw-sha256 $got."
