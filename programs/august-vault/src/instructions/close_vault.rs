@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Fractal Network Ltd
 //
 // Use of this software is governed by the Business Source License
-// included in the LICENSE.BSL file.
+// included in the LICENSE file.
 //
 // As of 10 March 2036 (the "Change Date"), use of this software will be
 // governed by version 2.0 of the Apache License.
@@ -81,7 +81,7 @@ pub struct CloseVault<'info> {
 
     #[account(
         mut,
-        seeds = [b"mint", deposit_mint.key().as_ref(), &vault_state.vault_version],
+        seeds = [SHARE_MINT_SEED, deposit_mint.key().as_ref(), &vault_state.vault_version],
         bump,
         mint::authority = vault_state
     )]
@@ -89,7 +89,7 @@ pub struct CloseVault<'info> {
 
     #[account(
         mut,
-        seeds = [b"token_vault", deposit_mint.key().as_ref(), &vault_state.vault_version],
+        seeds = [VAULT_TOKEN_SEED, deposit_mint.key().as_ref(), &vault_state.vault_version],
         bump,
         token::mint = deposit_mint,
         token::authority = vault_state

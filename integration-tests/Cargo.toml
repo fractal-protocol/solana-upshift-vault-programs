@@ -1,0 +1,40 @@
+# Separate workspace from the program crate — see root Cargo.toml's `exclude`
+# block for context. Run tests with:
+#     anchor build && cargo test --manifest-path integration-tests/Cargo.toml
+[workspace]
+resolver = "2"
+
+[package]
+name = "integration-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# In-process LiteSVM tests for the August vault program.
+#
+# These tests load `target/deploy/august_vault.so` directly into a LiteSVM
+# instance and exercise the program without a `solana-test-validator`. They run
+# under `cargo test` in milliseconds and are parallel-safe (each test gets its
+# own SVM).
+#
+# Build the program first:
+#     anchor build
+#
+# Then:
+#     cargo test --manifest-path integration-tests/Cargo.toml
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+august-vault = { path = "../programs/august-vault", features = ["no-entrypoint"] }
+anchor-lang = "0.31.1"
+anchor-spl = "0.31.1"
+litesvm = "0.7.1"
+solana-sdk = "2.2.1"
+spl-token = "8.0.0"
+spl-token-2022 = "8.0.1"
+spl-associated-token-account = "6"
+
+[dev-dependencies]
+test-case = "3.3.1"

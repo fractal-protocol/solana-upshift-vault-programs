@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Fractal Network Ltd
 //
 // Use of this software is governed by the Business Source License
-// included in the LICENSE.BSL file.
+// included in the LICENSE file.
 //
 // As of 10 March 2036 (the "Change Date"), use of this software will be
 // governed by version 2.0 of the Apache License.
@@ -13,7 +13,6 @@ use anchor_spl::token_2022::burn_checked;
 use anchor_spl::token_interface::{
     transfer_checked, BurnChecked, Mint, TokenAccount, TokenInterface, TransferChecked,
 };
-use std::u64;
 
 /// Redeems shares for underlying assets.
 ///
@@ -26,36 +25,18 @@ pub fn handler(ctx: Context<Redeem>, shares: u64) -> Result<()> {
     require!(!ctx.accounts.vault_state.paused, ErrorCode::VaultPaused);
 
     let supply = ctx.accounts.share_mint.supply;
-    let local_aum: u64 = ctx.accounts.vault_state.local_aum;
-    let total_assets = local_aum + ctx.accounts.vault_state.deployed_aum;
-
-    let shares_eff = (supply as u128)
-        .checked_add(EXTRA_SHARES)
-        .ok_or(ErrorCode::MathError)?;
-    let assets_eff = (total_assets as u128)
-        .checked_add(1)
-        .ok_or(ErrorCode::MathError)?;
-
-    let assets = u64::try_from(
-        (shares as u128)
-            .checked_mul(assets_eff)
-            .ok_or(ErrorCode::MathError)?
-            .checked_div(shares_eff)
-            .ok_or(ErrorCode::MathError)?,
-    )?;
+    let total_assets = ctx.accounts.vault_state.total_assets()?;
+    let assets = VaultState::assets_for_redeem(supply, total_assets, shares)?;
 
     require!(assets > 0, ErrorCode::ZeroAmount);
 
-    let fees: u64 = match Redeem::ceil_div(
-        assets as u128 * ctx.accounts.vault_state.withdrawal_fee as u128,
-        FEE_RATE_DENOMINATOR_VALUE as u128,
-    ) {
-        Some(v) => match v.try_into() {
-            Ok(val) => val,
-            Err(_) => return Err(ErrorCode::NumberOverflow.into()),
-        },
-        None => return Err(ErrorCode::MathError.into()),
-    };
+    let fee_numerator = (assets as u128)
+        .checked_mul(ctx.accounts.vault_state.withdrawal_fee as u128)
+        .ok_or(ErrorCode::MathError)?;
+    let fees: u64 = Redeem::ceil_div(fee_numerator, FEE_RATE_DENOMINATOR_VALUE as u128)
+        .ok_or(ErrorCode::MathError)?
+        .try_into()
+        .map_err(|_| ErrorCode::NumberOverflow)?;
 
     let final_amount = assets.checked_sub(fees).ok_or(ErrorCode::MathError)?;
 
@@ -100,7 +81,7 @@ pub struct Redeem<'info> {
 
     #[account(
         mut,
-        seeds=[b"token_vault", deposit_mint.key().as_ref(), &vault_state.vault_version],
+        seeds = [VAULT_TOKEN_SEED, deposit_mint.key().as_ref(), &vault_state.vault_version],
         bump,
         token::mint      = deposit_mint,
         token::authority = vault_state
@@ -129,7 +110,7 @@ pub struct Redeem<'info> {
 
     #[account(
         mut,
-        seeds = [b"mint", deposit_mint.key().as_ref(), &vault_state.vault_version],
+        seeds = [SHARE_MINT_SEED, deposit_mint.key().as_ref(), &vault_state.vault_version],
         bump,
         mint::decimals   = deposit_mint.decimals,
         mint::authority  = vault_state

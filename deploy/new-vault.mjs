@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Fractal Network Ltd
 //
 // Use of this software is governed by the Business Source License
-// included in the LICENSE.BSL file.
+// included in the LICENSE file.
 //
 // As of 10 March 2036 (the "Change Date"), use of this software will be
 // governed by version 2.0 of the Apache License.
@@ -304,20 +304,21 @@ async function initializeVault(program, config, deployer) {
     const admin = new PublicKey(config.vaultConfig.admin);
     const operator = new PublicKey(config.vaultConfig.operator);
     const feeRecipient = new PublicKey(config.vaultConfig.feeRecipient);
+    const vaultVersion = config.vaultConfig.vaultVersion ?? 0;
 
-    // Derive PDAs - Multi-vault architecture: all PDAs include deposit_mint
+    // Derive PDAs - Multi-vault architecture: all PDAs include deposit_mint + vault_version
     const [vaultState] = PublicKey.findProgramAddressSync(
-      [Buffer.from('VAULT_STATE'), depositMint.toBuffer()],
+      [Buffer.from('VAULT_STATE'), depositMint.toBuffer(), Buffer.from([vaultVersion])],
       program.programId
     );
-    
+
     const [shareMint] = PublicKey.findProgramAddressSync(
-      [Buffer.from('mint'), depositMint.toBuffer()],
+      [Buffer.from('mint'), depositMint.toBuffer(), Buffer.from([vaultVersion])],
       program.programId
     );
-    
+
     const [vaultTokenAta] = PublicKey.findProgramAddressSync(
-      [Buffer.from('token_vault'), depositMint.toBuffer()],
+      [Buffer.from('token_vault'), depositMint.toBuffer(), Buffer.from([vaultVersion])],
       program.programId
     );
 
@@ -344,7 +345,7 @@ async function initializeVault(program, config, deployer) {
     logInfo('Sending initialize transaction...');
 
     const tx = await program.methods
-      .initialize(admin, operator, feeRecipient)
+      .initialize(admin, operator, feeRecipient, vaultVersion)
       .accounts({
         vaultState,
         shareMint,
@@ -380,9 +381,10 @@ async function createMetadata(program, config, deployer, shareMint) {
     const admin = new PublicKey(config.vaultConfig.admin);
     const depositMint = new PublicKey(config.vaultConfig.depositMint);
     
-    // Multi-vault architecture: PDA includes deposit_mint
+    // Multi-vault architecture: PDA includes deposit_mint + vault_version
+    const vaultVersion = config.vaultConfig.vaultVersion ?? 0;
     const [vaultState] = PublicKey.findProgramAddressSync(
-      [Buffer.from('VAULT_STATE'), depositMint.toBuffer()],
+      [Buffer.from('VAULT_STATE'), depositMint.toBuffer(), Buffer.from([vaultVersion])],
       program.programId
     );
 
@@ -413,6 +415,7 @@ async function createMetadata(program, config, deployer, shareMint) {
         payer: deployer.publicKey,
         admin: admin,
         vaultState,
+        depositMint,
         shareMint,
         metadataAccount,
         tokenProgram: TOKEN_PROGRAM_ID,
