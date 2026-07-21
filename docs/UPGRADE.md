@@ -114,9 +114,28 @@ solana-verify build --library-name august_vault \
   --base-image solanafoundation/solana-verifiable-build@sha256:695f890e620db8c39afe5112e048599f8ee395a0cab5a2e572f30a72c6366cb4
 ```
 
-Then rehearse the mainnet sequence (Step 2) against the **devnet** program
-(`C8B1Eps…`, authority `APuz…`) end to end: `extend` if needed → `write-buffer`
-→ set buffer authority → authority-signed `upgrade`. Afterwards:
+Then upgrade the **devnet** program (`C8B1Eps…`). Its upgrade authority
+(`APuzEr…`) is a **regular keypair the team holds — NOT a Fordefi MPC** — so
+sign the devnet upgrade **directly with the CLI**. (This is the one place the
+dry-run differs from mainnet: on mainnet the authority is Fordefi and the buffer
+is handed off to it; on devnet the same held keypair can buffer + deploy in one
+step.)
+
+```bash
+DEVNET_SO=target/deploy/august_vault.so   # the devnet-ID build from above
+
+# Extend ProgramData first if the new .so is larger than the current allocation.
+solana program show C8B1EpsSGVWK2vMrk3aDT3kL7RCE77otokUh4EC35kK7 -u devnet   # inspect ProgramData len
+# solana program extend C8B1Eps… <deficit_bytes> -u devnet -k <ops-payer.json>   # if needed
+
+# Upgrade, signed directly by the devnet authority keypair (writes buffer + deploys):
+solana program deploy "$DEVNET_SO" \
+  --program-id C8B1EpsSGVWK2vMrk3aDT3kL7RCE77otokUh4EC35kK7 \
+  --upgrade-authority <devnet-authority-keypair.json> \
+  -u devnet
+```
+
+Afterwards:
 
 - Refresh the fork-test fixtures for a devnet vault and run
   `cargo test --manifest-path integration-tests/Cargo.toml --test mainnet_fork_compat`,
