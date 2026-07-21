@@ -512,6 +512,7 @@ dependencies = [
  "anchor-spl",
  "bytemuck",
  "mpl-token-metadata",
+ "solana-security-txt",
 ]
 
 [[package]]

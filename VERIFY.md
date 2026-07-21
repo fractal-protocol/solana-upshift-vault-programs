@@ -12,7 +12,7 @@ identical on any host. The expected hash is committed in
 
 ## Pinned toolchain
 
-- **Builder:** [`solana-verify`](https://github.com/solana-foundation/solana-verifiable-build) v0.5.1+ (requires Docker).
+- **Builder:** [`solana-verify`](https://github.com/solana-foundation/solana-verifiable-build) **v0.5.1** — the exact version the CI job pins (requires Docker). Use this version; a later CLI could change output/hashing behavior.
 - **Base image:** `solanafoundation/solana-verifiable-build@sha256:695f890e620db8c39afe5112e048599f8ee395a0cab5a2e572f30a72c6366cb4`
   — Solana **v2.3.0**, container Rust **1.86.0**. The image is selected from the
   `solana-program` version pinned in the committed `Cargo.lock`; pinning the
@@ -22,6 +22,9 @@ identical on any host. The expected hash is committed in
 ## Reproduce the build
 
 ```bash
+# Pin the exact CLI the CI job uses (a later version could hash/behave differently):
+cargo install solana-verify --version 0.5.1 --locked
+
 git clone https://github.com/fractal-protocol/solana-upshift-vault-programs
 cd solana-upshift-vault-programs
 git checkout <release-commit-or-tag>
@@ -29,15 +32,18 @@ git checkout <release-commit-or-tag>
 solana-verify build --library-name august_vault \
   --base-image solanafoundation/solana-verifiable-build@sha256:695f890e620db8c39afe5112e048599f8ee395a0cab5a2e572f30a72c6366cb4
 
-solana-verify get-executable-hash target/deploy/august_vault.so
-wc -c target/deploy/august_vault.so
+solana-verify get-executable-hash target/deploy/august_vault.so   # exec_sha256
+shasum -a 256 target/deploy/august_vault.so                        # raw_sha256
+wc -c target/deploy/august_vault.so                                # size (bytes)
 ```
 
-At the commit these hashes were recorded, this reproduces the value in
-[`verified-hashes.txt`](verified-hashes.txt):
+At the commit these hashes were recorded, all three columns match
+[`verified-hashes.txt`](verified-hashes.txt) (the CI `reproducible-build` job
+asserts the same three):
 
 ```
-august_vault  fca11d73ae5ba0635ee76964945c52ddcf78a167eb4c60317ae63df4a4e7cc1d   (505,216 bytes)
+# program       exec_sha256                                                       raw_sha256                                                        size
+august_vault    fca11d73ae5ba0635ee76964945c52ddcf78a167eb4c60317ae63df4a4e7cc1d  1a6d69193603d2be74ed805386bda46c81b74c147fcef8b2c89272a76be8f535  505216
 ```
 
 ## Compare against the on-chain program
@@ -69,10 +75,10 @@ as verified.
 
 ## Notes
 
-- The `reproducible-build` CI job (added with the CI workflow) rebuilds
-  `august_vault` in the pinned image and fails if the hash drifts from
-  `verified-hashes.txt`; an intentional bytecode change must update that file in
-  the same PR.
+- The `reproducible-build` CI job (`.github/workflows/ci.yml`) rebuilds
+  `august_vault` in the pinned image and fails unless the executable hash, raw
+  SHA-256, and size all match `verified-hashes.txt`; an intentional bytecode
+  change must update that file in the same PR.
 - `security_txt!` is embedded in the program (`programs/august-vault/src/lib.rs`),
   exposing the security contact and source repository in the deployed bytecode.
 - Devnet program: `C8B1EpsSGVWK2vMrk3aDT3kL7RCE77otokUh4EC35kK7`.

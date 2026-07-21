@@ -1,0 +1,268 @@
+name: CI
+
+# Program-only CI for the public source-of-truth repo. (The admin UI lives in
+# the private repo and keeps its own frontend CI.)
+on:
+    pull_request:
+        branches: ["*"]
+    push:
+        branches: [init, main]
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+env:
+    SOLANA_VERSION: "2.1.14"
+    ANCHOR_VERSION: "0.31.1"
+
+jobs:
+    # Detect whether any non-docs files changed, to gate the expensive jobs.
+    changes:
+        name: Detect changes
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            pull-requests: read
+        outputs:
+            code: ${{ steps.filter.outputs.code }}
+        steps:
+            - uses: actions/checkout@v4
+            - uses: dorny/paths-filter@v3
+              id: filter
+              with:
+                  filters: |
+                      code:
+                        - '**'
+                        - '!**/*.md'
+                        - '!docs/**'
+                        - '!LICENSE'
+
+    fmt:
+        name: Rustfmt
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: dtolnay/rust-toolchain@stable
+              with:
+                  components: rustfmt
+            - run: cargo fmt --all --check
+
+    clippy:
+        name: Clippy
+        runs-on: ubuntu-latest
+        needs: changes
+        if: needs.changes.outputs.code == 'true'
+        steps:
+            - uses: actions/checkout@v4
+            - uses: dtolnay/rust-toolchain@stable
+              with:
+                  components: clippy
+            - uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry/index/
+                      ~/.cargo/registry/cache/
+                      ~/.cargo/git/db/
+                      target/
+                  key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
+                  restore-keys: ${{ runner.os }}-cargo-clippy-
+            - name: Run Clippy
+              run: |
+                  cargo clippy --all-targets --all-features -- \
+                    -A unexpected_cfgs \
+                    -A clippy::too_many_arguments \
+                    -A clippy::useless_asref \
+                    -A clippy::needless_return \
+                    -A clippy::legacy_numeric_constants \
+                    -A clippy::unnecessary_cast \
+                    -A deprecated \
+                    -D warnings
+
+    security:
+        name: Security Audit
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            # Reads the ignore-list in .cargo/audit.toml (known unmaintained/
+            # unsound transitive advisories from the Solana/SPL stack).
+            - uses: rustsec/audit-check@v2
+              with:
+                  token: ${{ secrets.GITHUB_TOKEN }}
+
+    client-check:
+        name: Generated Client Check
+        runs-on: ubuntu-latest
+        needs: changes
+        if: needs.changes.outputs.code == 'true'
+        steps:
+            - uses: actions/checkout@v4
+            - uses: dtolnay/rust-toolchain@stable
+            - uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry/index/
+                      ~/.cargo/registry/cache/
+                      ~/.cargo/git/db/
+                      clients/rust/august-vault/target/
+                  key: ${{ runner.os }}-cargo-client-${{ hashFiles('clients/rust/august-vault/Cargo.lock') }}
+                  restore-keys: ${{ runner.os }}-cargo-client-
+            - name: cargo check (all features)
+              run: cargo check --all-features --locked --manifest-path clients/rust/august-vault/Cargo.toml
+
+    test:
+        name: Build & Test
+        runs-on: ubuntu-latest
+        needs: [changes, fmt, clippy]
+        if: needs.changes.outputs.code == 'true'
+        env:
+            SCCACHE_GHA_ENABLED: "true"
+            RUSTC_WRAPPER: "sccache"
+        steps:
+            - uses: actions/checkout@v4
+            - uses: dtolnay/rust-toolchain@stable
+            - uses: mozilla-actions/sccache-action@v0.0.9
+
+            - name: Cache Solana CLI
+              id: cache-solana
+              uses: actions/cache@v4
+              with:
+                  path: ~/.local/share/solana/install
+                  key: ${{ runner.os }}-solana-${{ env.SOLANA_VERSION }}
+            - name: Cache Anchor CLI
+              id: cache-anchor
+              uses: actions/cache@v4
+              with:
+                  path: ~/.cargo/bin/anchor
+                  key: ${{ runner.os }}-anchor-${{ env.ANCHOR_VERSION }}
+            - uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry/index/
+                      ~/.cargo/registry/cache/
+                      ~/.cargo/git/db/
+                      target/
+                  key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+                  restore-keys: ${{ runner.os }}-cargo-build-
+
+            - name: Install Solana CLI
+              if: steps.cache-solana.outputs.cache-hit != 'true'
+              run: sh -c "$(curl -sSfL https://release.anza.xyz/v${{ env.SOLANA_VERSION }}/install)"
+            - name: Add Solana to PATH
+              run: echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+            - name: Install Anchor CLI
+              if: steps.cache-anchor.outputs.cache-hit != 'true'
+              run: cargo install --git https://github.com/coral-xyz/anchor --tag v${{ env.ANCHOR_VERSION }} anchor-cli --locked
+
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: "20"
+            - uses: pnpm/action-setup@v4
+              with:
+                  version: 10
+            - uses: actions/cache@v4
+              with:
+                  path: ~/.pnpm-store
+                  key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+                  restore-keys: ${{ runner.os }}-pnpm-
+            - name: Install JS deps
+              run: pnpm install --frozen-lockfile
+
+            - name: Generate ephemeral localnet keypairs
+              run: |
+                  solana-keygen new --no-bip39-passphrase -o /tmp/deployer_keypair.json --force
+                  mkdir -p target/deploy
+                  solana-keygen new --no-bip39-passphrase -o target/deploy/august_vault-keypair.json --force
+
+            - name: Sync program key for localnet
+              run: |
+                  rm -rf target/deploy/*.so target/sbpf-solana-solana target/sbf-solana-solana target/idl target/types
+                  PROGRAM_ID=$(solana-keygen pubkey target/deploy/august_vault-keypair.json)
+                  anchor keys sync
+                  sed -i "s/^august_vault = \".*\"/august_vault = \"$PROGRAM_ID\"/" Anchor.toml
+
+            - name: Build (SBF)
+              run: anchor build
+
+            - name: Check program size
+              run: |
+                  SO=$(find target/deploy -name '*.so' | head -1)
+                  SZ=$(wc -c < "$SO")
+                  echo "Program size: $((SZ / 1024))KB ($SZ bytes)"
+                  [ "$SZ" -le 1400000 ] || echo "::warning::program exceeds 1.4MB ($SZ bytes)"
+
+            - name: Rust unit tests (program-side math)
+              run: cargo test -p august-vault --lib
+
+            - name: LiteSVM integration tests (separate workspace)
+              run: cargo test --manifest-path integration-tests/Cargo.toml --tests --locked
+
+            - name: TS end-to-end suite (local validator)
+              run: anchor test --skip-build
+
+    # Rebuild each program with the pinned verifiable-build image and assert the
+    # hashes recorded in verified-hashes.txt. A bytecode change must update that
+    # file in the same PR, or this fails. Runners are linux/amd64 (matches the
+    # image platform), so no emulation is involved here.
+    reproducible-build:
+        name: Reproducible Build
+        runs-on: ubuntu-latest
+        needs: changes
+        if: needs.changes.outputs.code == 'true'
+        steps:
+            - uses: actions/checkout@v4
+            - uses: dtolnay/rust-toolchain@stable
+            - name: Cache solana-verify
+              id: cache-sv
+              uses: actions/cache@v4
+              with:
+                  path: ~/.cargo/bin/solana-verify
+                  key: solana-verify-0.5.1
+            - name: Install solana-verify
+              if: steps.cache-sv.outputs.cache-hit != 'true'
+              run: cargo install solana-verify --version 0.5.1 --locked
+            - name: Rebuild and assert verified-hashes.txt
+              run: |
+                  set -euo pipefail
+                  IMAGE="solanafoundation/solana-verifiable-build@sha256:695f890e620db8c39afe5112e048599f8ee395a0cab5a2e572f30a72c6366cb4"
+                  fail=0
+                  while read -r pkg exec_expected raw_expected size_expected _; do
+                    case "$pkg" in ''|\#*) continue ;; esac
+                    echo "::group::build $pkg"
+                    solana-verify build --library-name "$pkg" --base-image "$IMAGE"
+                    echo "::endgroup::"
+                    so="target/deploy/${pkg}.so"
+                    got=$(solana-verify get-executable-hash "$so")
+                    raw=$(sha256sum "$so" | cut -d' ' -f1)
+                    sz=$(wc -c < "$so" | tr -d ' ')
+                    if [ "$got" = "$exec_expected" ] && [ "$raw" = "$raw_expected" ] && [ "$sz" = "$size_expected" ]; then
+                      echo "✓ $pkg exec=$got raw=$raw size=$sz"
+                    else
+                      echo "::error::$pkg reproducible-build mismatch. If this bytecode change is intentional, update verified-hashes.txt in this PR."
+                      echo "  exec: got=$got want=$exec_expected"
+                      echo "  raw : got=$raw want=$raw_expected"
+                      echo "  size: got=$sz want=$size_expected"
+                      fail=1
+                    fi
+                  done < verified-hashes.txt
+                  [ "$fail" -eq 0 ]
+
+    # Always-running aggregator: a stable required status check that passes for
+    # docs-only PRs (where gated jobs are skipped) and fails only on a real
+    # failure/cancellation.
+    ci-pass:
+        name: CI Pass
+        if: always()
+        runs-on: ubuntu-latest
+        needs: [changes, fmt, clippy, security, client-check, test, reproducible-build]
+        steps:
+            - name: Check results
+              run: |
+                  results="${{ join(needs.*.result, ' ') }}"
+                  echo "job results: $results"
+                  for r in $results; do
+                    case "$r" in
+                      failure|cancelled) echo "::error::a required job $r"; exit 1 ;;
+                    esac
+                  done
+                  echo "All required jobs passed or were skipped."
