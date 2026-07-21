@@ -21,6 +21,14 @@ url = "https://api.apr.dev"
 cluster = "localnet"
 wallet = "/tmp/deployer_keypair.json"
 
+[test]
+# solana-test-validator sometimes needs longer than Anchor's 5000ms default to
+# produce its first blockhash on a busy CI runner, yielding a spurious "Test
+# validator does not look started" failure. startup_wait is a MAX wait — Anchor
+# proceeds the instant the validator is ready — so raising it only extends the
+# give-up deadline and adds no delay on the normal (fast-boot) path.
+startup_wait = 20000
+
 [scripts]
 cei-pattern = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/1_*.ts tests/11_redeem_cei_pattern.ts"
 close-vault = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/12_*.ts"
