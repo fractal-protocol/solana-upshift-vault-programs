@@ -171,7 +171,6 @@ dependencies = [
  "borsh 1.6.1",
  "num-derive",
  "num-traits",
- "serde",
  "solana-account",
  "solana-account-info",
  "solana-cpi",

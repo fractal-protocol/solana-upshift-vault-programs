@@ -34,6 +34,10 @@ async function main() {
   // Load IDL
   const idlPath = path.join(__dirname, "../target/idl/august_vault.json");
   const idl = JSON.parse(fs.readFileSync(idlPath, "utf-8"));
+  // A normal `anchor build` stamps the IDL address with declare_id! (mainnet
+  // up12...); this devnet script targets PROGRAM_ID and derives every PDA
+  // from it, so align the IDL address to avoid seed-validation failures.
+  idl.address = PROGRAM_ID.toBase58();
   const program = new anchor.Program(idl, provider);
 
   // Derive PDAs

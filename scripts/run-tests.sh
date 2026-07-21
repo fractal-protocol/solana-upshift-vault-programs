@@ -24,9 +24,22 @@ else
     VALIDATOR_PID=$!
     sleep 3
     echo -e "${GREEN}✓ Local validator started (PID: $VALIDATOR_PID)${NC}"
-    SKIP_VALIDATOR=""
+    # We started our own validator, so tell anchor not to start a second one
+    # (a second validator on :8899 would fail with a port conflict).
+    SKIP_VALIDATOR="--skip-local-validator"
 fi
 echo ""
+
+# Stop our background validator (if any) on any exit path.
+cleanup() {
+    if [ -n "$VALIDATOR_PID" ]; then
+        echo ""
+        echo -e "${YELLOW}Cleaning up validator (PID: $VALIDATOR_PID)...${NC}"
+        kill "$VALIDATOR_PID" 2>/dev/null
+        echo -e "${GREEN}✓ Validator stopped${NC}"
+    fi
+}
+trap cleanup EXIT
 
 # Menu
 echo -e "${BLUE}Select test suite:${NC}"
@@ -86,14 +99,14 @@ case $choice in
         ;;
 esac
 
-# Clean up
-if [ ! -z "$VALIDATOR_PID" ]; then
-    echo ""
-    echo -e "${YELLOW}Cleaning up validator (PID: $VALIDATOR_PID)...${NC}"
-    kill $VALIDATOR_PID 2>/dev/null
-    echo -e "${GREEN}✓ Validator stopped${NC}"
-fi
+# Preserve the test command's exit status (cleanup runs via the EXIT trap).
+status=$?
 
 echo ""
-echo -e "${GREEN}✓ Tests completed!${NC}"
+if [ "$status" -eq 0 ]; then
+    echo -e "${GREEN}✓ Tests completed!${NC}"
+else
+    echo -e "${RED}✗ Tests failed (exit $status)${NC}"
+fi
+exit $status
 
