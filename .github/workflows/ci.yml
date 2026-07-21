@@ -46,7 +46,13 @@ jobs:
             - uses: dtolnay/rust-toolchain@stable
               with:
                   components: rustfmt
-            - run: cargo fmt --all --check
+            # `--all` only covers the root workspace (programs/*). The
+            # integration-tests + clients/rust workspaces are excluded from it,
+            # so check integration-tests separately (clients/rust is generated).
+            - name: Rustfmt (root workspace)
+              run: cargo fmt --all --check
+            - name: Rustfmt (integration-tests workspace)
+              run: cargo fmt --manifest-path integration-tests/Cargo.toml --all --check
 
     clippy:
         name: Clippy

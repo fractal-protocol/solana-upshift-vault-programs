@@ -19,8 +19,7 @@ use solana_sdk::{
     transaction::{Transaction, TransactionError},
 };
 use spl_associated_token_account::{
-    get_associated_token_address_with_program_id,
-    instruction::create_associated_token_account,
+    get_associated_token_address_with_program_id, instruction::create_associated_token_account,
 };
 use spl_token::state::{Account as SplAccount, Mint as SplMint};
 
@@ -137,8 +136,13 @@ impl VaultCtx {
         };
         send_tx(&mut svm, &payer, &[init_ix], &[&payer]).expect("initialize vault");
 
-        let user_deposit_ata =
-            create_ata(&mut svm, &payer, &user.pubkey(), &deposit_mint, token_program);
+        let user_deposit_ata = create_ata(
+            &mut svm,
+            &payer,
+            &user.pubkey(),
+            &deposit_mint,
+            token_program,
+        );
         let user_share_ata =
             create_ata(&mut svm, &payer, &user.pubkey(), &share_mint, token_program);
         let operator_deposit_ata = create_ata(
@@ -419,7 +423,8 @@ pub fn assert_anchor_err(err: &FailedTransactionMetadata, expected: ErrorCode) {
     match &err.err {
         TransactionError::InstructionError(_, InstructionError::Custom(code)) => {
             assert_eq!(
-                *code, expected_code,
+                *code,
+                expected_code,
                 "expected {:?} (code {}), got code {}; logs:\n{}",
                 expected,
                 expected_code,
@@ -529,12 +534,8 @@ fn send_tx(
     signers: &[&Keypair],
 ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
     let blockhash = svm.latest_blockhash();
-    let tx = Transaction::new_signed_with_payer(
-        instructions,
-        Some(&payer.pubkey()),
-        signers,
-        blockhash,
-    );
+    let tx =
+        Transaction::new_signed_with_payer(instructions, Some(&payer.pubkey()), signers, blockhash);
     svm.send_transaction(tx)
 }
 

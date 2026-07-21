@@ -123,7 +123,10 @@ fn overwrite_vault_state(svm: &mut LiteSVM, addr: Pubkey, vs: &VaultState) {
     let mut data = Vec::new();
     vs.try_serialize(&mut data).unwrap();
     let orig_len = svm.get_account(&addr).unwrap().data.len();
-    assert!(data.len() <= orig_len, "serialized VaultState grew past its allocation");
+    assert!(
+        data.len() <= orig_len,
+        "serialized VaultState grew past its allocation"
+    );
     data.resize(orig_len, 0);
     inject(svm, addr, august_vault::ID, data);
 }
@@ -138,10 +141,30 @@ fn usdc_vault_real_state_read_and_deposit() {
     let vault_ata = pk("Tit1tGJ4F7F1LeGcyUhTstisxRLEfaNMuB8bBxf65ED");
     let deposit_mint = pk("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
 
-    inject(&mut svm, vault_state, august_vault::ID, include_bytes!("fixtures/usdc_vault_state.bin").to_vec());
-    inject(&mut svm, share_mint, spl, include_bytes!("fixtures/usdc_share_mint.bin").to_vec());
-    inject(&mut svm, vault_ata, spl, include_bytes!("fixtures/usdc_vault_ata.bin").to_vec());
-    inject(&mut svm, deposit_mint, spl, include_bytes!("fixtures/usdc_mint.bin").to_vec());
+    inject(
+        &mut svm,
+        vault_state,
+        august_vault::ID,
+        include_bytes!("fixtures/usdc_vault_state.bin").to_vec(),
+    );
+    inject(
+        &mut svm,
+        share_mint,
+        spl,
+        include_bytes!("fixtures/usdc_share_mint.bin").to_vec(),
+    );
+    inject(
+        &mut svm,
+        vault_ata,
+        spl,
+        include_bytes!("fixtures/usdc_vault_ata.bin").to_vec(),
+    );
+    inject(
+        &mut svm,
+        deposit_mint,
+        spl,
+        include_bytes!("fixtures/usdc_mint.bin").to_vec(),
+    );
 
     // 1. READ — current struct maps the real bytes to the right fields (layout).
     let vs = read_vault_state(&svm, &vault_state);
@@ -149,8 +172,14 @@ fn usdc_vault_real_state_read_and_deposit() {
     assert_eq!(vs.share_mint, share_mint, "share_mint field");
     assert_eq!(vs.vault_version, [0]);
     assert!(!vs.paused, "vault not paused");
-    assert_eq!(vs.local_aum, USDC_LOCAL_AUM, "snapshot local_aum (byte→field check)");
-    assert_eq!(vs.deployed_aum, USDC_DEPLOYED_AUM, "snapshot deployed_aum (byte→field check)");
+    assert_eq!(
+        vs.local_aum, USDC_LOCAL_AUM,
+        "snapshot local_aum (byte→field check)"
+    );
+    assert_eq!(
+        vs.deployed_aum, USDC_DEPLOYED_AUM,
+        "snapshot deployed_aum (byte→field check)"
+    );
 
     // Snapshot-agnostic invariants (hold for any healthy vault state).
     assert_eq!(
@@ -175,14 +204,27 @@ fn usdc_vault_real_state_read_and_deposit() {
     let deposit: u64 = 1_000_000; // 1 USDC (6 decimals)
     let user_usdc = Keypair::new().pubkey();
     let user_shares_acct = Keypair::new().pubkey();
-    inject(&mut svm, user_usdc, spl, packed_token(deposit_mint, user.pubkey(), deposit));
-    inject(&mut svm, user_shares_acct, spl, packed_token(share_mint, user.pubkey(), 0));
+    inject(
+        &mut svm,
+        user_usdc,
+        spl,
+        packed_token(deposit_mint, user.pubkey(), deposit),
+    );
+    inject(
+        &mut svm,
+        user_shares_acct,
+        spl,
+        packed_token(share_mint, user.pubkey(), 0),
+    );
 
     // Independent expectation (not the program's own helper). This snapshot is
     // ~1:1 (supply == total_assets), so 1 USDC in -> 1 share; the non-unit
     // rounding path is covered by `usdc_deposit_rounding_on_nonunit_state`.
     let expected_shares = ref_shares(supply, total_assets, deposit);
-    assert_eq!(expected_shares, deposit, "frozen: 1:1 snapshot mints 1 share per asset unit");
+    assert_eq!(
+        expected_shares, deposit,
+        "frozen: 1:1 snapshot mints 1 share per asset unit"
+    );
 
     let ix = Instruction {
         program_id: august_vault::ID,
@@ -202,16 +244,34 @@ fn usdc_vault_real_state_read_and_deposit() {
     let bh = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(&[ix], Some(&user.pubkey()), &[&user], bh);
     let res = svm.send_transaction(tx);
-    assert!(res.is_ok(), "deposit against real USDC vault state failed: {:?}", res.err());
+    assert!(
+        res.is_ok(),
+        "deposit against real USDC vault state failed: {:?}",
+        res.err()
+    );
 
     // accounting
     let minted = token_amount(&svm, &user_shares_acct);
-    assert_eq!(minted, expected_shares, "shares minted must match the on-chain formula");
+    assert_eq!(
+        minted, expected_shares,
+        "shares minted must match the on-chain formula"
+    );
     assert!(minted > 0, "deposit minted zero shares");
-    assert_eq!(token_amount(&svm, &vault_ata), USDC_LOCAL_AUM + deposit, "reserve += deposit");
+    assert_eq!(
+        token_amount(&svm, &vault_ata),
+        USDC_LOCAL_AUM + deposit,
+        "reserve += deposit"
+    );
     let vs_after = read_vault_state(&svm, &vault_state);
-    assert_eq!(vs_after.local_aum, USDC_LOCAL_AUM + deposit, "local_aum += deposit");
-    assert_eq!(vs_after.deployed_aum, USDC_DEPLOYED_AUM, "deployed_aum unchanged by user deposit");
+    assert_eq!(
+        vs_after.local_aum,
+        USDC_LOCAL_AUM + deposit,
+        "local_aum += deposit"
+    );
+    assert_eq!(
+        vs_after.deployed_aum, USDC_DEPLOYED_AUM,
+        "deployed_aum unchanged by user deposit"
+    );
 
     println!(
         "USDC fork OK: reserve={USDC_LOCAL_AUM} supply={supply} deposit={deposit} -> shares={minted} (formula {expected_shares}); local_aum {USDC_LOCAL_AUM}->{}",
@@ -229,18 +289,44 @@ fn jito_vault_real_state_read() {
     let vault_ata = pk("GvW2AZwiXSfHVjNEYTuK8nZz2opxv5cW8RxsMrRVoY9K");
     let deposit_mint = pk("J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn");
 
-    inject(&mut svm, vault_state, august_vault::ID, include_bytes!("fixtures/jito_vault_state.bin").to_vec());
-    inject(&mut svm, share_mint, spl, include_bytes!("fixtures/jito_share_mint.bin").to_vec());
-    inject(&mut svm, vault_ata, spl, include_bytes!("fixtures/jito_vault_ata.bin").to_vec());
-    inject(&mut svm, deposit_mint, spl, include_bytes!("fixtures/jito_mint.bin").to_vec());
+    inject(
+        &mut svm,
+        vault_state,
+        august_vault::ID,
+        include_bytes!("fixtures/jito_vault_state.bin").to_vec(),
+    );
+    inject(
+        &mut svm,
+        share_mint,
+        spl,
+        include_bytes!("fixtures/jito_share_mint.bin").to_vec(),
+    );
+    inject(
+        &mut svm,
+        vault_ata,
+        spl,
+        include_bytes!("fixtures/jito_vault_ata.bin").to_vec(),
+    );
+    inject(
+        &mut svm,
+        deposit_mint,
+        spl,
+        include_bytes!("fixtures/jito_mint.bin").to_vec(),
+    );
 
     let vs = read_vault_state(&svm, &vault_state);
     assert_eq!(vs.deposit_mint, deposit_mint);
     assert_eq!(vs.share_mint, share_mint);
     assert_eq!(vs.vault_version, [0]);
     assert!(!vs.paused);
-    assert_eq!(vs.local_aum, JITO_LOCAL_AUM, "snapshot local_aum (byte→field check)");
-    assert_eq!(vs.deployed_aum, JITO_DEPLOYED_AUM, "snapshot deployed_aum (byte→field check)");
+    assert_eq!(
+        vs.local_aum, JITO_LOCAL_AUM,
+        "snapshot local_aum (byte→field check)"
+    );
+    assert_eq!(
+        vs.deployed_aum, JITO_DEPLOYED_AUM,
+        "snapshot deployed_aum (byte→field check)"
+    );
     assert_eq!(
         vs.total_assets().unwrap(),
         vs.local_aum + vs.deployed_aum,
@@ -268,10 +354,30 @@ fn usdc_deposit_rounding_on_nonunit_state() {
     let share_mint = pk("CnhPtD2gHHrUvfuA6HrDdLQBKjGgVL8HZMJNCZdXuWEs");
     let vault_ata = pk("Tit1tGJ4F7F1LeGcyUhTstisxRLEfaNMuB8bBxf65ED");
     let deposit_mint = pk("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
-    inject(&mut svm, vault_state, august_vault::ID, include_bytes!("fixtures/usdc_vault_state.bin").to_vec());
-    inject(&mut svm, share_mint, spl, include_bytes!("fixtures/usdc_share_mint.bin").to_vec());
-    inject(&mut svm, vault_ata, spl, include_bytes!("fixtures/usdc_vault_ata.bin").to_vec());
-    inject(&mut svm, deposit_mint, spl, include_bytes!("fixtures/usdc_mint.bin").to_vec());
+    inject(
+        &mut svm,
+        vault_state,
+        august_vault::ID,
+        include_bytes!("fixtures/usdc_vault_state.bin").to_vec(),
+    );
+    inject(
+        &mut svm,
+        share_mint,
+        spl,
+        include_bytes!("fixtures/usdc_share_mint.bin").to_vec(),
+    );
+    inject(
+        &mut svm,
+        vault_ata,
+        spl,
+        include_bytes!("fixtures/usdc_vault_ata.bin").to_vec(),
+    );
+    inject(
+        &mut svm,
+        deposit_mint,
+        spl,
+        include_bytes!("fixtures/usdc_mint.bin").to_vec(),
+    );
 
     let supply = SplMint::unpack(&svm.get_account(&share_mint).unwrap().data[..SplMint::LEN])
         .unwrap()
@@ -282,15 +388,28 @@ fn usdc_deposit_rounding_on_nonunit_state() {
     let mut vs = read_vault_state(&svm, &vault_state);
     vs.deployed_aum = total_assets - vs.local_aum;
     overwrite_vault_state(&mut svm, vault_state, &vs);
-    assert_eq!(read_vault_state(&svm, &vault_state).total_assets().unwrap(), total_assets);
+    assert_eq!(
+        read_vault_state(&svm, &vault_state).total_assets().unwrap(),
+        total_assets
+    );
 
     let user = Keypair::new();
     svm.airdrop(&user.pubkey(), 1_000_000_000).unwrap();
     let deposit: u64 = 3;
     let user_usdc = Keypair::new().pubkey();
     let user_shares_acct = Keypair::new().pubkey();
-    inject(&mut svm, user_usdc, spl, packed_token(deposit_mint, user.pubkey(), deposit));
-    inject(&mut svm, user_shares_acct, spl, packed_token(share_mint, user.pubkey(), 0));
+    inject(
+        &mut svm,
+        user_usdc,
+        spl,
+        packed_token(deposit_mint, user.pubkey(), deposit),
+    );
+    inject(
+        &mut svm,
+        user_shares_acct,
+        spl,
+        packed_token(share_mint, user.pubkey(), 0),
+    );
 
     let expected = ref_shares(supply, total_assets, deposit);
     assert_eq!(expected, 1, "reference: 3*(S+1)/(2S+1) floors to 1");
@@ -312,10 +431,19 @@ fn usdc_deposit_rounding_on_nonunit_state() {
     };
     let bh = svm.latest_blockhash();
     let tx = Transaction::new_signed_with_payer(&[ix], Some(&user.pubkey()), &[&user], bh);
-    assert!(svm.send_transaction(tx).is_ok(), "non-1:1 deposit against real USDC vault failed");
+    assert!(
+        svm.send_transaction(tx).is_ok(),
+        "non-1:1 deposit against real USDC vault failed"
+    );
 
     let minted = token_amount(&svm, &user_shares_acct);
-    assert_eq!(minted, expected, "handler must floor-match the independent reference");
-    assert_eq!(minted, 1, "frozen: 0.5x price, 3 units in -> 1 share (rounded down, favoring the vault)");
+    assert_eq!(
+        minted, expected,
+        "handler must floor-match the independent reference"
+    );
+    assert_eq!(
+        minted, 1,
+        "frozen: 0.5x price, 3 units in -> 1 share (rounded down, favoring the vault)"
+    );
     println!("USDC rounding OK: 0.5x price, deposit=3 -> shares={minted} (floored from 1.4999)");
 }
