@@ -95,10 +95,12 @@ backup_program_keypair() {
 # choices; the EXIT trap tears down the validator we start.
 ensure_localnet() {
     if curl -s "$RPC/health" > /dev/null 2>&1; then
+        local port="${RPC##*:}" # e.g. 8899 — only this port blocks us
         echo -e "${RED}✗ A validator is already running on $RPC.${NC}"
         echo -e "${YELLOW}  This runner needs a fresh (--reset) ledger for deterministic tests: a reused${NC}"
-        echo -e "${YELLOW}  ledger collides on the suites' deterministic mint/PDA accounts. Stop the${NC}"
-        echo -e "${YELLOW}  existing validator and re-run:  pkill -f solana-test-validator${NC}"
+        echo -e "${YELLOW}  ledger collides on the suites' deterministic mint/PDA accounts. Free port${NC}"
+        echo -e "${YELLOW}  $port and re-run (scoped to that port, not all validators):${NC}"
+        echo -e "${YELLOW}      kill \"\$(lsof -ti tcp:$port)\"${NC}"
         exit 1
     fi
     echo -e "${YELLOW}Starting a fresh local validator (--reset)...${NC}"
