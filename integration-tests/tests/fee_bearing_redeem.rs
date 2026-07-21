@@ -99,5 +99,8 @@ fn failed_redeem_with_fee_set_does_not_transfer_fee() {
         after.fee_recipient_tokens, before.fee_recipient_tokens,
         "fee transferred despite redeem failure"
     );
-    assert_eq!(after, before, "any state slot changed despite redeem failure");
+    assert_eq!(
+        after, before,
+        "any state slot changed despite redeem failure"
+    );
 }

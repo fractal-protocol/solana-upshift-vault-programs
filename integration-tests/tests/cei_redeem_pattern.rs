@@ -110,7 +110,10 @@ fn partial_redeem_within_liquidity_succeeds() {
     let safe_shares = VaultState::shares_for_deposit(supply, total_assets, target_assets)
         .expect("share math fits u64")
         .min(shares_held);
-    assert!(safe_shares > 0, "fixture must leave room for a partial redeem");
+    assert!(
+        safe_shares > 0,
+        "fixture must leave room for a partial redeem"
+    );
 
     // Predict the exact asset payout using the on-chain helper. Fee=0 by
     // default in this fixture, so the user receives `expected_assets` and the

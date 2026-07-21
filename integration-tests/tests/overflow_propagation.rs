@@ -34,7 +34,9 @@ fn deposit_fails_with_math_error_when_total_assets_would_overflow() {
     ctx.mint_to_user(10);
     let before = ctx.snapshot();
 
-    let err = ctx.deposit(10).expect_err("deposit must fail at the boundary");
+    let err = ctx
+        .deposit(10)
+        .expect_err("deposit must fail at the boundary");
     assert_anchor_err(&err, ErrorCode::MathError);
 
     // NOTE: `deposit` runs `transfer_in_ctx` BEFORE `total_assets()?`, so
@@ -48,10 +50,16 @@ fn deposit_fails_with_math_error_when_total_assets_would_overflow() {
     // gives us.
     let after = ctx.snapshot();
     assert_eq!(after.local_aum, before.local_aum, "local_aum changed");
-    assert_eq!(after.deployed_aum, before.deployed_aum, "deployed_aum changed");
+    assert_eq!(
+        after.deployed_aum, before.deployed_aum,
+        "deployed_aum changed"
+    );
     assert_eq!(after.share_supply, before.share_supply, "shares minted");
     assert_eq!(after.user_deposit, before.user_deposit, "user tokens moved");
-    assert_eq!(after.vault_tokens, before.vault_tokens, "vault tokens moved");
+    assert_eq!(
+        after.vault_tokens, before.vault_tokens,
+        "vault tokens moved"
+    );
 }
 
 #[test]
@@ -61,9 +69,15 @@ fn redeem_fails_with_math_error_when_total_assets_would_overflow() {
     assert!(shares > 0, "fixture should leave shares to redeem");
 
     let before = ctx.snapshot();
-    let err = ctx.redeem(shares).expect_err("redeem must fail at the boundary");
+    let err = ctx
+        .redeem(shares)
+        .expect_err("redeem must fail at the boundary");
     assert_anchor_err(&err, ErrorCode::MathError);
 
     // CEI: no shares burned, no fees moved, no AUM mutation on the math path.
-    assert_eq!(ctx.snapshot(), before, "CEI violated on MathError redeem path");
+    assert_eq!(
+        ctx.snapshot(),
+        before,
+        "CEI violated on MathError redeem path"
+    );
 }
