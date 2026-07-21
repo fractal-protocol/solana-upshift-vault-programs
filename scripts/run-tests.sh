@@ -86,27 +86,34 @@ backup_program_keypair() {
     fi
 }
 
-# Ensure a HEALTHY local validator (start one if needed) and fund the provider
-# wallet. Only for validator-backed choices.
+# Start a FRESH local validator that this script owns, and fund the provider
+# wallet. The suites create deterministic mint/PDA accounts (and each run uses a
+# fresh program id), so a ledger carrying leftovers from a previous run collides
+# ("account already in use"). We therefore always start our own --reset validator
+# and refuse to run against a pre-existing one whose state we can't trust, rather
+# than silently reusing (and failing on) a dirty ledger. Only for validator-backed
+# choices; the EXIT trap tears down the validator we start.
 ensure_localnet() {
-    echo -e "${YELLOW}Checking if local validator is running...${NC}"
     if curl -s "$RPC/health" > /dev/null 2>&1; then
-        echo -e "${GREEN}✓ Local validator is running${NC}"
-    else
-        echo -e "${YELLOW}⚠ Local validator not detected — starting one...${NC}"
-        solana-test-validator --reset > /dev/null 2>&1 &
-        VALIDATOR_PID=$!
-        local up=0
-        for _ in $(seq 1 30); do
-            if curl -s "$RPC/health" > /dev/null 2>&1; then up=1; break; fi
-            sleep 1
-        done
-        if [ "$up" -ne 1 ]; then
-            echo -e "${RED}✗ Local validator did not become healthy at $RPC (it may have failed to start or bind).${NC}"
-            exit 1
-        fi
-        echo -e "${GREEN}✓ Local validator started (PID: $VALIDATOR_PID)${NC}"
+        echo -e "${RED}✗ A validator is already running on $RPC.${NC}"
+        echo -e "${YELLOW}  This runner needs a fresh (--reset) ledger for deterministic tests: a reused${NC}"
+        echo -e "${YELLOW}  ledger collides on the suites' deterministic mint/PDA accounts. Stop the${NC}"
+        echo -e "${YELLOW}  existing validator and re-run:  pkill -f solana-test-validator${NC}"
+        exit 1
     fi
+    echo -e "${YELLOW}Starting a fresh local validator (--reset)...${NC}"
+    solana-test-validator --reset > /dev/null 2>&1 &
+    VALIDATOR_PID=$!
+    local up=0
+    for _ in $(seq 1 30); do
+        if curl -s "$RPC/health" > /dev/null 2>&1; then up=1; break; fi
+        sleep 1
+    done
+    if [ "$up" -ne 1 ]; then
+        echo -e "${RED}✗ Local validator did not become healthy at $RPC (it may have failed to start or bind).${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}✓ Fresh validator started (PID: $VALIDATOR_PID)${NC}"
     SKIP_VALIDATOR="--skip-local-validator"
 
     [ -f "$WALLET" ] || solana-keygen new --no-bip39-passphrase -o "$WALLET" --force > /dev/null
@@ -133,6 +140,8 @@ prepare_local_program() {
     fi
     ANCHOR_BAK="$anchorcand"
 
+    # A fresh program id each run is fine because ensure_localnet guarantees a
+    # clean (--reset) ledger — nothing from a prior run's id/PDAs lingers.
     solana-keygen new --no-bip39-passphrase -o "$PROGRAM_KP" --force > /dev/null
     local pid
     pid=$(solana-keygen pubkey "$PROGRAM_KP")
