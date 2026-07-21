@@ -6,6 +6,7 @@
   
   "vaultConfig": {
     "depositMint": "So11111111111111111111111111111111111111112",
+    "vaultVersion": 0,
     "admin": "YOUR_ADMIN_PUBKEY",
     "operator": "YOUR_OPERATOR_PUBKEY",
     "feeRecipient": "YOUR_FEE_RECIPIENT_PUBKEY",

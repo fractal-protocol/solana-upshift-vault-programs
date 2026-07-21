@@ -1,6 +1,6 @@
 {
   "type": "module",
-  "license": "ISC",
+  "license": "BUSL-1.1",
   "scripts": {
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
@@ -16,19 +16,10 @@
     "initialize:mainnet": "node deploy/helpers/initialize.mjs --network mainnet",
     "meta": "node deploy/helpers/metadata.mjs",
     "meta:devnet": "node deploy/helpers/metadata.mjs --network devnet",
-    "meta:mainnet": "node deploy/helpers/metadata.mjs --network mainnet",
-    "app:dev": "cd frontend && pnpm dev",
-    "app:build": "cd frontend && pnpm build",
-    "app:start": "cd frontend && pnpm start",
-    "app:install": "cd frontend && pnpm install",
-    "app:format": "cd frontend && pnpm format",
-    "app:format:check": "cd frontend && pnpm format:check",
-    "app:type-check": "cd frontend && pnpm type-check",
-    "app:lint": "cd frontend && pnpm lint",
-    "app:lint:fix": "cd frontend && pnpm lint:fix"
+    "meta:mainnet": "node deploy/helpers/metadata.mjs --network mainnet"
   },
   "dependencies": {
-    "@coral-xyz/anchor": "^0.32.1",
+    "@coral-xyz/anchor": "^0.31.1",
     "@metaplex-foundation/js": "^0.20.1",
     "@metaplex-foundation/mpl-token-metadata": "^3.4.0",
     "@metaplex-foundation/umi": "^1.4.1",

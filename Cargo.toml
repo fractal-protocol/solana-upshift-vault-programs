@@ -1,6 +1,14 @@
 [workspace]
 members = [
-    "programs/*"
+    "programs/*",
+]
+# `integration-tests/` and `clients/rust/august-vault/` are intentionally
+# separate workspaces — their transitive dep graphs (litesvm, codama-generated
+# code) pull in crates that require a newer `cargo` than the SBF toolchain
+# bundles. Keeping the main workspace lean lets `anchor build` resolve cleanly.
+exclude = [
+    "integration-tests",
+    "clients/rust/august-vault",
 ]
 resolver = "2"
 
@@ -12,4 +20,3 @@ codegen-units = 1
 opt-level = 3
 incremental = false
 codegen-units = 1
-bytemuck = { version = "=1.19.0", features = ["derive"] }

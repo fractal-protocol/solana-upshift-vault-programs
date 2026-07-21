@@ -1,13 +1,13 @@
 // Copyright (C) 2026 Fractal Network Ltd
 //
 // Use of this software is governed by the Business Source License
-// included in the LICENSE.BSL file.
+// included in the LICENSE file.
 //
 // As of 10 March 2036 (the "Change Date"), use of this software will be
 // governed by version 2.0 of the Apache License.
 
-mod errors;
-mod state;
+pub mod errors;
+pub mod state;
 use instructions::accept_admin_nomination::*;
 use instructions::close_vault::*;
 use instructions::create_metadata::*;
@@ -106,9 +106,13 @@ pub mod august_vault {
 
     /// Admin Updates the Withdrawal Fee
     ///
-    /// Fee should discourage users from sandwiching operator_update_aum
+    /// Fee should discourage users from sandwiching operator_update_aum.
     /// ### Parameters
-    /// - `new_fee` - Max value 100% is 1_000_000
+    /// - `new_fee` - Fee in units of `FEE_RATE_DENOMINATOR_VALUE` (full denominator
+    ///   ≡ 100%). The handler caps `new_fee` strictly below
+    ///   `FEE_RATE_DENOMINATOR_VALUE / 10` (i.e. < 10%); see
+    ///   `set_withdrawal_fee::handler` for the exact cap expression. Higher
+    ///   inputs revert with `WithdrawalFeeTooHigh`.
     pub fn set_withdrawal_fee(ctx: Context<SetWithdrawalFee>, new_fee: u32) -> Result<()> {
         return instructions::set_withdrawal_fee::handler(ctx, new_fee);
     }
