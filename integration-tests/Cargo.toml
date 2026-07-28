@@ -31,10 +31,14 @@ august-vault = { path = "../programs/august-vault", features = ["no-entrypoint"]
 anchor-lang = "0.31.1"
 anchor-spl = "0.31.1"
 litesvm = "0.7.1"
+# Same major as the program crate's dependency; provides the program ID and
+# account deserializers for the share-token-metadata tests.
+mpl-token-metadata = "5.1.1"
 solana-sdk = "2.2.1"
 spl-token = "8.0.0"
 spl-token-2022 = "8.0.1"
 spl-associated-token-account = "6"
 
 [dev-dependencies]
+proptest = "1"
 test-case = "3.3.1"

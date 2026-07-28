@@ -6,6 +6,7 @@ use august_vault::{
     accounts as ix_accounts,
     errors::ErrorCode,
     instruction as ix_data,
+    state::nominated_admin::NOMINATED_ADMIN_PDA_SEED,
     state::vault::{SHARE_MINT_SEED, VAULT_STATE_SEED, VAULT_TOKEN_SEED},
 };
 use litesvm::{types::FailedTransactionMetadata, LiteSVM};
@@ -212,39 +213,91 @@ impl VaultCtx {
     }
 
     pub fn operator_withdraw(&mut self, amount: u64) -> Result<(), FailedTransactionMetadata> {
+        let operator = self.operator.insecure_clone();
+        let operator_ata = self.operator_deposit_ata;
+        self.operator_withdraw_as(&operator, operator_ata, amount)
+    }
+
+    /// `operator_withdraw` signed by an arbitrary keypair. Negative tests pass
+    /// a non-operator signer (plus that signer's own deposit-mint ATA, so the
+    /// `associated_token::authority` constraint resolves and the access-control
+    /// constraint is what actually fires).
+    pub fn operator_withdraw_as(
+        &mut self,
+        signer: &Keypair,
+        operator_token_account: Pubkey,
+        amount: u64,
+    ) -> Result<(), FailedTransactionMetadata> {
         let ix = Instruction {
             program_id: august_vault::ID,
             accounts: ix_accounts::OperatorWithdraw {
                 vault_state: self.vault_state,
                 vault_deposit_ata: self.vault_token_pda,
-                operator_token_account: self.operator_deposit_ata,
+                operator_token_account,
                 deposit_mint: self.deposit_mint,
-                operator: self.operator.pubkey(),
+                operator: signer.pubkey(),
                 token_program: self.token_program.id(),
             }
             .to_account_metas(None),
             data: ix_data::OperatorWithdraw { amount }.data(),
         };
-        let operator = self.operator.insecure_clone();
-        send_tx(&mut self.svm, &operator, &[ix], &[&operator]).map(|_| ())
+        self.send_as(signer, ix)
     }
 
     pub fn operator_deposit(&mut self, amount: u64) -> Result<(), FailedTransactionMetadata> {
+        let operator = self.operator.insecure_clone();
+        let operator_ata = self.operator_deposit_ata;
+        self.operator_deposit_as(&operator, operator_ata, amount)
+    }
+
+    /// `operator_deposit` signed by an arbitrary keypair; see
+    /// [`Self::operator_withdraw_as`] for the account-selection rationale.
+    pub fn operator_deposit_as(
+        &mut self,
+        signer: &Keypair,
+        operator_token_account: Pubkey,
+        amount: u64,
+    ) -> Result<(), FailedTransactionMetadata> {
         let ix = Instruction {
             program_id: august_vault::ID,
             accounts: ix_accounts::OperatorDeposit {
                 vault_state: self.vault_state,
                 vault_deposit_ata: self.vault_token_pda,
-                operator_token_account: self.operator_deposit_ata,
+                operator_token_account,
                 deposit_mint: self.deposit_mint,
-                operator: self.operator.pubkey(),
+                operator: signer.pubkey(),
                 token_program: self.token_program.id(),
             }
             .to_account_metas(None),
             data: ix_data::OperatorDeposit { amount }.data(),
         };
+        self.send_as(signer, ix)
+    }
+
+    /// `operator_update_aum` signed by the configured operator.
+    pub fn operator_update_aum(&mut self, new_aum: u64) -> Result<(), FailedTransactionMetadata> {
         let operator = self.operator.insecure_clone();
-        send_tx(&mut self.svm, &operator, &[ix], &[&operator]).map(|_| ())
+        self.operator_update_aum_as(&operator, new_aum)
+    }
+
+    /// `operator_update_aum` signed by an arbitrary keypair (non-operator
+    /// signers must be rejected with `NotOperator`).
+    pub fn operator_update_aum_as(
+        &mut self,
+        signer: &Keypair,
+        new_aum: u64,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts: ix_accounts::OperatorUpdateAum {
+                vault_state: self.vault_state,
+                deposit_mint: self.deposit_mint,
+                operator: signer.pubkey(),
+            }
+            .to_account_metas(None),
+            data: ix_data::OperatorUpdateAum { new_aum }.data(),
+        };
+        self.send_as(signer, ix)
     }
 
     pub fn redeem(&mut self, shares: u64) -> Result<(), FailedTransactionMetadata> {
@@ -270,35 +323,393 @@ impl VaultCtx {
 
     /// Admin-only: pause the vault. Used to test the paused-redeem CEI path.
     pub fn pause(&mut self) -> Result<(), FailedTransactionMetadata> {
+        let admin = self.admin.insecure_clone();
+        self.pause_as(&admin)
+    }
+
+    /// `pause` signed by an arbitrary keypair (non-admins must be rejected).
+    pub fn pause_as(&mut self, signer: &Keypair) -> Result<(), FailedTransactionMetadata> {
         let ix = Instruction {
             program_id: august_vault::ID,
             accounts: ix_accounts::Pause {
                 vault_state: self.vault_state,
                 deposit_mint: self.deposit_mint,
-                admin: self.admin.pubkey(),
+                admin: signer.pubkey(),
             }
             .to_account_metas(None),
             data: ix_data::Pause {}.data(),
         };
+        self.send_as(signer, ix)
+    }
+
+    /// Admin-only: unpause the vault.
+    pub fn unpause(&mut self) -> Result<(), FailedTransactionMetadata> {
         let admin = self.admin.insecure_clone();
-        send_tx(&mut self.svm, &admin, &[ix], &[&admin]).map(|_| ())
+        self.unpause_as(&admin)
+    }
+
+    /// `unpause` signed by an arbitrary keypair (non-admins must be rejected).
+    pub fn unpause_as(&mut self, signer: &Keypair) -> Result<(), FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts: ix_accounts::Unpause {
+                vault_state: self.vault_state,
+                deposit_mint: self.deposit_mint,
+                admin: signer.pubkey(),
+            }
+            .to_account_metas(None),
+            data: ix_data::Unpause {}.data(),
+        };
+        self.send_as(signer, ix)
     }
 
     /// Admin-only: configure the withdrawal fee (in 1e-6 units; 100_000 = 10%).
     /// Used by the fee-bearing redeem test.
     pub fn set_withdrawal_fee(&mut self, fee: u32) -> Result<(), FailedTransactionMetadata> {
+        let admin = self.admin.insecure_clone();
+        self.set_withdrawal_fee_as(&admin, fee)
+    }
+
+    /// `set_withdrawal_fee` signed by an arbitrary keypair.
+    pub fn set_withdrawal_fee_as(
+        &mut self,
+        signer: &Keypair,
+        fee: u32,
+    ) -> Result<(), FailedTransactionMetadata> {
         let ix = Instruction {
             program_id: august_vault::ID,
             accounts: ix_accounts::SetWithdrawalFee {
                 vault_state: self.vault_state,
                 deposit_mint: self.deposit_mint,
-                admin: self.admin.pubkey(),
+                admin: signer.pubkey(),
             }
             .to_account_metas(None),
             data: ix_data::SetWithdrawalFee { new_fee: fee }.data(),
         };
+        self.send_as(signer, ix)
+    }
+
+    /// Admin-only: configure the AUM change limits (basis points).
+    pub fn set_aum_limits(
+        &mut self,
+        increase_limit: u32,
+        decrease_limit: u32,
+    ) -> Result<(), FailedTransactionMetadata> {
         let admin = self.admin.insecure_clone();
-        send_tx(&mut self.svm, &admin, &[ix], &[&admin]).map(|_| ())
+        self.set_aum_limits_as(&admin, increase_limit, decrease_limit)
+    }
+
+    /// `set_aum_limits` signed by an arbitrary keypair.
+    pub fn set_aum_limits_as(
+        &mut self,
+        signer: &Keypair,
+        increase_limit: u32,
+        decrease_limit: u32,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts: ix_accounts::SetAumLimits {
+                vault_state: self.vault_state,
+                deposit_mint: self.deposit_mint,
+                admin: signer.pubkey(),
+            }
+            .to_account_metas(None),
+            data: ix_data::SetAumLimits {
+                increase_limit,
+                decrease_limit,
+            }
+            .data(),
+        };
+        self.send_as(signer, ix)
+    }
+
+    /// `set_operator` signed by an arbitrary keypair.
+    pub fn set_operator_as(
+        &mut self,
+        signer: &Keypair,
+        new_operator: Pubkey,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts: ix_accounts::SetOperator {
+                vault_state: self.vault_state,
+                deposit_mint: self.deposit_mint,
+                admin: signer.pubkey(),
+            }
+            .to_account_metas(None),
+            data: ix_data::SetOperator { new_operator }.data(),
+        };
+        self.send_as(signer, ix)
+    }
+
+    /// `set_fee_recipient` signed by an arbitrary keypair.
+    pub fn set_fee_recipient_as(
+        &mut self,
+        signer: &Keypair,
+        new_fee_recipient: Pubkey,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts: ix_accounts::SetFeeRecipient {
+                vault_state: self.vault_state,
+                deposit_mint: self.deposit_mint,
+                admin: signer.pubkey(),
+            }
+            .to_account_metas(None),
+            data: ix_data::SetFeeRecipient { new_fee_recipient }.data(),
+        };
+        self.send_as(signer, ix)
+    }
+
+    /// Admin-only: nominate a new admin (two-step transfer, 24h window).
+    pub fn nominate_admin(&mut self, nominee: Pubkey) -> Result<(), FailedTransactionMetadata> {
+        let admin = self.admin.insecure_clone();
+        self.nominate_admin_as(&admin, nominee)
+    }
+
+    /// `nominate_admin` signed by an arbitrary keypair (also pays the PDA rent).
+    pub fn nominate_admin_as(
+        &mut self,
+        signer: &Keypair,
+        nominee: Pubkey,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts: ix_accounts::NominateAdmin {
+                vault_state: self.vault_state,
+                deposit_mint: self.deposit_mint,
+                nominated_admin_pda: self.nominated_admin_pda(),
+                admin: signer.pubkey(),
+                payer: signer.pubkey(),
+                system_program: solana_sdk::system_program::ID,
+            }
+            .to_account_metas(None),
+            data: ix_data::NominateAdmin { new_admin: nominee }.data(),
+        };
+        self.send_as(signer, ix)
+    }
+
+    /// `accept_admin_nomination` signed by `new_admin`, who also receives the
+    /// closed nomination PDA's rent.
+    pub fn accept_admin_nomination_as(
+        &mut self,
+        new_admin: &Keypair,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts: ix_accounts::AcceptAdminNomination {
+                vault_state: self.vault_state,
+                deposit_mint: self.deposit_mint,
+                nominated_admin_pda: self.nominated_admin_pda(),
+                new_admin: new_admin.pubkey(),
+                receiver: new_admin.pubkey(),
+                system_program: solana_sdk::system_program::ID,
+            }
+            .to_account_metas(None),
+            data: ix_data::AcceptAdminNomination {}.data(),
+        };
+        self.send_as(new_admin, ix)
+    }
+
+    /// Admin-only: close an empty vault.
+    pub fn close_vault(&mut self) -> Result<(), FailedTransactionMetadata> {
+        let admin = self.admin.insecure_clone();
+        self.close_vault_as(&admin)
+    }
+
+    /// `close_vault` signed by an arbitrary keypair.
+    pub fn close_vault_as(&mut self, signer: &Keypair) -> Result<(), FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts: ix_accounts::CloseVault {
+                vault_state: self.vault_state,
+                share_mint: self.share_mint,
+                vault_token_ata: self.vault_token_pda,
+                deposit_mint: self.deposit_mint,
+                admin: signer.pubkey(),
+                token_program: self.token_program.id(),
+            }
+            .to_account_metas(None),
+            data: ix_data::CloseVault {}.data(),
+        };
+        self.send_as(signer, ix)
+    }
+
+    /// Load the Metaplex Token Metadata program into the SVM. The two share
+    /// token-metadata instructions CPI into it; every other test can skip
+    /// this. The fixture is a mainnet dump — see `tests/fixtures/README.md`
+    /// for provenance.
+    pub fn load_mpl_token_metadata(&mut self) {
+        let bytes = include_bytes!("../tests/fixtures/mpl_token_metadata.so").to_vec();
+        self.svm
+            .add_program(mpl_token_metadata::ID, &bytes)
+            .expect("load mpl_token_metadata.so fixture");
+    }
+
+    /// The Metaplex metadata PDA for this vault's share mint.
+    pub fn share_metadata_pda(&self) -> Pubkey {
+        Pubkey::find_program_address(
+            &[
+                b"metadata",
+                mpl_token_metadata::ID.as_ref(),
+                self.share_mint.as_ref(),
+            ],
+            &mpl_token_metadata::ID,
+        )
+        .0
+    }
+
+    /// `create_share_token_metadata` signed by `admin` (payer is the harness
+    /// payer). SPL-only: the instruction's `token_program` account is the
+    /// legacy Token program by type.
+    pub fn create_share_token_metadata_as(
+        &mut self,
+        admin: &Keypair,
+        name: &str,
+        symbol: &str,
+        uri: &str,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts: ix_accounts::CreateShareTokenMetadata {
+                payer: self.payer.pubkey(),
+                admin: admin.pubkey(),
+                vault_state: self.vault_state,
+                deposit_mint: self.deposit_mint,
+                share_mint: self.share_mint,
+                metadata_account: self.share_metadata_pda(),
+                token_program: spl_token::ID,
+                token_metadata_program: mpl_token_metadata::ID,
+                system_program: solana_sdk::system_program::ID,
+                rent: solana_sdk::sysvar::rent::ID,
+            }
+            .to_account_metas(None),
+            data: ix_data::CreateShareTokenMetadata {
+                name: name.to_string(),
+                symbol: symbol.to_string(),
+                uri: uri.to_string(),
+            }
+            .data(),
+        };
+        let payer = self.payer.insecure_clone();
+        let admin = admin.insecure_clone();
+        send_tx(&mut self.svm, &payer, &[ix], &[&payer, &admin]).map(|_| ())
+    }
+
+    /// `update_share_token_metadata` signed by `admin`.
+    pub fn update_share_token_metadata_as(
+        &mut self,
+        admin: &Keypair,
+        name: &str,
+        symbol: &str,
+        uri: &str,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts: ix_accounts::UpdateShareTokenMetadata {
+                admin: admin.pubkey(),
+                vault_state: self.vault_state,
+                deposit_mint: self.deposit_mint,
+                share_mint: self.share_mint,
+                metadata_account: self.share_metadata_pda(),
+                token_program: spl_token::ID,
+                token_metadata_program: mpl_token_metadata::ID,
+            }
+            .to_account_metas(None),
+            data: ix_data::UpdateShareTokenMetadata {
+                name: name.to_string(),
+                symbol: symbol.to_string(),
+                uri: uri.to_string(),
+            }
+            .data(),
+        };
+        self.send_as(&admin.insecure_clone(), ix)
+    }
+
+    /// Deserialized Metaplex metadata for the share mint. Panics if the
+    /// metadata account does not exist yet.
+    pub fn share_metadata(&self) -> mpl_token_metadata::accounts::Metadata {
+        let acct = self
+            .svm
+            .get_account(&self.share_metadata_pda())
+            .expect("metadata account exists");
+        mpl_token_metadata::accounts::Metadata::from_bytes(&acct.data).expect("valid metadata")
+    }
+
+    /// The nomination PDA for this vault (seeds mirror `nominate_admin.rs`).
+    pub fn nominated_admin_pda(&self) -> Pubkey {
+        Pubkey::find_program_address(
+            &[
+                NOMINATED_ADMIN_PDA_SEED,
+                self.deposit_mint.as_ref(),
+                &[VAULT_VERSION],
+            ],
+            &august_vault::ID,
+        )
+        .0
+    }
+
+    /// Create and fund a throwaway keypair (for impostor-signer tests).
+    pub fn new_funded_keypair(&mut self, lamports: u64) -> Keypair {
+        airdrop_keypair(&mut self.svm, lamports)
+    }
+
+    /// Create an ATA for `owner` on the vault's deposit mint, returning its
+    /// address. Impostor operator tests need this so the ATA-derivation
+    /// constraint resolves and the access-control check is what fires.
+    pub fn create_deposit_ata_for(&mut self, owner: &Pubkey) -> Pubkey {
+        let payer = self.payer.insecure_clone();
+        let deposit_mint = self.deposit_mint;
+        create_ata(
+            &mut self.svm,
+            &payer,
+            owner,
+            &deposit_mint,
+            self.token_program,
+        )
+    }
+
+    /// Advance the Clock sysvar's `unix_timestamp` by `secs`. LiteSVM does not
+    /// tick wall-clock time on its own, so tests that exercise the 24-hour
+    /// nomination expiry warp explicitly.
+    pub fn warp_forward_seconds(&mut self, secs: i64) {
+        let mut clock: solana_sdk::clock::Clock = self.svm.get_sysvar();
+        clock.unix_timestamp += secs;
+        self.svm.set_sysvar(&clock);
+    }
+
+    /// Rotate the recent blockhash. LiteSVM deduplicates byte-identical
+    /// transactions under the same blockhash (`AlreadyProcessed`), so tests
+    /// that intentionally repeat an identical call must advance it first.
+    pub fn advance_blockhash(&mut self) {
+        self.svm.expire_blockhash();
+    }
+
+    /// Overwrite the share mint's `supply` directly, bypassing the program.
+    /// Pairs with `force_overwrite_vault_state` for tests that need share
+    /// supply and recorded AUM at magnitudes unreachable through the public
+    /// API (e.g. driving `local_aum + amount` past `u64::MAX`).
+    pub fn force_overwrite_share_mint_supply(&mut self, new_supply: u64) {
+        let mut acct = self
+            .svm
+            .get_account(&self.share_mint)
+            .expect("share mint exists");
+        let mut mint = SplMint::unpack(&acct.data[..SplMint::LEN]).expect("valid mint");
+        mint.supply = new_supply;
+        SplMint::pack(mint, &mut acct.data[..SplMint::LEN]).expect("repack mint");
+        self.svm
+            .set_account(self.share_mint, acct)
+            .unwrap_or_else(|e| panic!("set_account failed for share_mint: {e:?}"));
+    }
+
+    /// Sign `ix` with `signer` (who also pays the fee) and send it.
+    fn send_as(
+        &mut self,
+        signer: &Keypair,
+        ix: Instruction,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let signer = signer.insecure_clone();
+        send_tx(&mut self.svm, &signer, &[ix], &[&signer]).map(|_| ())
     }
 
     pub fn token_account_amount(&self, pubkey: &Pubkey) -> u64 {
