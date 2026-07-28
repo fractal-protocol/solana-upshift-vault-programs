@@ -4,6 +4,13 @@
 [workspace]
 resolver = "2"
 
+# This workspace is excluded from the root one, so it does not inherit the root
+# manifest's `overflow-checks`. Tests assert on balance deltas with plain `-`;
+# without this, `cargo test --release` would wrap a negative delta instead of
+# failing, and an invariant test could pass on a reversed transfer.
+[profile.release]
+overflow-checks = true
+
 [package]
 name = "integration-tests"
 version = "0.1.0"

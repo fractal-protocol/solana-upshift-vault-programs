@@ -24,7 +24,7 @@
 //! with PROPTEST_CASES for a deeper local search.
 
 use august_vault::state::vault::FEE_RATE_DENOMINATOR_VALUE;
-use integration_tests::harness::{CeiSnapshot, VaultCtx};
+use integration_tests::harness::{expected_withdrawal_fee, CeiSnapshot, VaultCtx};
 use proptest::prelude::*;
 
 /// Initial balance minted to the user; caps total value in play so the
@@ -59,7 +59,11 @@ fn op_strategy(include_yield_ops: bool) -> BoxedStrategy<Op> {
         (0u32..FEE_RATE_DENOMINATOR_VALUE / 10).prop_map(Op::SetFee),
     ];
     if include_yield_ops {
-        prop_oneof![base, (-20i8..=20).prop_map(Op::UpdateAum)].boxed()
+        // `prop_oneof!` weights are per-arm at the level they appear, so a bare
+        // `prop_oneof![base, aum]` would hand AUM reports half of every walk
+        // and starve the deposit/redeem interleavings. Weighting `base` by its
+        // arm count keeps all six ops equally likely.
+        prop_oneof![5 => base, 1 => (-20i8..=20).prop_map(Op::UpdateAum)].boxed()
     } else {
         base.boxed()
     }
@@ -69,10 +73,24 @@ fn per_mille(value: u64, pm: u16) -> u64 {
     ((value as u128) * (pm as u128) / 1000) as u64
 }
 
-/// Mirror of the private `Redeem::ceil_div` fee rounding.
-fn expected_fee(assets: u64, fee_rate: u32) -> u64 {
-    let num = (assets as u128) * (fee_rate as u128);
-    num.div_ceil(FEE_RATE_DENOMINATOR_VALUE as u128) as u64
+/// A balance that must have fallen between two snapshots. Fails the case
+/// instead of wrapping when it moved the wrong way, so a reversed-transfer
+/// regression can never satisfy the conservation equality by underflow.
+fn decrease(before: u64, after: u64, what: &str) -> Result<u64, TestCaseError> {
+    before.checked_sub(after).ok_or_else(|| {
+        TestCaseError::fail(format!(
+            "{what} rose from {before} to {after}, expected a fall"
+        ))
+    })
+}
+
+/// Companion to [`decrease`] for a balance that must have risen.
+fn increase(before: u64, after: u64, what: &str) -> Result<u64, TestCaseError> {
+    after.checked_sub(before).ok_or_else(|| {
+        TestCaseError::fail(format!(
+            "{what} fell from {before} to {after}, expected a rise"
+        ))
+    })
 }
 
 fn fresh_walk_vault() -> VaultCtx {
@@ -82,13 +100,22 @@ fn fresh_walk_vault() -> VaultCtx {
     ctx
 }
 
-/// Execute one op. Returns the pre-op snapshot, the stored fee rate at
-/// execution time, and whether the op succeeded.
-fn execute(ctx: &mut VaultCtx, op: &Op) -> (CeiSnapshot, u32, bool, bool) {
-    // Identical op payloads repeat within a walk; rotate the blockhash so
-    // LiteSVM's duplicate-transaction check never masks a real execution.
-    ctx.advance_blockhash();
+/// What one executed op tells the invariant checks.
+struct OpOutcome {
+    /// Every observable state slot immediately before the op ran.
+    before: CeiSnapshot,
+    /// Withdrawal fee stored at execution time (a `SetFee` earlier in the walk
+    /// may have moved it).
+    fee_rate: u32,
+    /// Whether the transaction succeeded.
+    ok: bool,
+    /// Whether this op was a redeem, i.e. whether the value-conservation and
+    /// fee-rounding checks apply.
+    is_redeem: bool,
+}
 
+/// Execute one op against the live vault.
+fn execute(ctx: &mut VaultCtx, op: &Op) -> OpOutcome {
     let before = ctx.snapshot();
     let fee_rate = ctx.vault_state_data().withdrawal_fee;
 
@@ -120,7 +147,12 @@ fn execute(ctx: &mut VaultCtx, op: &Op) -> (CeiSnapshot, u32, bool, bool) {
         }
         Op::SetFee(fee) => (ctx.set_withdrawal_fee(fee).is_ok(), false),
     };
-    (before, fee_rate, ok, is_redeem)
+    OpOutcome {
+        before,
+        fee_rate,
+        ok,
+        is_redeem,
+    }
 }
 
 /// Accounting invariants that must hold in every reachable state.
@@ -153,11 +185,11 @@ proptest! {
         assert_state_invariants(&ctx)?;
 
         for op in &ops {
-            let (before, fee_rate, ok, is_redeem) = execute(&mut ctx, op);
+            let outcome = execute(&mut ctx, op);
 
-            if !ok {
+            if !outcome.ok {
                 prop_assert_eq!(
-                    ctx.snapshot(), before,
+                    ctx.snapshot(), outcome.before,
                     "failed {:?} left side effects", op
                 );
                 continue;
@@ -165,20 +197,28 @@ proptest! {
 
             assert_state_invariants(&ctx)?;
 
-            if is_redeem {
-                let after = ctx.snapshot();
-                let assets = before.vault_tokens - after.vault_tokens;
-                let fee_paid = after.fee_recipient_tokens - before.fee_recipient_tokens;
-                let user_received = after.user_deposit - before.user_deposit;
+            if outcome.is_redeem {
+                let (before, after) = (outcome.before, ctx.snapshot());
+                let assets = decrease(before.vault_tokens, after.vault_tokens, "vault balance")?;
+                let fee_paid = increase(
+                    before.fee_recipient_tokens,
+                    after.fee_recipient_tokens,
+                    "fee recipient balance",
+                )?;
+                let user_received =
+                    increase(before.user_deposit, after.user_deposit, "user balance")?;
+                let paid_out = fee_paid
+                    .checked_add(user_received)
+                    .ok_or_else(|| TestCaseError::fail("redeem payouts overflowed u64"))?;
                 prop_assert_eq!(
-                    assets, fee_paid + user_received,
-                    "redeem leaked value: paid {} but recipients got {}",
-                    assets, fee_paid + user_received
+                    assets, paid_out,
+                    "redeem leaked value: vault paid {} but recipients got {}",
+                    assets, paid_out
                 );
                 prop_assert_eq!(
-                    fee_paid, expected_fee(assets, fee_rate),
+                    fee_paid, expected_withdrawal_fee(assets, outcome.fee_rate),
                     "fee not ceil(assets * fee / 1e6) for assets={}, rate={}",
-                    assets, fee_rate
+                    assets, outcome.fee_rate
                 );
             }
         }
@@ -201,13 +241,11 @@ proptest! {
         // Unwind: operator returns everything it took…
         let operator_balance = ctx.token_account_amount(&ctx.operator_deposit_ata);
         if operator_balance > 0 {
-            ctx.advance_blockhash();
             ctx.operator_deposit(operator_balance).expect("operator returns all");
         }
         // …and the user exits their entire position.
         let shares = ctx.token_account_amount(&ctx.user_share_ata);
         if shares > 0 {
-            ctx.advance_blockhash();
             ctx.redeem(shares).expect("full exit after operator returned all");
         }
 

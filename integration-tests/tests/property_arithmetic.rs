@@ -12,11 +12,8 @@
 
 use august_vault::errors::ErrorCode;
 use august_vault::state::vault::{VaultState, EXTRA_SHARES, VIRTUAL_ASSETS};
+use integration_tests::harness::vault_error_code;
 use proptest::prelude::*;
-
-/// On-chain code for `ErrorCode::NumberOverflow` (declaration ordinal +
-/// Anchor's 6000 user-error offset — pinned by `errors_discriminant_canary`).
-const NUMBER_OVERFLOW_CODE: u32 = ErrorCode::NumberOverflow as u32 + 6000;
 
 fn anchor_code(e: &anchor_lang::error::Error) -> Option<u32> {
     match e {
@@ -47,7 +44,10 @@ proptest! {
                 // Only the final u64 narrowing may fail for u64 inputs.
                 prop_assert!(exact_floor > u64::MAX as u128,
                     "error returned though result {} fits u64", exact_floor);
-                prop_assert_eq!(anchor_code(&e), Some(NUMBER_OVERFLOW_CODE));
+                prop_assert_eq!(
+                    anchor_code(&e),
+                    Some(vault_error_code(ErrorCode::NumberOverflow))
+                );
             }
         }
     }
@@ -68,7 +68,10 @@ proptest! {
             Err(e) => {
                 prop_assert!(exact_floor > u64::MAX as u128,
                     "error returned though result {} fits u64", exact_floor);
-                prop_assert_eq!(anchor_code(&e), Some(NUMBER_OVERFLOW_CODE));
+                prop_assert_eq!(
+                    anchor_code(&e),
+                    Some(vault_error_code(ErrorCode::NumberOverflow))
+                );
             }
         }
     }

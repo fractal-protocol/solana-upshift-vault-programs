@@ -7,7 +7,9 @@ use august_vault::{
     errors::ErrorCode,
     instruction as ix_data,
     state::nominated_admin::NOMINATED_ADMIN_PDA_SEED,
-    state::vault::{SHARE_MINT_SEED, VAULT_STATE_SEED, VAULT_TOKEN_SEED},
+    state::vault::{
+        FEE_RATE_DENOMINATOR_VALUE, SHARE_MINT_SEED, VAULT_STATE_SEED, VAULT_TOKEN_SEED,
+    },
 };
 use litesvm::{types::FailedTransactionMetadata, LiteSVM};
 use solana_sdk::{
@@ -87,9 +89,11 @@ impl VaultCtx {
     fn fresh_with_token_program(token_program: TokenProgramKind) -> Self {
         let mut svm = LiteSVM::new();
 
-        let program_bytes = include_bytes!("../../target/deploy/august_vault.so").to_vec();
-        svm.add_program(august_vault::ID, &program_bytes)
-            .expect("load august_vault.so — run `anchor build` first");
+        svm.add_program(
+            august_vault::ID,
+            include_bytes!("../../target/deploy/august_vault.so"),
+        )
+        .expect("load august_vault.so — run `anchor build` first");
 
         let payer = airdrop_keypair(&mut svm, 100_000_000_000);
         let admin = airdrop_keypair(&mut svm, 1_000_000_000);
@@ -491,6 +495,11 @@ impl VaultCtx {
 
     /// `accept_admin_nomination` signed by `new_admin`, who also receives the
     /// closed nomination PDA's rent.
+    ///
+    /// On success this rotates [`Self::admin`] to `new_admin` so the no-suffix
+    /// admin helpers (`pause`, `close_vault`, `set_withdrawal_fee`, …) keep
+    /// signing with the key the vault actually recognizes. A test that needs
+    /// the deposed keypair afterwards must clone it *before* calling this.
     pub fn accept_admin_nomination_as(
         &mut self,
         new_admin: &Keypair,
@@ -508,7 +517,11 @@ impl VaultCtx {
             .to_account_metas(None),
             data: ix_data::AcceptAdminNomination {}.data(),
         };
-        self.send_as(new_admin, ix)
+        let result = self.send_as(new_admin, ix);
+        if result.is_ok() {
+            self.admin = new_admin.insecure_clone();
+        }
+        result
     }
 
     /// Admin-only: close an empty vault.
@@ -540,23 +553,18 @@ impl VaultCtx {
     /// this. The fixture is a mainnet dump — see `tests/fixtures/README.md`
     /// for provenance.
     pub fn load_mpl_token_metadata(&mut self) {
-        let bytes = include_bytes!("../tests/fixtures/mpl_token_metadata.so").to_vec();
         self.svm
-            .add_program(mpl_token_metadata::ID, &bytes)
+            .add_program(
+                mpl_token_metadata::ID,
+                include_bytes!("../tests/fixtures/mpl_token_metadata.so"),
+            )
             .expect("load mpl_token_metadata.so fixture");
     }
 
-    /// The Metaplex metadata PDA for this vault's share mint.
+    /// The Metaplex metadata PDA for this vault's share mint, derived by the
+    /// Metaplex crate itself so the seeds can never drift from canonical.
     pub fn share_metadata_pda(&self) -> Pubkey {
-        Pubkey::find_program_address(
-            &[
-                b"metadata",
-                mpl_token_metadata::ID.as_ref(),
-                self.share_mint.as_ref(),
-            ],
-            &mpl_token_metadata::ID,
-        )
-        .0
+        mpl_token_metadata::accounts::Metadata::find_pda(&self.share_mint).0
     }
 
     /// `create_share_token_metadata` signed by `admin` (payer is the harness
@@ -592,8 +600,7 @@ impl VaultCtx {
             .data(),
         };
         let payer = self.payer.insecure_clone();
-        let admin = admin.insecure_clone();
-        send_tx(&mut self.svm, &payer, &[ix], &[&payer, &admin]).map(|_| ())
+        send_tx(&mut self.svm, &payer, &[ix], &[&payer, admin]).map(|_| ())
     }
 
     /// `update_share_token_metadata` signed by `admin`.
@@ -623,7 +630,7 @@ impl VaultCtx {
             }
             .data(),
         };
-        self.send_as(&admin.insecure_clone(), ix)
+        self.send_as(admin, ix)
     }
 
     /// Deserialized Metaplex metadata for the share mint. Panics if the
@@ -678,13 +685,6 @@ impl VaultCtx {
         self.svm.set_sysvar(&clock);
     }
 
-    /// Rotate the recent blockhash. LiteSVM deduplicates byte-identical
-    /// transactions under the same blockhash (`AlreadyProcessed`), so tests
-    /// that intentionally repeat an identical call must advance it first.
-    pub fn advance_blockhash(&mut self) {
-        self.svm.expire_blockhash();
-    }
-
     /// Overwrite the share mint's `supply` directly, bypassing the program.
     /// Pairs with `force_overwrite_vault_state` for tests that need share
     /// supply and recorded AUM at magnitudes unreachable through the public
@@ -708,8 +708,7 @@ impl VaultCtx {
         signer: &Keypair,
         ix: Instruction,
     ) -> Result<(), FailedTransactionMetadata> {
-        let signer = signer.insecure_clone();
-        send_tx(&mut self.svm, &signer, &[ix], &[&signer]).map(|_| ())
+        send_tx(&mut self.svm, signer, &[ix], &[signer]).map(|_| ())
     }
 
     pub fn token_account_amount(&self, pubkey: &Pubkey) -> u64 {
@@ -817,20 +816,39 @@ pub struct CeiSnapshot {
     pub deployed_aum: u64,
 }
 
-/// Assert that a failed transaction's underlying error is the given
-/// `ErrorCode` variant. Reads the raw `InstructionError::Custom(code)` from
-/// the transaction-level error so we never depend on log-message wording.
+/// The on-chain custom error code for an `ErrorCode` variant.
 ///
 /// **Variant-order dependency**: `expected as u32` returns the variant's
 /// declaration ordinal (0..N) because Anchor's `#[error_code]` macro leaves
-/// `ErrorCode` without explicit discriminants, and we add `ANCHOR_USER_ERROR_OFFSET`
-/// to get the on-chain code. If anyone reorders `errors.rs`, every call site of
-/// this helper silently matches the wrong variant — tests pass against the
-/// wrong code. The `errors_discriminant_canary` test in
+/// `ErrorCode` without explicit discriminants, and we add
+/// `ANCHOR_USER_ERROR_OFFSET` to get the on-chain code. If anyone reorders
+/// `errors.rs`, every caller silently matches the wrong variant — tests pass
+/// against the wrong code. The `errors_discriminant_canary` test in
 /// `programs/august-vault/src/state/vault.rs` pins the expected codes and
 /// fails-fast on any drift. Keep the canary updated when adding variants.
+///
+/// Prefer [`assert_anchor_err`] for failed transactions; this is for callers
+/// that hold a raw code instead (e.g. `AnchorError::error_code_number` from a
+/// directly invoked `VaultState` helper).
+pub fn vault_error_code(expected: ErrorCode) -> u32 {
+    (expected as u32) + ANCHOR_USER_ERROR_OFFSET
+}
+
+/// The withdrawal fee the program charges on a redeem of `assets`: mirrors the
+/// private `Redeem::ceil_div` rounding (fees round **up**, in the vault's
+/// favour). Single test-side mirror of that formula — update it here if the
+/// on-chain rounding ever changes.
+pub fn expected_withdrawal_fee(assets: u64, fee_rate: u32) -> u64 {
+    let numerator = (assets as u128) * (fee_rate as u128);
+    numerator.div_ceil(FEE_RATE_DENOMINATOR_VALUE as u128) as u64
+}
+
+/// Assert that a failed transaction's underlying error is the given
+/// `ErrorCode` variant. Reads the raw `InstructionError::Custom(code)` from
+/// the transaction-level error so we never depend on log-message wording.
+/// See [`vault_error_code`] for the variant-order caveat this inherits.
 pub fn assert_anchor_err(err: &FailedTransactionMetadata, expected: ErrorCode) {
-    let expected_code = (expected as u32) + ANCHOR_USER_ERROR_OFFSET;
+    let expected_code = vault_error_code(expected);
     match &err.err {
         TransactionError::InstructionError(_, InstructionError::Custom(code)) => {
             assert_eq!(
@@ -944,6 +962,13 @@ fn send_tx(
     instructions: &[Instruction],
     signers: &[&Keypair],
 ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    // Rotate the blockhash before every send. LiteSVM rejects a byte-identical
+    // transaction replayed under the same blockhash with `AlreadyProcessed`,
+    // which surfaces as an opaque failure in any test that intentionally
+    // repeats a call (a paused-then-unpaused deposit, a re-nomination, a
+    // property walk that draws the same op twice). Giving every transaction a
+    // fresh blockhash removes the hazard for all call sites at once.
+    svm.expire_blockhash();
     let blockhash = svm.latest_blockhash();
     let tx =
         Transaction::new_signed_with_payer(instructions, Some(&payer.pubkey()), signers, blockhash);

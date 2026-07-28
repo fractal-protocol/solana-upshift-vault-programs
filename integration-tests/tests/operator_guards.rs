@@ -28,15 +28,31 @@ fn vault_with_deployed_aum() -> VaultCtx {
 
 // ---- operator_update_aum: ±0.2% default limits, exact boundaries ----
 //
-// Guard from `operator_update_aum::handler` with the default 20 bps limits:
-//   new_aum * 10000 >= 9980  * deployed_aum   (decrease side)
-//   new_aum * 10000 <= 10020 * deployed_aum   (increase side)
-// With DEPLOYED = 1e9 both boundaries are exact integers.
+// Guard from `operator_update_aum::handler`:
+//   new_aum * 10000 >= (10000 - decrease_bps) * deployed_aum   (decrease side)
+//   new_aum * 10000 <= (10000 + increase_bps) * deployed_aum   (increase side)
+// Both default to 20 bps (`VaultState::initialize`).
+
+/// Default AUM change limits set by `VaultState::initialize`, in basis points.
+const DEFAULT_LIMIT_BPS: u32 = 20;
+
+/// Largest report the increase guard accepts: `floor(deployed * (10000 + bps) /
+/// 10000)`. Multiply before dividing (in `u128`) so the boundary stays exact
+/// for any `deployed` magnitude, not just multiples of 10 000.
+fn max_accepted_aum(deployed: u64, increase_bps: u32) -> u64 {
+    ((deployed as u128) * (10_000 + increase_bps as u128) / 10_000) as u64
+}
+
+/// Smallest report the decrease guard accepts: `ceil(deployed * (10000 - bps) /
+/// 10000)` — ceiling, because the guard is a `>=` on the scaled-up value.
+fn min_accepted_aum(deployed: u64, decrease_bps: u32) -> u64 {
+    ((deployed as u128) * (10_000 - decrease_bps as u128)).div_ceil(10_000) as u64
+}
 
 #[test]
 fn update_aum_accepts_exact_increase_boundary() {
     let mut ctx = vault_with_deployed_aum();
-    let boundary = DEPLOYED / 10_000 * 10_020; // +0.2% exactly
+    let boundary = max_accepted_aum(DEPLOYED, DEFAULT_LIMIT_BPS); // +0.2% exactly
     ctx.operator_update_aum(boundary)
         .expect("exact +0.2% must be accepted");
     assert_eq!(ctx.vault_state_data().deployed_aum, boundary);
@@ -45,7 +61,7 @@ fn update_aum_accepts_exact_increase_boundary() {
 #[test]
 fn update_aum_rejects_one_above_increase_boundary() {
     let mut ctx = vault_with_deployed_aum();
-    let boundary = DEPLOYED / 10_000 * 10_020;
+    let boundary = max_accepted_aum(DEPLOYED, DEFAULT_LIMIT_BPS);
     let err = ctx
         .operator_update_aum(boundary + 1)
         .expect_err("one unit above +0.2% must be rejected");
@@ -60,7 +76,7 @@ fn update_aum_rejects_one_above_increase_boundary() {
 #[test]
 fn update_aum_accepts_exact_decrease_boundary() {
     let mut ctx = vault_with_deployed_aum();
-    let boundary = DEPLOYED / 10_000 * 9_980; // −0.2% exactly
+    let boundary = min_accepted_aum(DEPLOYED, DEFAULT_LIMIT_BPS); // −0.2% exactly
     ctx.operator_update_aum(boundary)
         .expect("exact −0.2% must be accepted");
     assert_eq!(ctx.vault_state_data().deployed_aum, boundary);
@@ -69,7 +85,7 @@ fn update_aum_accepts_exact_decrease_boundary() {
 #[test]
 fn update_aum_rejects_one_below_decrease_boundary() {
     let mut ctx = vault_with_deployed_aum();
-    let boundary = DEPLOYED / 10_000 * 9_980;
+    let boundary = min_accepted_aum(DEPLOYED, DEFAULT_LIMIT_BPS);
     let err = ctx
         .operator_update_aum(boundary - 1)
         .expect_err("one unit below −0.2% must be rejected");
@@ -86,12 +102,12 @@ fn update_aum_honours_admin_configured_limits() {
     let mut ctx = vault_with_deployed_aum();
     // Admin widens the window to ±1%; +0.5% must now pass.
     ctx.set_aum_limits(100, 100).expect("admin widens limits");
-    let half_percent_up = DEPLOYED / 10_000 * 10_050;
+    let half_percent_up = max_accepted_aum(DEPLOYED, 50);
     ctx.operator_update_aum(half_percent_up)
         .expect("+0.5% within the widened ±1% window");
 
     // And +2% relative to the new value must still fail.
-    let two_percent_up = half_percent_up / 10_000 * 10_200;
+    let two_percent_up = max_accepted_aum(half_percent_up, 200);
     let err = ctx
         .operator_update_aum(two_percent_up)
         .expect_err("+2% exceeds the ±1% window");

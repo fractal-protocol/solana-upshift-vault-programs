@@ -10,14 +10,21 @@
 //! exercised in test files omitted from the default suite.
 
 use august_vault::errors::ErrorCode;
+use august_vault::state::vault::FEE_RATE_DENOMINATOR_VALUE;
 use integration_tests::harness::{assert_anchor_err, VaultCtx, DEPOSIT_DECIMALS};
 use solana_sdk::signature::{Keypair, Signer};
 
 const DEPOSIT_AMOUNT: u64 = 10 * 10u64.pow(DEPOSIT_DECIMALS as u32); // 10 tokens
 
-/// Fee cap from `set_withdrawal_fee::handler`:
-/// `new_fee < 10% of FEE_RATE_DENOMINATOR_VALUE (1e6)`, i.e. `< 100_000`.
-const MAX_VALID_FEE: u32 = 100_000 - 1;
+/// Fee cap from `set_withdrawal_fee::handler`: `new_fee` must be strictly below
+/// 10% of the fee denominator.
+const FEE_CAP: u32 = FEE_RATE_DENOMINATOR_VALUE / 10;
+/// The largest fee the cap admits, one unit below it.
+const MAX_VALID_FEE: u32 = FEE_CAP - 1;
+
+/// Nomination validity window from `NominatedAdmin::refresh` (whose own
+/// constant is private to the program).
+const ONE_DAY_IN_SECONDS: i64 = 24 * 60 * 60;
 
 // ---- set_withdrawal_fee: boundary + access control ----
 
@@ -33,7 +40,7 @@ fn set_withdrawal_fee_accepts_maximum_valid_fee() {
 fn set_withdrawal_fee_rejects_fee_at_ten_percent() {
     let mut ctx = VaultCtx::fresh();
     let err = ctx
-        .set_withdrawal_fee(100_000)
+        .set_withdrawal_fee(FEE_CAP)
         .expect_err("cap is strict: exactly 10% must be rejected");
     assert_anchor_err(&err, ErrorCode::WithdrawalFeeTooHigh);
     assert_eq!(
@@ -120,14 +127,12 @@ fn unpause_restores_deposits() {
     ctx.deposit(DEPOSIT_AMOUNT).expect("initial deposit");
 
     ctx.pause().expect("admin pauses");
-    ctx.advance_blockhash(); // repeat identical deposits across the pause
     let err = ctx
         .deposit(DEPOSIT_AMOUNT)
         .expect_err("deposit must fail while paused");
     assert_anchor_err(&err, ErrorCode::VaultPaused);
 
     ctx.unpause().expect("admin unpauses");
-    ctx.advance_blockhash();
     ctx.deposit(DEPOSIT_AMOUNT)
         .expect("deposit must succeed again after unpause");
 }
@@ -182,11 +187,13 @@ fn nominate_admin_rejects_non_admin() {
 fn admin_nomination_two_step_transfer_rotates_admin() {
     let mut ctx = VaultCtx::fresh();
     let new_admin = ctx.new_funded_keypair(1_000_000_000);
+    // Accepting rotates `ctx.admin`, so keep the outgoing keypair now.
+    let old_admin = ctx.admin.insecure_clone();
 
     ctx.nominate_admin(new_admin.pubkey()).expect("nominate");
     assert_eq!(
         ctx.vault_state_data().admin,
-        ctx.admin.pubkey(),
+        old_admin.pubkey(),
         "nomination alone must not change the admin"
     );
 
@@ -202,13 +209,14 @@ fn admin_nomination_two_step_transfer_rotates_admin() {
     );
 
     // The old admin is locked out; the new admin holds the role.
-    let old_admin = ctx.admin.insecure_clone();
     let err = ctx
         .pause_as(&old_admin)
         .expect_err("old admin must be locked out");
     assert_anchor_err(&err, ErrorCode::NotAdmin);
-    ctx.pause_as(&new_admin)
-        .expect("new admin must hold the role");
+    // The no-suffix helper signs with the harness's own admin keypair, so this
+    // also pins that accepting the nomination rotated it to `new_admin`.
+    assert_eq!(ctx.admin.pubkey(), new_admin.pubkey());
+    ctx.pause().expect("new admin must hold the role");
 }
 
 #[test]
@@ -231,8 +239,6 @@ fn accept_admin_nomination_rejects_wrong_nominee() {
 
 #[test]
 fn accept_admin_nomination_rejects_expired_nomination() {
-    const ONE_DAY_IN_SECONDS: i64 = 24 * 60 * 60;
-
     let mut ctx = VaultCtx::fresh();
     let nominee = ctx.new_funded_keypair(1_000_000_000);
 
@@ -252,8 +258,6 @@ fn accept_admin_nomination_rejects_expired_nomination() {
 
 #[test]
 fn re_nomination_after_expiry_succeeds() {
-    const ONE_DAY_IN_SECONDS: i64 = 24 * 60 * 60;
-
     let mut ctx = VaultCtx::fresh();
     let nominee = ctx.new_funded_keypair(1_000_000_000);
 
@@ -262,7 +266,6 @@ fn re_nomination_after_expiry_succeeds() {
     ctx.warp_forward_seconds(ONE_DAY_IN_SECONDS + 1);
 
     // Re-nominating refreshes the window through the load_mut path.
-    ctx.advance_blockhash(); // identical call bytes: dodge LiteSVM tx dedup
     ctx.nominate_admin(nominee.pubkey()).expect("re-nominate");
     ctx.accept_admin_nomination_as(&nominee)
         .expect("accept within the refreshed window");

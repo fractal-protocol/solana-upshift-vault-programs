@@ -10,15 +10,19 @@
 use august_vault::{errors::ErrorCode, state::vault::VaultState};
 use integration_tests::harness::{assert_anchor_err, VaultCtx, DEPOSIT_DECIMALS};
 
-/// `min_first_deposit` for the harness mint: 9 decimals → `10^(9-3)`.
-const MIN_FIRST_DEPOSIT: u64 = 10u64.pow((DEPOSIT_DECIMALS - 3) as u32);
+/// The program's own first-deposit floor for the harness mint, so these
+/// boundary tests track the formula instead of re-deriving it. A fn rather than
+/// a const because `min_first_deposit` is not `const`.
+fn min_first_deposit() -> u64 {
+    VaultState::min_first_deposit(DEPOSIT_DECIMALS)
+}
 
 // ---- zero amount ----
 
 #[test]
 fn deposit_zero_amount_is_rejected_with_no_side_effects() {
     let mut ctx = VaultCtx::fresh();
-    ctx.mint_to_user(MIN_FIRST_DEPOSIT);
+    ctx.mint_to_user(min_first_deposit());
     let before = ctx.snapshot();
 
     let err = ctx.deposit(0).expect_err("zero deposit must be rejected");
@@ -31,11 +35,11 @@ fn deposit_zero_amount_is_rejected_with_no_side_effects() {
 #[test]
 fn first_deposit_below_minimum_is_rejected() {
     let mut ctx = VaultCtx::fresh();
-    ctx.mint_to_user(MIN_FIRST_DEPOSIT);
+    ctx.mint_to_user(min_first_deposit());
     let before = ctx.snapshot();
 
     let err = ctx
-        .deposit(MIN_FIRST_DEPOSIT - 1)
+        .deposit(min_first_deposit() - 1)
         .expect_err("first deposit below the floor must be rejected");
     assert_anchor_err(&err, ErrorCode::InsufficientAmount);
     assert_eq!(ctx.snapshot(), before, "CEI violated on InsufficientAmount");
@@ -44,10 +48,10 @@ fn first_deposit_below_minimum_is_rejected() {
 #[test]
 fn first_deposit_at_exact_minimum_succeeds() {
     let mut ctx = VaultCtx::fresh();
-    ctx.mint_to_user(MIN_FIRST_DEPOSIT);
-    ctx.deposit(MIN_FIRST_DEPOSIT)
+    ctx.mint_to_user(min_first_deposit());
+    ctx.deposit(min_first_deposit())
         .expect("the floor itself must be accepted");
-    assert_eq!(ctx.share_mint_supply(), MIN_FIRST_DEPOSIT);
+    assert_eq!(ctx.share_mint_supply(), min_first_deposit());
 }
 
 /// The floor applies to the *first* deposit only: once supply is nonzero a
@@ -55,11 +59,11 @@ fn first_deposit_at_exact_minimum_succeeds() {
 #[test]
 fn subsequent_deposit_below_minimum_is_allowed() {
     let mut ctx = VaultCtx::fresh();
-    ctx.mint_to_user(MIN_FIRST_DEPOSIT + 1);
-    ctx.deposit(MIN_FIRST_DEPOSIT).expect("first deposit");
+    ctx.mint_to_user(min_first_deposit() + 1);
+    ctx.deposit(min_first_deposit()).expect("first deposit");
     ctx.deposit(1)
         .expect("post-first deposits are not subject to the floor");
-    assert_eq!(ctx.share_mint_supply(), MIN_FIRST_DEPOSIT + 1);
+    assert_eq!(ctx.share_mint_supply(), min_first_deposit() + 1);
 }
 
 // ---- truncation: share math rounds to zero ----
@@ -67,8 +71,8 @@ fn subsequent_deposit_below_minimum_is_allowed() {
 #[test]
 fn deposit_rounding_to_zero_shares_is_rejected_with_no_side_effects() {
     let mut ctx = VaultCtx::fresh();
-    ctx.mint_to_user(MIN_FIRST_DEPOSIT + 1);
-    ctx.deposit(MIN_FIRST_DEPOSIT).expect("seed deposit");
+    ctx.mint_to_user(min_first_deposit() + 1);
+    ctx.deposit(min_first_deposit()).expect("seed deposit");
 
     // Inflate the share price ~10^6× by faking externally deployed assets:
     // shares = 1 * (supply + 1) / (total_assets + 1) truncates to 0.

@@ -5,20 +5,15 @@
 //! The existing CEI suite runs with `withdrawal_fee = 0` (initializer default).
 //! This file exercises the fee branch end-to-end.
 
-use august_vault::{
-    errors::ErrorCode,
-    state::vault::{VaultState, FEE_RATE_DENOMINATOR_VALUE},
+use august_vault::{errors::ErrorCode, state::vault::VaultState};
+use integration_tests::harness::{
+    assert_anchor_err, expected_withdrawal_fee, VaultCtx, DEPOSIT_DECIMALS,
 };
-use integration_tests::harness::{assert_anchor_err, VaultCtx, DEPOSIT_DECIMALS};
 
 const DEPOSIT_AMOUNT: u64 = 10 * 10u64.pow(DEPOSIT_DECIMALS as u32);
 // Denominator is FEE_RATE_DENOMINATOR_VALUE = 1_000_000. Program caps the fee
 // at strictly less than 10% (= 100_000); 5% is well within range.
 const FEE_RATE_E6: u32 = 50_000;
-
-fn ceil_div_u128(num: u128, den: u128) -> u128 {
-    (num + den - 1) / den
-}
 
 #[test]
 fn successful_redeem_transfers_exact_fee_and_assets() {
@@ -38,12 +33,7 @@ fn successful_redeem_transfers_exact_fee_and_assets() {
     let supply = ctx.share_mint_supply();
     let total_assets = state.total_assets().unwrap();
     let assets = VaultState::assets_for_redeem(supply, total_assets, shares_to_burn).unwrap();
-    let expected_fee: u64 = ceil_div_u128(
-        assets as u128 * FEE_RATE_E6 as u128,
-        FEE_RATE_DENOMINATOR_VALUE as u128,
-    )
-    .try_into()
-    .unwrap();
+    let expected_fee = expected_withdrawal_fee(assets, FEE_RATE_E6);
     let expected_user_out = assets - expected_fee;
     assert!(expected_fee > 0, "test must exercise a non-zero fee path");
 
