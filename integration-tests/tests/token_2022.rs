@@ -100,6 +100,76 @@ fn cei_holds_under_token_2022_not_enough_liquidity() {
 }
 
 #[test]
+fn close_vault_lifecycle_under_token_2022() {
+    // Full lifecycle: init → deposit → full redeem → close. The DD review
+    // flagged Token-2022 closure as untested; this proves the CloseAccount
+    // and SetAuthority CPIs work against the Token-2022 program and that the
+    // rent from both closed accounts lands with the admin.
+    use solana_sdk::program_pack::Pack;
+    use solana_sdk::signature::Signer;
+
+    let mut ctx = VaultCtx::fresh_token_2022();
+    ctx.mint_to_user(DEPOSIT_AMOUNT);
+    ctx.deposit(DEPOSIT_AMOUNT).expect("seed deposit");
+
+    let shares = ctx.token_account_amount(&ctx.user_share_ata);
+    ctx.redeem(shares).expect("full redeem empties the vault");
+    assert_eq!(ctx.share_mint_supply(), 0);
+    assert_eq!(ctx.token_account_amount(&ctx.vault_token_pda), 0);
+
+    let rent_to_reclaim = ctx.svm.get_account(&ctx.vault_state).unwrap().lamports
+        + ctx.svm.get_account(&ctx.vault_token_pda).unwrap().lamports;
+    let admin_before = ctx.svm.get_account(&ctx.admin.pubkey()).unwrap().lamports;
+
+    ctx.close_vault()
+        .expect("close_vault must succeed under Token-2022");
+
+    assert!(
+        ctx.svm
+            .get_account(&ctx.vault_state)
+            .is_none_or(|a| a.lamports == 0),
+        "vault_state must be closed"
+    );
+    assert!(
+        ctx.svm
+            .get_account(&ctx.vault_token_pda)
+            .is_none_or(|a| a.lamports == 0),
+        "vault token account must be closed"
+    );
+
+    // The share mint survives (SPL mints cannot be closed) but its mint
+    // authority must be revoked so no shares can ever be minted again.
+    let mint_acct = ctx.svm.get_account(&ctx.share_mint).expect("mint remains");
+    let mint =
+        spl_token_2022::state::Mint::unpack(&mint_acct.data[..spl_token_2022::state::Mint::LEN])
+            .expect("valid mint");
+    assert!(
+        mint.mint_authority.is_none(),
+        "share mint authority must be revoked on close"
+    );
+
+    let admin_after = ctx.svm.get_account(&ctx.admin.pubkey()).unwrap().lamports;
+    // The admin paid one transaction fee and received both accounts' rent.
+    assert!(
+        admin_after > admin_before && admin_after - admin_before <= rent_to_reclaim,
+        "admin must net-receive the reclaimed rent (got {} → {}, rent {})",
+        admin_before,
+        admin_after,
+        rent_to_reclaim,
+    );
+}
+
+#[test]
+fn close_vault_rejects_non_admin_under_token_2022() {
+    let mut ctx = VaultCtx::fresh_token_2022();
+    let impostor = ctx.new_funded_keypair(1_000_000_000);
+    let err = ctx
+        .close_vault_as(&impostor)
+        .expect_err("non-admin must not close the vault");
+    assert_anchor_err(&err, ErrorCode::NotAdmin);
+}
+
+#[test]
 fn operator_round_trip_under_token_2022() {
     // operator_withdraw → operator_deposit round-trip should be balance-
     // preserving on the deployed_aum/local_aum accounting under Token-2022.
