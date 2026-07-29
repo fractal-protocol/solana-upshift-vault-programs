@@ -8,9 +8,42 @@
 // governed by version 2.0 of the Apache License.
 
 /**
- * Initialize an already-deployed vault
- * Usage: node initialize.mjs <programId>
+ * STALE — superseded, and non-functional. Do not use.
+ *
+ * This script predates several changes and cannot succeed as written:
+ *   - it calls `initialize` with the OLD 3-argument signature (the instruction
+ *     now also takes `vault_version`), and builds PDAs without the
+ *     `vault_version` seed, so the accounts would be rejected on-chain;
+ *   - it does not pass `program_config` or the separate `payer` that
+ *     `initialize` now requires, so Anchor aborts before any RPC;
+ *   - it reads the IDL from `deploy/target/idl/` (one `..` short), which does
+ *     not exist, and that throw is outside the try/catch and unhandled.
+ *
+ * It fails closed — there is no path by which it creates a mis-seeded vault.
+ * The `initialize`, `initialize:devnet` and `initialize:mainnet` npm scripts
+ * that used to point here have been removed, so nothing invokes it any more.
+ *
+ * **This file is a candidate for deletion**: it has no entry point and cannot
+ * work. It is kept only so the guard below explains where the functionality
+ * went, for anyone who finds a stale reference to the old scripts. Use instead:
+ *   - `deploy/bootstrap-config.mjs` to create the ProgramConfig, then
+ *   - `deploy/new-vault.mjs` (or the runbook in `docs/UPGRADE.md`) to create a
+ *     vault.
  */
+console.error(
+  '❌ deploy/helpers/initialize.mjs is stale and non-functional.\n\n' +
+  '   `initialize` now requires `vault_version`, `program_config` and a separate\n' +
+  '   `payer`, none of which this script supplies.\n\n' +
+  '   Use:  node deploy/bootstrap-config.mjs --program-id <ID> ...   (create the config)\n' +
+  '     then node deploy/new-vault.mjs                                (create a vault)\n' +
+  '   For the mainnet path see docs/UPGRADE.md.'
+);
+process.exit(1);
+
+// Everything below is the original body, kept for reference when this script is
+// either rewritten against the current instruction set or deleted. It is
+// unreachable: ES module imports are evaluated first, then the guard above
+// exits. Original usage was: node initialize.mjs <programId>
 
 import { Connection, Keypair, PublicKey, SystemProgram, SYSVAR_RENT_PUBKEY } from '@solana/web3.js';
 import { AnchorProvider, Program, Wallet } from '@coral-xyz/anchor';

@@ -901,17 +901,46 @@ impl VaultCtx {
         signer: &Keypair,
         new_authority: Pubkey,
     ) -> Result<(), FailedTransactionMetadata> {
+        self.override_config_authority_with_program_data(signer, new_authority, program_data_pda())
+    }
+
+    /// As above, but with an arbitrary account passed as `program_data`.
+    ///
+    /// `override_config_authority` carries its **own** copy of the
+    /// upgrade-authority constraint — it does not share one with
+    /// `initialize_config` — so that copy needs its own spoofing test. Without
+    /// this, dropping `seeds`/`seeds::program` from the override's `program_data`
+    /// would let anyone who is the upgrade authority of *any* upgradeable program
+    /// reset this program's vault-creation authority, and every test would pass.
+    pub fn override_config_authority_with_program_data(
+        &mut self,
+        signer: &Keypair,
+        new_authority: Pubkey,
+        program_data: Pubkey,
+    ) -> Result<(), FailedTransactionMetadata> {
         let ix = Instruction {
             program_id: august_vault::ID,
             accounts: ix_accounts::OverrideConfigAuthority {
                 program_config: program_config_pda(),
                 upgrade_authority: signer.pubkey(),
-                program_data: program_data_pda(),
+                program_data,
             }
             .to_account_metas(None),
             data: ix_data::OverrideConfigAuthority { new_authority }.data(),
         };
         self.send_as(signer, ix)
+    }
+
+    /// Install a `ProgramData` fixture at an arbitrary address, for spoofing
+    /// tests. Mirrors [`BareCtx::install_foreign_program_data`].
+    pub fn install_foreign_program_data(&mut self, address: Pubkey, upgrade_authority: &Pubkey) {
+        install_program_data_at(&mut self.svm, address, upgrade_authority);
+    }
+
+    /// Drop the program's upgrade authority, modelling an immutable program.
+    /// Mirrors [`BareCtx::make_program_immutable`].
+    pub fn make_program_immutable(&mut self) {
+        write_program_data(&mut self.svm, program_data_pda(), None);
     }
 
     /// `set_config_authority` signed by an arbitrary keypair.
@@ -940,7 +969,7 @@ impl VaultCtx {
         signer: &Keypair,
         authority: Pubkey,
     ) -> Result<(), FailedTransactionMetadata> {
-        let ix = initialize_config_ix(&signer.pubkey(), authority);
+        let ix = initialize_config_ix(&signer.pubkey(), authority, program_data_pda());
         self.send_as(signer, ix)
     }
 
@@ -1163,18 +1192,7 @@ impl BareCtx {
         authority: Pubkey,
         program_data: Pubkey,
     ) -> Result<(), FailedTransactionMetadata> {
-        let ix = Instruction {
-            program_id: august_vault::ID,
-            accounts: ix_accounts::InitializeConfig {
-                program_config: program_config_pda(),
-                upgrade_authority: signer.pubkey(),
-                payer: signer.pubkey(),
-                program_data,
-                system_program: solana_sdk::system_program::ID,
-            }
-            .to_account_metas(None),
-            data: ix_data::InitializeConfig { authority }.data(),
-        };
+        let ix = initialize_config_ix(&signer.pubkey(), authority, program_data);
         send_tx(&mut self.svm, signer, &[ix], &[signer]).map(|_| ())
     }
 
@@ -1484,14 +1502,25 @@ fn write_program_data(svm: &mut LiteSVM, address: Pubkey, upgrade_authority: Opt
         .unwrap_or_else(|e| panic!("set_account failed for ProgramData: {e:?}"));
 }
 
-fn initialize_config_ix(upgrade_authority: &Pubkey, authority: Pubkey) -> Instruction {
+/// The single construction site for `initialize_config`.
+///
+/// `BareCtx` previously built this account list inline as well. Two independent
+/// copies are behaviourally identical today, but if this instruction ever gains a
+/// separate rent payer (mirroring `try_initialize_vault_paid_by`) the inline copy
+/// would keep sending `payer = signer`, both would still compile, and the tests
+/// using it would silently stop covering the shape they claim to.
+fn initialize_config_ix(
+    upgrade_authority: &Pubkey,
+    authority: Pubkey,
+    program_data: Pubkey,
+) -> Instruction {
     Instruction {
         program_id: august_vault::ID,
         accounts: ix_accounts::InitializeConfig {
             program_config: program_config_pda(),
             upgrade_authority: *upgrade_authority,
             payer: *upgrade_authority,
-            program_data: program_data_pda(),
+            program_data,
             system_program: solana_sdk::system_program::ID,
         }
         .to_account_metas(None),
@@ -1502,7 +1531,7 @@ fn initialize_config_ix(upgrade_authority: &Pubkey, authority: Pubkey) -> Instru
 /// Bootstrap the config with `authority` as both the upgrade authority (per the
 /// installed `ProgramData`) and the resulting vault-creation authority.
 fn initialize_program_config(svm: &mut LiteSVM, authority: &Keypair) {
-    let ix = initialize_config_ix(&authority.pubkey(), authority.pubkey());
+    let ix = initialize_config_ix(&authority.pubkey(), authority.pubkey(), program_data_pda());
     send_tx(svm, authority, &[ix], &[authority]).expect("initialize program config");
 }
 

@@ -36,17 +36,52 @@ export function programDataPda(programId) {
 }
 
 /**
- * Read the program's on-chain upgrade authority, or null if the program is not
- * upgradeable / has none.
+ * Read the program's on-chain upgrade authority state.
+ *
+ * Returns a discriminated result rather than a bare `null`, because the reasons
+ * for "no authority" are operationally very different and must not be reported
+ * with the same message. "Immutable" is a permanent, unrecoverable property of a
+ * real program; "not-found" usually just means a typo in `--program-id` or the
+ * wrong `--url`. Collapsing them tells an operator their program is permanently
+ * broken when they actually mistyped an address.
+ *
+ * @returns {{ok: true, authority: PublicKey}
+ *          | {ok: false, reason: 'not-found'|'wrong-owner'|'malformed'|'immutable'}}
  */
-export async function fetchUpgradeAuthority(connection, programId) {
+export async function fetchUpgradeAuthorityState(connection, programId) {
   const info = await connection.getAccountInfo(programDataPda(programId));
-  if (!info || !info.owner.equals(BPF_LOADER_UPGRADEABLE)) return null;
+  if (!info) return { ok: false, reason: 'not-found' };
+  if (!info.owner.equals(BPF_LOADER_UPGRADEABLE)) {
+    return { ok: false, reason: 'wrong-owner' };
+  }
   // bincode UpgradeableLoaderState::ProgramData — 4-byte variant (3), 8-byte
   // slot, then Option<Pubkey> as a 1-byte tag plus the key.
-  if (info.data.length < 45 || info.data.readUInt32LE(0) !== 3) return null;
-  if (info.data[12] !== 1) return null;
-  return new PublicKey(info.data.subarray(13, 45));
+  if (info.data.length < 45 || info.data.readUInt32LE(0) !== 3) {
+    return { ok: false, reason: 'malformed' };
+  }
+  // Only an explicit Option::None tag means genuinely immutable.
+  if (info.data[12] !== 1) return { ok: false, reason: 'immutable' };
+  return { ok: true, authority: new PublicKey(info.data.subarray(13, 45)) };
+}
+
+/** Human-readable explanation for a non-`ok` {@link fetchUpgradeAuthorityState}. */
+export function explainUpgradeAuthority(reason, programId) {
+  const id = programId.toBase58();
+  switch (reason) {
+    case 'not-found':
+      return `no ProgramData account exists for ${id}. The program is not deployed ` +
+        `on this cluster, or --program-id / --url is wrong.`;
+    case 'wrong-owner':
+      return `the ProgramData account for ${id} is not owned by the upgradeable ` +
+        `loader, so ${id} is not an upgradeable program.`;
+    case 'malformed':
+      return `the ProgramData account for ${id} did not parse as ` +
+        `UpgradeableLoaderState::ProgramData.`;
+    case 'immutable':
+      return `${id} is immutable — its upgrade authority has been revoked.`;
+    default:
+      return `unknown ProgramData state for ${id}.`;
+  }
 }
 
 /**
@@ -98,15 +133,19 @@ export async function ensureProgramConfig({
   }
 
   const authority = desiredAuthority ?? signer.publicKey;
-  const onChainUpgradeAuthority = await fetchUpgradeAuthority(connection, programId);
+  const authState = await fetchUpgradeAuthorityState(connection, programId);
 
-  if (onChainUpgradeAuthority === null) {
+  if (!authState.ok) {
+    // Report WHICH of the four states this is. `new-vault.mjs` and
+    // `init-devnet-vault.mjs` both reach here, and a wrong --url or an
+    // undeployed program must not be reported as permanent immutability.
     throw new Error(
-      `Program ${programId.toBase58()} has no readable upgrade authority, so the ` +
-      `program config cannot be bootstrapped. The config is mandatory before ` +
-      `any vault can be initialized.`
+      `${explainUpgradeAuthority(authState.reason, programId)} The program config ` +
+      `cannot be bootstrapped, and it is mandatory before any vault can be ` +
+      `initialized.`
     );
   }
+  const onChainUpgradeAuthority = authState.authority;
 
   if (!onChainUpgradeAuthority.equals(signer.publicKey)) {
     throw new Error(

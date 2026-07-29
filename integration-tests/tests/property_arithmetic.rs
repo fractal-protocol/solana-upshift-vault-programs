@@ -3,12 +3,19 @@
 //! fuzz/property testing over "share and asset conversion" math.
 //!
 //! The unit suite in `programs/august-vault/src/state/vault.rs` pins these
-//! properties at hand-picked seeds; this suite searches the full `u64` input
-//! space (proptest explores boundaries and random interiors, and shrinks any
-//! counterexample it finds).
+//! properties at hand-picked seeds; this suite samples the `u64` input space and
+//! shrinks any counterexample it finds.
+//!
+//! Sampling caveat: `any::<u64>()` is uniform over the whole range, so values
+//! below `EXTRA_SHARES` (10^6) are drawn with probability ~5e-14. The loss regime
+//! (`total_assets < supply`) is still hit about half the time at large
+//! magnitudes, so the pro-rata floor and cap are genuinely exercised — but the
+//! *small-supply* regime, where the divergence reaches ~33%, is covered by the
+//! seeded unit tests and `loss_state_solvency.rs`, not here.
 //!
 //! Determinism note: proptest derives its RNG per run; a failing case is
-//! persisted to `proptest-regressions/` so it replays on every later run.
+//! persisted to `property_arithmetic.proptest-regressions` (alongside this file)
+//! so it replays on every later run.
 
 use august_vault::errors::ErrorCode;
 use august_vault::state::vault::{VaultState, EXTRA_SHARES, VIRTUAL_ASSETS};
@@ -25,9 +32,10 @@ fn anchor_code(e: &anchor_lang::error::Error) -> Option<u32> {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(2048))]
 
-    /// `shares_for_deposit` is exactly `floor(amount * (supply+1) / (total+1))`
-    /// whenever the result fits in u64. A refactor that changes the rounding
-    /// direction (the OtterSec-audited security property) fails here.
+    /// `shares_for_deposit` is exactly
+    /// `floor(max(amount * (supply + EXTRA_SHARES) / (total + VIRTUAL_ASSETS),`
+    /// `amount * supply / total))` whenever the result fits in u64. A refactor
+    /// that changes the rounding direction, or drops either bound, fails here.
     #[test]
     fn shares_for_deposit_is_exact_floor(
         supply in any::<u64>(),
@@ -36,6 +44,22 @@ proptest! {
     ) {
         let den = total_assets as u128 + VIRTUAL_ASSETS;
         let result = VaultState::shares_for_deposit(supply, total_assets, amount);
+
+        // No assets against outstanding shares has no defined price, and the
+        // program refuses rather than mispricing.
+        if total_assets == 0 && supply > 0 {
+            let e = match result {
+                Ok(v) => return Err(TestCaseError::fail(
+                    format!("returned Ok({v}) for a vault with no assets but live shares")
+                )),
+                Err(e) => e,
+            };
+            prop_assert_eq!(
+                anchor_code(&e),
+                Some(vault_error_code(ErrorCode::SharePriceUndefined))
+            );
+            return Ok(());
+        }
 
         // `checked_mul`, not `*`: with the offsets at 10^6 the exact product
         // exceeds u128 when `amount` and `supply` are both near u64::MAX, so
@@ -54,13 +78,46 @@ proptest! {
                 ),
             },
             Some(num) => {
-                let exact_floor = num / den;
+                // Minting is floored at pro-rata, which binds below par
+                // (`total_assets < supply`) — the mirror of the redemption cap.
+                //
+                // `total_assets == 0` still reaches here when `supply == 0` (the
+                // guard above only returns early for a live supply), so the
+                // divisor must be checked or this panics with "divide by zero".
+                // Uniform `any::<u64>()` will not draw that pair by chance, but
+                // proptest *shrinks* toward 0 — so without this guard the next
+                // genuine counterexample would likely be reported as a
+                // divide-by-zero panic instead of the real bug.
+                let offset_floor = num / den;
+                let pro_rata = if total_assets == 0 {
+                    Some(0) // no pro-rata claim exists; the offset term governs
+                } else {
+                    (amount as u128).checked_mul(supply as u128)
+                        .map(|n| n / total_assets as u128)
+                };
+                let expected = match pro_rata {
+                    Some(p) => offset_floor.max(p),
+                    // pro-rata itself exceeds u128; the program reports MathError.
+                    None => {
+                        let e = match result {
+                            Ok(v) => return Err(TestCaseError::fail(
+                                format!("returned Ok({v}) though pro-rata exceeds u128")
+                            )),
+                            Err(e) => e,
+                        };
+                        prop_assert_eq!(
+                            anchor_code(&e),
+                            Some(vault_error_code(ErrorCode::MathError))
+                        );
+                        return Ok(());
+                    }
+                };
                 match result {
-                    Ok(shares) => prop_assert_eq!(shares as u128, exact_floor),
+                    Ok(shares) => prop_assert_eq!(shares as u128, expected),
                     Err(e) => {
-                        // The product fit, so only the u64 narrowing may fail.
-                        prop_assert!(exact_floor > u64::MAX as u128,
-                            "error returned though result {} fits u64", exact_floor);
+                        // Both products fit, so only the u64 narrowing may fail.
+                        prop_assert!(expected > u64::MAX as u128,
+                            "error returned though result {} fits u64", expected);
                         prop_assert_eq!(
                             anchor_code(&e),
                             Some(vault_error_code(ErrorCode::NumberOverflow))

@@ -22,21 +22,47 @@
  *
  *   # Emit an unsigned transaction for an externally held authority (Fordefi):
  *   node deploy/bootstrap-config.mjs --program-id <ID> --authority <PUBKEY> \
- *     --unsigned out.json [--url <RPC>]
+ *     --unsigned out.json [--payer <ops-keypair.json>] \
+ *     [--nonce-account <PUBKEY>] [--url <RPC>]
  *
- * `--authority` is the key that will be allowed to create vaults; it defaults to
- * the upgrade authority. It is rotatable afterwards with `set_config_authority`,
- * and resettable by the upgrade authority with `override_config_authority`.
+ *   # --payer lets a funded OPS key cover the ProgramConfig rent (~0.0021 SOL)
+ *   # and the fee, so the upgrade authority does not need to hold SOL. It
+ *   # partially signs locally; the upgrade authority adds the second signature.
+ *
+ *   # --nonce-account uses a DURABLE NONCE so the exported transaction does not
+ *   # expire while a Fordefi ceremony is in progress. Strongly recommended for
+ *   # mainnet; the nonce authority must be the upgrade authority.
+ *
+ *   # Read back and ASSERT the stored authority (no signer needed). Exits
+ *   # non-zero on a mismatch; --authority is required so it can actually fail.
+ *   node deploy/bootstrap-config.mjs --program-id <ID> --authority <PUBKEY> \
+ *     [--url <RPC>]
+ *
+ * NOTE: --url defaults to DEVNET. Always pass it explicitly for mainnet.
+ *
+ * `--authority` is the key that will be allowed to create vaults; when
+ * bootstrapping it defaults to the upgrade authority. It is rotatable afterwards
+ * with `set_config_authority` (signed by the current config authority), and
+ * resettable by the upgrade authority with `override_config_authority`.
  */
 
-import { Connection, Keypair, PublicKey, Transaction } from '@solana/web3.js';
+import {
+  Connection,
+  Keypair,
+  NONCE_ACCOUNT_LENGTH,
+  NonceAccount,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+} from '@solana/web3.js';
 import { AnchorProvider, Program, Wallet } from '@coral-xyz/anchor';
 import { readFileSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import {
   ensureProgramConfig,
-  fetchUpgradeAuthority,
+  explainUpgradeAuthority,
+  fetchUpgradeAuthorityState,
   programConfigPda,
   programDataPda,
 } from './helpers/program-config.mjs';
@@ -60,6 +86,8 @@ function parseArgs() {
       case '--authority': out.authority = next(); break;
       case '--keypair': out.keypair = next(); break;
       case '--unsigned': out.unsigned = next(); break;
+      case '--nonce-account': out.nonceAccount = next(); break;
+      case '--payer': out.payer = next(); break;
       case '--url': out.url = next(); break;
       case '--help': case '-h': out.help = true; break;
       default: throw new Error(`unknown argument: ${argv[i]}`);
@@ -77,8 +105,12 @@ function loadKeypair(path) {
 async function main() {
   const args = parseArgs();
   if (args.help || !args.programId) {
-    console.log(readFileSync(new URL(import.meta.url)).toString()
-      .split('\n').slice(9, 31).join('\n'));
+    // Extract the header block by delimiter rather than by line index: a
+    // hardcoded slice silently truncates or garbles the help text the moment
+    // anyone edits the comment above.
+    const src = readFileSync(new URL(import.meta.url)).toString();
+    const doc = src.slice(src.indexOf('/**') + 3, src.indexOf('*/'));
+    console.log(doc.replace(/^\s*\* ?/gm, '').trim());
     process.exit(args.help ? 0 : 1);
   }
   // No keypair and no --unsigned is still valid: it means "just tell me what is
@@ -93,25 +125,24 @@ async function main() {
   );
   idl.address = programId.toBase58();
 
-  const upgradeAuthority = await fetchUpgradeAuthority(connection, programId);
-  if (upgradeAuthority === null) {
-    throw new Error(
-      `${programId.toBase58()} has no readable upgrade authority — cannot bootstrap.`
-    );
-  }
+  const configPda = programConfigPda(programId);
+  const authState = await fetchUpgradeAuthorityState(connection, programId);
+  const upgradeAuthority = authState.ok ? authState.authority : null;
+
   console.log(`Program            : ${programId.toBase58()}`);
   console.log(`ProgramData        : ${programDataPda(programId).toBase58()}`);
-  console.log(`Upgrade authority  : ${upgradeAuthority.toBase58()}`);
-  console.log(`Config PDA         : ${programConfigPda(programId).toBase58()}`);
+  console.log(
+    `Upgrade authority  : ${
+      upgradeAuthority ? upgradeAuthority.toBase58() : `none (${authState.reason})`
+    }`
+  );
+  console.log(`Config PDA         : ${configPda.toBase58()}`);
 
-  const authority = args.authority ? new PublicKey(args.authority) : upgradeAuthority;
-  console.log(`Vault-creation auth: ${authority.toBase58()}`);
-
-  // Read-only path FIRST, before any signer requirement. Once an externally held
-  // authority (Fordefi) has submitted the bootstrap, the documented follow-up is
-  // to re-run this to confirm what got stored — and that must not demand a
-  // keypair equal to a key nobody holds locally.
-  const configPda = programConfigPda(programId);
+  // READ-ONLY PATH FIRST, before requiring either a signer or an upgrade
+  // authority. Two reasons: the documented mainnet follow-up re-runs this to read
+  // back what an externally held key stored, and a program that has since been
+  // made immutable has no upgrade authority at all — but its config is still
+  // perfectly valid and still worth querying.
   const existing = await connection.getAccountInfo(configPda);
   if (existing !== null && existing.data.length > 0 && existing.owner.equals(programId)) {
     const readOnly = new AnchorProvider(
@@ -120,21 +151,87 @@ async function main() {
       { commitment: 'confirmed' }
     );
     const cfg = await new Program(idl, readOnly).account.programConfig.fetch(configPda);
-    console.log(`\n✅ Program config already exists.`);
-    console.log(`   Stored vault-creation authority: ${cfg.authority.toBase58()}`);
-    if (args.authority && !cfg.authority.equals(authority)) {
-      console.log(
-        `⚠️  This differs from the --authority you passed ` +
-        `(${authority.toBase58()}). Rotate with set_config_authority, or reset it ` +
-        `with override_config_authority using the upgrade authority.`
+    console.log(`\nStored vault-creation authority: ${cfg.authority.toBase58()}`);
+
+    // Verification must be able to FAIL, or it is not verification. Without an
+    // expected value there is nothing to compare against, and printing a pubkey
+    // and exiting 0 would let a mis-bootstrapped config read as success — the
+    // one thing the post-ceremony read-back in docs/UPGRADE.md exists to catch.
+    if (!args.authority) {
+      throw new Error(
+        `the config already exists, so pass --authority <PUBKEY> to assert which ` +
+        `key you expect to be stored. Re-run with ` +
+        `--authority ${cfg.authority.toBase58()} to confirm the value above is ` +
+        `the intended one.`
       );
-      process.exitCode = 1;
     }
+    if (!cfg.authority.equals(new PublicKey(args.authority))) {
+      throw new Error(
+        `MISMATCH: the stored authority is ${cfg.authority.toBase58()}, not the ` +
+        `${args.authority} you passed. Vault creation is gated behind the stored ` +
+        `key. Rotate with set_config_authority (needs a signature from the stored ` +
+        `key), or reset with override_config_authority (needs the upgrade authority).`
+      );
+    }
+    console.log(`✅ Matches the expected authority.`);
     return;
   }
 
+  // Everything below bootstraps, which is the only part that needs an upgrade
+  // authority to exist.
+  if (upgradeAuthority === null) {
+    // Only a genuinely immutable program is unrecoverable; the other three
+    // reasons are almost always a wrong --program-id or --url. Do not tell an
+    // operator their program is permanently broken because of a typo.
+    const detail = explainUpgradeAuthority(authState.reason, programId);
+    throw new Error(
+      authState.reason === 'immutable'
+        ? `${detail} Its config can never be bootstrapped, and vault creation ` +
+          `requires the config, so this program can no longer create vaults.`
+        : `${detail} Cannot bootstrap the config.`
+    );
+  }
+
+  const authority = args.authority ? new PublicKey(args.authority) : upgradeAuthority;
+  console.log(`Vault-creation auth: ${authority.toBase58()}`);
+
   if (args.unsigned) {
-    // Build the instruction only; the external signer supplies the signature.
+    // WHO PAYS. `initialize_config` takes `payer` as a Signer separate from
+    // `upgrade_authority`, so the account rent and the transaction fee do NOT
+    // have to come from the Fordefi MPC key — and the runbook's Prerequisites
+    // provision a funded ops fee-payer that is explicitly NOT the upgrade
+    // authority. Default to that ops payer when one is supplied: it partially
+    // signs here and the external authority adds the second signature.
+    //
+    // Falling back to the upgrade authority is still supported (one signature,
+    // simpler ceremony), but then it must hold SOL, which is checked below
+    // rather than assumed.
+    const opsPayer = args.payer ? loadKeypair(args.payer) : null;
+    const payerPubkey = opsPayer ? opsPayer.publicKey : upgradeAuthority;
+
+    const rent = await connection.getMinimumBalanceForRentExemption(169);
+    const needed = rent + 10_000; // rent + generous fee headroom
+    const payerBalance = await connection.getBalance(payerPubkey);
+    console.log(
+      `Fee/rent payer    : ${payerPubkey.toBase58()}` +
+      `${opsPayer ? ' (ops payer)' : ' (upgrade authority)'}`
+    );
+    console.log(
+      `                    balance ${payerBalance / 1e9} SOL, needs ~${needed / 1e9} SOL`
+    );
+    if (payerBalance < needed) {
+      throw new Error(
+        `${payerPubkey.toBase58()} holds ${payerBalance / 1e9} SOL but needs about ` +
+        `${needed / 1e9} SOL (ProgramConfig rent ${rent / 1e9} + fee). ` +
+        (opsPayer
+          ? 'Fund the ops payer.'
+          : 'Fund it, or pass --payer <ops-keypair.json> so a funded ops key ' +
+            'covers the cost instead of the upgrade authority.') +
+        ' Otherwise the ceremony completes and the submission then fails.'
+      );
+    }
+
+    // Build the instruction only; the external signer supplies its signature.
     const provider = new AnchorProvider(
       connection,
       new Wallet(Keypair.generate()), // never signs; required by the constructor
@@ -145,21 +242,83 @@ async function main() {
       .initializeConfig(authority)
       .accounts({
         upgradeAuthority,
-        payer: upgradeAuthority,
+        payer: payerPubkey,
         programData: programDataPda(programId),
       })
       .instruction();
 
-    const tx = new Transaction().add(ix);
-    tx.feePayer = upgradeAuthority;
-    tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+    const tx = new Transaction();
+
+    // A normal recentBlockhash expires after ~150 blocks (roughly 60-90s), which
+    // a Fordefi review-and-approve ceremony will almost always outlast — the
+    // signed transaction would then be rejected as "Blockhash not found" after
+    // the approvals were already collected. A DURABLE NONCE has no expiry: the
+    // nonce value stays valid until the nonce account is advanced, which happens
+    // only when this very transaction lands.
+    let nonceInfo = null;
+    if (args.nonceAccount) {
+      const noncePubkey = new PublicKey(args.nonceAccount);
+      const info = await connection.getAccountInfo(noncePubkey);
+      if (!info) {
+        throw new Error(`nonce account ${noncePubkey.toBase58()} does not exist`);
+      }
+      if (!info.owner.equals(SystemProgram.programId) ||
+          info.data.length !== NONCE_ACCOUNT_LENGTH) {
+        throw new Error(
+          `${noncePubkey.toBase58()} is not a durable nonce account ` +
+          `(owner ${info.owner.toBase58()}, ${info.data.length} bytes)`
+        );
+      }
+      nonceInfo = NonceAccount.fromAccountData(info.data);
+      if (!nonceInfo.authorizedPubkey.equals(upgradeAuthority)) {
+        throw new Error(
+          `the nonce authority is ${nonceInfo.authorizedPubkey.toBase58()} but the ` +
+          `upgrade authority is ${upgradeAuthority.toBase58()}. AdvanceNonceAccount ` +
+          `must be signed by the nonce authority, so they must match here.`
+        );
+      }
+      // The advance instruction MUST be first; the nonce doubles as the blockhash.
+      tx.add(SystemProgram.nonceAdvance({
+        noncePubkey,
+        authorizedPubkey: upgradeAuthority,
+      }));
+      tx.recentBlockhash = nonceInfo.nonce;
+    } else {
+      tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+    }
+
+    tx.add(ix);
+    tx.feePayer = payerPubkey;
+    // Attach the ops payer's signature now; the export then needs only the
+    // upgrade authority's. Order matters: blockhash and feePayer must be set
+    // before signing.
+    if (opsPayer) tx.partialSign(opsPayer);
     const serialized = tx
       .serialize({ requireAllSignatures: false, verifySignatures: false })
       .toString('base64');
-    writeFileSync(args.unsigned, JSON.stringify({ transaction: serialized }, null, 2));
+    writeFileSync(args.unsigned, JSON.stringify({
+      transaction: serialized,
+      durableNonce: args.nonceAccount ?? null,
+      feePayer: payerPubkey.toBase58(),
+      signedBy: opsPayer ? [opsPayer.publicKey.toBase58()] : [],
+      awaitingSignatureFrom: upgradeAuthority.toBase58(),
+    }, null, 2));
     console.log(`\n✅ Unsigned transaction written to ${args.unsigned}`);
+    if (nonceInfo) {
+      console.log(`   Durable nonce: ${args.nonceAccount} (no expiry).`);
+    } else {
+      console.log('');
+      console.log('⚠️  This transaction carries an ordinary recent blockhash, which');
+      console.log('   expires in roughly 60-90 seconds. A Fordefi approval ceremony');
+      console.log('   will very likely outlast it and the submission will fail with');
+      console.log('   "Blockhash not found" AFTER the approvals were collected.');
+      console.log('   Either regenerate this file immediately before signing, or');
+      console.log('   re-run with --nonce-account <PUBKEY> to use a durable nonce');
+      console.log('   whose authority is the upgrade authority.');
+      console.log('');
+    }
     console.log('   Have the upgrade authority sign and submit it, then re-run');
-    console.log('   this script without --unsigned to verify the stored authority.');
+    console.log('   this script with --authority <PUBKEY> to verify what was stored.');
     return;
   }
 

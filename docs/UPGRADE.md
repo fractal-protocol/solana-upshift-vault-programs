@@ -2,9 +2,13 @@
 
 How to upgrade the deployed `august_vault` program to a **reproducibly-built,
 attested** binary and register it as **verified** on-chain (OtterSec →
-explorers). This aligns the live mainnet bytecode with the public source, which
-today it does **not** match (the current deployment predates verifiable builds —
-see [VERIFY.md](../VERIFY.md)).
+explorers).
+
+The live mainnet program is **already** running a reproducible build
+(`fca11d73…`, the release recorded in `verified-hashes.txt` before this one — see
+[VERIFY.md](../VERIFY.md)). This runbook therefore moves it from one verified
+build to the next: the `ProgramConfig` gate on vault creation, the share-price
+offset retune, and `deposit_checked`.
 
 > **This changes live mainnet bytecode over real user funds.** Do not deviate
 > from this runbook. **Three** transactions must be signed by the program's
@@ -23,11 +27,11 @@ see [VERIFY.md](../VERIFY.md)).
 
 - **Expected reproducible hash** (mainnet build, committed source): the
   `exec_sha256` / `raw_sha256` / `size` in [`verified-hashes.txt`](../verified-hashes.txt)
-  (currently `b3145a45…`, 597,064 B), built with `solana-verify` 0.5.1 in
+  (currently `f9f43ca4…`, 598,592 B), built with `solana-verify` 0.5.1 in
   `solanafoundation/solana-verifiable-build@sha256:695f890e…` (Solana 2.3.0).
-- **ProgramData must be extended first:** the new `.so` (597,064 B) is larger
+- **ProgramData must be extended first:** the new `.so` (598,592 B) is larger
   than the current allocation, so `solana program extend` is required or the
-  upgrade fails. Deficit = `597,064 + 45 (loader header) − 507,781 = 89,328` bytes
+  upgrade fails. Deficit = `598,592 + 45 (loader header) − 507,781 = 90,856` bytes
   (re-derive if the sizes change).
 - **Bootstrap the program config after upgrading:** vault creation is gated on a
   `ProgramConfig` authority that does not exist yet. Until `initialize_config` is
@@ -44,6 +48,15 @@ see [VERIFY.md](../VERIFY.md)).
 - Fordefi access to the upgrade authority key, able to sign a
   `BPFLoaderUpgradeable::Upgrade` instruction and two arbitrary transactions
   (the verify-PDA upload in Step 3 and `initialize_config` in Step 4).
+- **Step 4's cost is paid by the ops fee-payer**, not the Fordefi key. Pass
+  `--payer <ops-keypair.json>`: `initialize_config` takes `payer` as a `Signer`
+  separate from `upgrade_authority`, so the ops key covers the `ProgramConfig`
+  rent (169 bytes, 0.00207 SOL) plus the fee and signs locally, leaving only the
+  authority's signature for Fordefi. The script verifies the payer's balance
+  before writing the file and refuses if it is short — otherwise the approvals
+  get collected and the submission then fails for insufficient lamports. If you
+  omit `--payer` the Fordefi key pays instead and must itself hold SOL; the same
+  balance check applies.
 - The repository protections below provisioned. (The workflow fails closed
   without the machine-enforced ones — `release` env reviewers, immutable
   releases, and the admin-read token; the `v*` tag ruleset is human-audited.)
@@ -110,7 +123,7 @@ Also confirm the GitHub **build attestation** exists for the asset
 
 > `declare_id!` is baked into the bytecode, so the **devnet** artifact must
 > declare the devnet program ID. Build a devnet-targeted `.so` (this hashes
-> differently from mainnet's `b3145a45…` — expected; the dry-run validates
+> differently from mainnet's `f9f43ca4…` — expected; the dry-run validates
 > mechanics + state compatibility, not the mainnet bytes):
 
 ```bash
@@ -170,14 +183,17 @@ solana program show up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt -u mainnet-beta
 # 3. Confirm the release .so is the verified artifact.
 solana-verify get-executable-hash august_vault_v0.1.0.so   # == verified-hashes.txt
 
-# 4. Preserve the CURRENTLY-deployed binary for byte-exact rollback. It is not
-#    reproducible from source, but it IS byte-recoverable right now — archive it.
+# 4. Preserve the CURRENTLY-deployed binary for byte-exact rollback. It IS
+#    reproducible from source (it is the previous verified release), so this dump
+#    is a convenience, not the only recovery route — archive it anyway.
 solana program dump up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt \
   pre-upgrade-august_vault.so -u mainnet-beta
-solana-verify get-program-hash -u mainnet-beta up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt   # dcd22bfa…
+solana-verify get-program-hash -u mainnet-beta up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt
+#    Expect fca11d73ae5ba0635ee76964945c52ddcf78a167eb4c60317ae63df4a4e7cc1d
+#    (505,216 B) — the release recorded in verified-hashes.txt before this one.
+#    If you get something else, STOP: an unrecorded upgrade has happened.
 sha256sum pre-upgrade-august_vault.so
-#    Store pre-upgrade-august_vault.so + these hashes in secure archival (this
-#    is the only way to byte-restore the pre-upgrade program — see Rollback).
+#    Store pre-upgrade-august_vault.so + these hashes in secure archival.
 ```
 
 **Prepare the buffer (unprivileged, ops fee-payer):**
@@ -187,8 +203,8 @@ sha256sum pre-upgrade-august_vault.so
 # Re-derive first — this value is release-specific:
 #   solana program show up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt -u m   # current allocation
 #   additional_bytes = <new .so size> + 45 - <current ProgramData account size>
-# For the hashes in verified-hashes.txt: 597,064 + 45 - 507,781 = 89,328.
-solana program extend up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt 89328 \
+# For the hashes in verified-hashes.txt: 598,592 + 45 - 507,781 = 90,856.
+solana program extend up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt 90856 \
   -u mainnet-beta -k <ops-payer.json>
 
 # Upload the verified .so into a buffer.
@@ -226,7 +242,7 @@ remedy. If immutability is ever wanted, Step 4 must happen first. Pinned by
 
 ```bash
 solana-verify get-program-hash -u mainnet-beta up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt
-#   Now equals verified-hashes.txt exec_sha256 (b3145a45…)
+#   Now equals verified-hashes.txt exec_sha256 (f9f43ca4…)
 ```
 
 If you paused, **unpause first** — `deposit` and `redeem` are pause-gated, so
@@ -283,27 +299,66 @@ on-chain against the loader's `ProgramData`. On mainnet that is the Fordefi MPC
 wallet, so this is a Fordefi-signed transaction like the upgrade itself.
 
 Choose the authority deliberately: it can be the upgrade authority itself, or a
-separate operational key so routine vault creation does not need Fordefi. It is
-rotatable later with `set_config_authority` (signed by the current config
-authority), so this is not a one-way decision.
+separate operational key so routine vault creation does not need Fordefi. Two
+things to know before signing, because `initialize_config` uses Anchor `init` and
+so can **never** be re-run:
+
+- **If you can sign with the key you set**, rotate it with `set_config_authority`
+  (signed by the *current* config authority). Routine, no Fordefi needed unless
+  the config authority is itself the Fordefi key.
+- **If you set a key you cannot sign with** — a typo, or a key nobody holds —
+  `set_config_authority` is useless, because it requires a signature from exactly
+  that key. The remedy is `override_config_authority`, signed by the **upgrade
+  authority**, i.e. a second Fordefi ceremony. Verify the authority in the
+  read-back below before you consider Step 4 done.
+
+The authority may not be the zero key (`InvalidAuthority`, 6017) on any of the
+three instructions.
 
 ```bash
 # Emit an unsigned initialize_config transaction for the Fordefi authority.
 # --authority is the key that will be allowed to create vaults; omit it to use
 # the upgrade authority itself. The script prints every derived account so they
 # can be checked against the Fordefi review screen before signing.
+# --nonce-account is STRONGLY recommended here. Without it the exported
+# transaction carries an ordinary recent blockhash that expires in ~60-90s, and a
+# Fordefi review-and-approve ceremony will almost certainly outlast it — the
+# submission then fails with "Blockhash not found" AFTER the approvals were
+# collected, and the whole ceremony has to be repeated. A durable nonce does not
+# expire. Its nonce authority must be the upgrade authority, since
+# AdvanceNonceAccount is signed by the nonce authority:
+#   solana-keygen new -o nonce.json
+#   solana create-nonce-account nonce.json 0.0015 \
+#     --nonce-authority B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM \
+#     -u mainnet-beta -k <ops-payer.json>
 node deploy/bootstrap-config.mjs \
   --program-id up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt \
   --url https://api.mainnet-beta.solana.com \
   --authority <VAULT_CREATION_AUTHORITY> \
+  --payer <ops-payer.json> \
+  --nonce-account <NONCE_ACCOUNT_PUBKEY> \
   --unsigned bootstrap-config.json
 
+# The written file records who already signed and who is still needed:
+#   "feePayer": "<ops payer>", "signedBy": ["<ops payer>"],
+#   "awaitingSignatureFrom": "<upgrade authority>"
+# Fordefi supplies that one remaining signature.
+
 # Have Fordefi sign and submit it, then re-run WITHOUT --unsigned to read back
-# and confirm the stored authority:
+# and confirm the stored authority. Pass the SAME --authority: that is what arms
+# the script's comparison, and it exits non-zero on a mismatch. No --keypair is
+# needed — the read-back path never signs. (--url matters: it defaults to DEVNET,
+# so an omitted --url silently reads the wrong cluster.)
 node deploy/bootstrap-config.mjs \
   --program-id up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt \
-  --url https://api.mainnet-beta.solana.com --keypair <any-readonly.json>
+  --url https://api.mainnet-beta.solana.com \
+  --authority <VAULT_CREATION_AUTHORITY>
 ```
+
+If that read-back reports a mismatch, vault creation is now gated behind the
+wrong key. Existing vaults are unaffected and user funds are not at risk, but no
+new vault can be created until `override_config_authority` is run — a second
+Fordefi ceremony. Do not treat Step 4 as complete until this command exits 0.
 
 On devnet, where the team holds the upgrade authority directly, the same script
 signs and sends in one step with `--keypair <devnet-authority.json>`.
@@ -340,10 +395,27 @@ Fordefi-signed upgrade. Two options:
   (`pre-upgrade-august_vault.so`). Verify the archived file's hash, then
   `solana program write-buffer pre-upgrade-august_vault.so` (ops payer) →
   `set-buffer-authority` to the Fordefi authority → Fordefi-signed `Upgrade`.
-  Confirm `get-program-hash` returns the archived `dcd22bfa…`. (The old binary
-  isn't source-reproducible, but the Step 2 dump makes it byte-recoverable.)
+  Confirm `get-program-hash` returns `fca11d73…`. That binary is also
+  source-reproducible from the previous release commit, so the archive is a
+  convenience rather than the only route back.
 - **Roll forward** to a rebuilt, verified hotfix release — preferred once the
   regression is understood.
+
+**A bytecode rollback does not undo Step 4.** The `ProgramConfig` PDA is a
+separate account: rolling back the binary leaves it in place, program-owned and
+simply unused by the old code. Three consequences worth deciding on *before* you
+run Step 4:
+
+- `initialize_config` uses Anchor `init`, so it can **never** be re-run. Rolling
+  back and later rolling forward does not give you a second attempt at
+  bootstrapping — the account created in Step 4 is the one you keep, and only
+  `override_config_authority` can change who controls it.
+- The old binary's `initialize` takes neither `program_config` nor `payer`, so
+  any client already rebuilt against the new IDL (see the lockstep list in
+  Step 4) **breaks on rollback**. Roll clients back too.
+- Therefore: do not run Step 4 until you are confident you will not roll back.
+  Steps 3 and 4 are independent of each other, so this does not block
+  verification.
 
 Pause user ops while rolling back or forward. The behavioral equivalence
 established by the fork test + devnet rehearsal makes a rollback unlikely.
@@ -376,19 +448,25 @@ established by the fork test + devnet rehearsal makes a rollback unlikely.
   returns 5,000 fewer units out of 194 billion. The floor-rounding on every
   operation still favours the vault, as before; it is the offset change itself
   that is two-sided.
-- **Redemptions are now capped at pro-rata**, which is a semantic change to
-  `redeem` — the only one in this release. Below par (`total_assets < supply`,
-  reachable after an operator reports a loss) the offsets would price redemptions
-  *above* the position's share of what is actually left, so whoever redeemed
-  first would take the excess and later holders would hit `NotEnoughLiquidity`.
-  The excess grows as supply shrinks relative to the offsets, and is worst on a
-  freshly created vault. `assets_for_redeem` now pays
-  `min(offset_formula, pro_rata)`. Above par the offset value is already the
-  smaller of the two, so the anti-inflation and anti-burn behaviour is unchanged,
-  and at `total_assets == supply` — where both live vaults sit — the two are
-  equal. Proven end to end in
+- **Deposits are floored at pro-rata and redemptions capped at pro-rata**, the
+  two semantic changes to user-facing instructions in this release. Both exist
+  for the same reason and are symmetric: the offsets pull the price toward 1.0,
+  so below par (`total_assets < supply`, reachable after an operator reports a
+  loss) they would *under*-mint on deposit and *over*-pay on redeem. Uncorrected,
+  a deposit made after a 50% loss would have handed a material fraction of its
+  value to incumbents on arrival — worst at the smallest reachable supply and
+  shrinking rapidly as supply grows past the offsets — and the first redeemer
+  would have taken more than its share, leaving later holders short. Neither is
+  reachable in the state the live vaults are in. `shares_for_deposit` now mints
+  `max(offset_formula, pro_rata)` and `assets_for_redeem` pays
+  `min(offset_formula, pro_rata)`. Above par the offset value is the binding one
+  in both cases, so the anti-inflation and anti-burn behaviour is unchanged, and
+  at `total_assets == supply` — where both live vaults sit — all three formulas
+  agree. A vault holding no assets while shares are outstanding has no defined
+  price and now rejects deposits with `SharePriceUndefined`; `operator_deposit`
+  can recapitalise it without minting. Proven end to end in
   `integration-tests/tests/loss_state_solvency.rs`.
-- **`initialize` is the exception, and it is a breaking change.** Vault *creation*
+- **`initialize` is also a breaking change.** Vault *creation*
   now requires the `ProgramConfig` account and a signer equal to its authority,
   and gains a separate `payer`. This affects no existing vault, but it does mean
   (a) no vault can be created between the upgrade and Step 4, and (b) every
@@ -396,6 +474,7 @@ established by the fork test + devnet rehearsal makes a rollback unlikely.
   lockstep list in Step 4.
 - `integration-tests/tests/mainnet_fork_compat.rs` proves the new code reads +
   operates on the **real** on-chain vault accounts.
-- This upgrade does **not** address the open audit items (virtual-offset size;
-  Token-2022 extension whitelisting) — decide separately whether to bundle those
-  (they would change behavior and need their own review).
+- This upgrade **does** address the virtual-offset-size item: the offsets go from
+  1 to 10^6, with the pro-rata floor and cap described above. It does **not**
+  address Token-2022 extension whitelisting — decide separately whether to bundle
+  that (it would change behavior and need its own review).

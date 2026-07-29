@@ -58,4 +58,34 @@ pub enum ErrorCode {
     InvalidAuthority,
     #[msg("Received fewer shares than the caller's minimum")]
     SlippageExceeded,
+    #[msg("Vault holds no assets while shares are outstanding; share price is undefined")]
+    SharePriceUndefined,
 }
+
+/// Compile-time pin of the ABI described above, placed next to the enum it
+/// guards. The runtime `errors_discriminant_canary` test in `state/vault.rs`
+/// checks the same mapping including the `+ 6000` offset; this one turns a
+/// reorder into a **build** failure rather than a test failure, and cannot drift
+/// away from the enum the way a test three files over can.
+const _: () = {
+    assert!(ErrorCode::NotOperator as u32 == 0);
+    assert!(ErrorCode::ZeroAmount as u32 == 1);
+    assert!(ErrorCode::InsufficientAmount as u32 == 2);
+    assert!(ErrorCode::AumIncreaseTooBig as u32 == 3);
+    assert!(ErrorCode::AumDecreaseTooBig as u32 == 4);
+    assert!(ErrorCode::WithdrawalFeeTooHigh as u32 == 5);
+    assert!(ErrorCode::AumLimitTooHigh as u32 == 6);
+    assert!(ErrorCode::NotAdmin as u32 == 7);
+    assert!(ErrorCode::VaultPaused as u32 == 8);
+    assert!(ErrorCode::InvalidNominatedAdmin as u32 == 9);
+    assert!(ErrorCode::NominationExpired as u32 == 10);
+    assert!(ErrorCode::MathError as u32 == 11);
+    assert!(ErrorCode::NumberOverflow as u32 == 12);
+    assert!(ErrorCode::NotEnoughLiquidity as u32 == 13);
+    assert!(ErrorCode::UnauthorizedAdmin as u32 == 14);
+    assert!(ErrorCode::VaultNotEmpty as u32 == 15);
+    assert!(ErrorCode::NotProtocolAuthority as u32 == 16);
+    assert!(ErrorCode::InvalidAuthority as u32 == 17);
+    assert!(ErrorCode::SlippageExceeded as u32 == 18);
+    assert!(ErrorCode::SharePriceUndefined as u32 == 19);
+};

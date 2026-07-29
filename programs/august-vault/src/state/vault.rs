@@ -80,8 +80,23 @@ pub struct VaultState {
     pub pda_bump: [u8; 1],
     pub vault_version: [u8; 1], // Version number for vault PDAs (allows multiple vaults per deposit mint)
     pub paused: bool,
+    /// Reserved. New fields must be carved **out of** this array so `LEN` stays
+    /// 455, the size of the live mainnet vault accounts. Enforced by a
+    /// compile-time assertion in `programs/august-vault/src/state/vault.rs`.
     pub padding: [u64; 32],
 }
+
+/// **Compile-time layout guard.** Two live mainnet vaults are 455-byte accounts.
+/// Growing `VaultState` past that makes every existing vault fail to deserialize
+/// — user funds become unreachable without a migration. Anchor's `init` sizes new
+/// accounts from `INIT_SPACE`, so a new field silently changes this number; the
+/// shrink direction is silent too, because `try_deserialize` ignores trailing
+/// bytes. Adding a field therefore requires removing the same number of bytes
+/// from `padding`, and this assertion fails the build if it is forgotten.
+const _: () = assert!(
+    VaultState::LEN == 455,
+    "VaultState::LEN must stay 455 — live mainnet accounts are this size"
+);
 
 impl VaultState {
     pub const LEN: usize = 8 + Self::INIT_SPACE;
@@ -132,33 +147,93 @@ impl VaultState {
 
     /// Shares minted for a deposit of `amount` underlying assets.
     ///
-    /// Formula: `amount * (supply + EXTRA_SHARES) / (total_assets + VIRTUAL_ASSETS)`.
+    /// Formula: `floor(max(`
+    ///   `amount * (supply + EXTRA_SHARES) / (total_assets + VIRTUAL_ASSETS),`
+    ///   `amount * supply / total_assets))`.
     ///
-    /// Uses `u128` intermediates because `amount * (supply + 1)` exceeds `u64`
-    /// at realistic balances. Rounded **down**: the LSB-of-precision goes to the
-    /// vault, not the depositor. Inverse of `assets_for_redeem`; together the
-    /// rounding policy guarantees `redeem(deposit(x)) ≤ x`. See the
-    /// `rounding_direction_*` property tests below.
+    /// Above par the offset term is the larger and binds; below par
+    /// (`total_assets < supply`, reachable after a reported loss) the pro-rata
+    /// floor binds, so a depositor never hands value to incumbents on arrival.
+    ///
+    /// Note the pro-rata floor has **no upper bound**, where the offset-only
+    /// formula was implicitly bounded. As `total_assets` approaches 1 against a
+    /// large supply the mint count approaches `amount * supply`, so in a
+    /// deep-loss state deposits eventually exceed `u64` and revert with
+    /// `NumberOverflow` — deposits brick rather than misprice. Reaching that
+    /// needs two privileged actions (an admin widening `aum_decrease_limit`, then
+    /// the operator writing the AUM down to near zero), and a vault in that state
+    /// is already worthless, so this is a documented consequence rather than a
+    /// guarded case.
+    /// Errors with `SharePriceUndefined` when `total_assets == 0` while shares are
+    /// outstanding — that state has no share price.
+    ///
+    /// Uses `u128` intermediates because `amount * (supply + EXTRA_SHARES)`
+    /// exceeds `u64` at realistic balances. Rounded **down**: the
+    /// LSB-of-precision goes to the vault, not the depositor. Inverse of
+    /// `assets_for_redeem`; together the rounding policy guarantees
+    /// `redeem(deposit(x)) <= x`, pinned by `shares_for_deposit_rounds_down` /
+    /// `assets_for_redeem_rounds_down` below and by the property suite in
+    /// `integration-tests/tests/property_arithmetic.rs`.
     pub fn shares_for_deposit(supply: u64, total_assets: u64, amount: u64) -> Result<u64> {
+        // A vault holding nothing while shares are outstanding has no meaningful
+        // share price: pro-rata is a division by zero, and the offset formula
+        // would mint a token amount against the ghost shares alone, handing the
+        // depositor a negligible stake in exchange for funding the entire
+        // reserve. Refuse instead of mispricing. `operator_deposit` can
+        // recapitalise without minting, after which deposits work again. The
+        // first-ever deposit (supply == 0) is unaffected and still mints 1:1.
+        require!(
+            total_assets > 0 || supply == 0,
+            ErrorCode::SharePriceUndefined
+        );
+
         let shares_eff = (supply as u128)
             .checked_add(EXTRA_SHARES)
             .ok_or(ErrorCode::MathError)?;
         let assets_eff = (total_assets as u128)
             .checked_add(VIRTUAL_ASSETS)
             .ok_or(ErrorCode::MathError)?;
-        let shares = (amount as u128)
+        let with_offsets = (amount as u128)
             .checked_mul(shares_eff)
             .ok_or(ErrorCode::MathError)?
             .checked_div(assets_eff)
             .ok_or(ErrorCode::MathError)?;
+
+        // Mirror of the cap in `assets_for_redeem`, and required for the same
+        // reason: the offsets pull the price toward 1.0, so below par
+        // (`total_assets < supply`) they *under*-mint, and a depositor would hand
+        // part of their deposit straight to incumbents. At a supply equal to the
+        // offsets, a deposit into a vault carrying a 50% loss lost 20% of its
+        // value on arrival. Minting at least pro-rata removes that.
+        //
+        // Above par the offset value is the larger of the two and still wins, so
+        // the inflation defence is unchanged — that defence works precisely by
+        // minting *more* than pro-rata when `total_assets` has been inflated,
+        // where pro-rata would round to zero.
+        let shares = if total_assets == 0 {
+            with_offsets
+        } else {
+            let pro_rata = (amount as u128)
+                .checked_mul(supply as u128)
+                .ok_or(ErrorCode::MathError)?
+                .checked_div(total_assets as u128)
+                .ok_or(ErrorCode::MathError)?;
+            with_offsets.max(pro_rata)
+        };
+
         u64::try_from(shares).map_err(|_| ErrorCode::NumberOverflow.into())
     }
 
     /// Underlying assets redeemed for `shares` burned.
     ///
-    /// Formula: `shares * (total_assets + VIRTUAL_ASSETS) / (supply + EXTRA_SHARES)`.
-    /// `u128` intermediates; rounded **down** (favours the vault). Companion of
-    /// `shares_for_deposit`.
+    /// Formula: `floor(min(`
+    ///   `shares * (total_assets + VIRTUAL_ASSETS) / (supply + EXTRA_SHARES),`
+    ///   `shares * total_assets / supply))`.
+    ///
+    /// The mirror of the floor in `shares_for_deposit`: above par the offset term
+    /// is the smaller and binds, below par the pro-rata cap does, so the first
+    /// redeemer cannot take more than its share and leave later holders short.
+    /// `u128` intermediates; rounded **down** (favours the vault).
     pub fn assets_for_redeem(supply: u64, total_assets: u64, shares: u64) -> Result<u64> {
         let shares_eff = (supply as u128)
             .checked_add(EXTRA_SHARES)
@@ -260,6 +335,73 @@ mod tests {
         assert_eq!(got, expected);
     }
 
+    // ---- loss states: deposits must mint at least pro-rata ----
+    //
+    // The mirror of the redemption cap. Below par the offsets under-mint, so a
+    // depositor would hand part of their deposit to incumbents on arrival. These
+    // pin the fair outcome and the boundary conditions around it.
+
+    #[test_case(1_000_000, 500_000, 500_000, 1_000_000; "supply == offsets, 50% loss")]
+    #[test_case(1_000, 500, 500, 1_000; "supply far below offsets, 50% loss")]
+    #[test_case(1_000_000_000, 500_000_000, 500_000_000, 1_000_000_000; "supply above offsets")]
+    fn shares_for_deposit_never_mints_below_pro_rata(
+        supply: u64,
+        total_assets: u64,
+        amount: u64,
+        expected: u64,
+    ) {
+        let got = VaultState::shares_for_deposit(supply, total_assets, amount).unwrap();
+        assert_eq!(got, expected, "must mint pro-rata in a loss state");
+        let pro_rata = ((amount as u128 * supply as u128) / total_assets as u128) as u64;
+        assert!(got >= pro_rata, "{got} mints below pro-rata {pro_rata}");
+    }
+
+    /// A deposit made after a loss must be immediately redeemable for what it
+    /// paid, give or take rounding — no value transfer to incumbents on arrival.
+    #[test_case(1_000_000, 500_000, 500_000; "supply == offsets")]
+    #[test_case(1_000, 500, 500; "supply far below offsets")]
+    #[test_case(1_000_000, 999_999, 100_000; "1 unit of loss")]
+    #[test_case(2_166_176_445, 1_083_088_222, 500_000_000; "live-vault magnitude")]
+    fn depositing_after_a_loss_does_not_donate_to_incumbents(
+        supply: u64,
+        total_assets: u64,
+        amount: u64,
+    ) {
+        let minted = VaultState::shares_for_deposit(supply, total_assets, amount).unwrap();
+        let new_supply = supply + minted;
+        let new_total = total_assets + amount;
+
+        let redeemable = VaultState::assets_for_redeem(new_supply, new_total, minted).unwrap();
+        assert!(
+            redeemable + 2 >= amount,
+            "deposited {amount} but could only redeem {redeemable} straight back"
+        );
+
+        // And the incumbents' claim must not have grown at the depositor's expense.
+        let incumbent_before = VaultState::assets_for_redeem(supply, total_assets, supply).unwrap();
+        let incumbent_after = VaultState::assets_for_redeem(new_supply, new_total, supply).unwrap();
+        assert!(
+            incumbent_after <= incumbent_before + 2,
+            "incumbents' claim rose from {incumbent_before} to {incumbent_after}"
+        );
+    }
+
+    /// No assets but outstanding shares has no defined price — refuse rather than
+    /// mint against the ghost shares alone. The first-ever deposit is unaffected.
+    #[test]
+    fn deposit_into_a_zero_asset_vault_with_shares_is_rejected() {
+        let err = VaultState::shares_for_deposit(1_000_000, 0, 500_000).unwrap_err();
+        assert_eq!(
+            err_code(&err).unwrap(),
+            ErrorCode::SharePriceUndefined as u32 + ANCHOR_USER_ERROR_OFFSET,
+        );
+        // supply == 0 is the first deposit and must still mint 1:1.
+        assert_eq!(
+            VaultState::shares_for_deposit(0, 0, 500_000).unwrap(),
+            500_000
+        );
+    }
+
     // ---- loss states: redemptions must stay within pro-rata ----
     //
     // `total_assets < supply` is reachable whenever an operator reports a loss.
@@ -318,15 +460,16 @@ mod tests {
 
     // ---- rounding direction is a security property: pin it explicitly ----
     //
-    // The exact rational value `r = amount * (supply + 1) / (total_assets + 1)`
-    // may be non-integer. `shares_for_deposit` must return `floor(r)`:
-    //   `got * (total_assets + 1)  <=  amount * (supply + 1)`
-    //   `(got + 1) * (total_assets + 1)  >  amount * (supply + 1)`
+    // With `E = EXTRA_SHARES` and `V = VIRTUAL_ASSETS`, the exact rational value
+    // `r = amount * (supply + E) / (total_assets + V)` may be non-integer.
+    // `shares_for_deposit` must return `floor(r)`:
+    //   `got * (total_assets + V)  <=  amount * (supply + E)`
+    //   `(got + 1) * (total_assets + V)  >  amount * (supply + E)`
     // A future refactor flipping `checked_div` to `div_ceil` would break this.
 
-    #[test_case(1_000_000, 3_000_000, 7; "non-divisible: 7 * 1e6+1 / 3e6+1")]
-    #[test_case(2, 5, 1; "non-divisible: 1 * 3 / 6")]
-    #[test_case(11, 13, 17; "non-divisible: 17 * 12 / 14")]
+    #[test_case(1_000_000, 3_000_000, 7; "non-divisible: 7 * (1e6+E) / (3e6+V)")]
+    #[test_case(2, 5, 1; "non-divisible: 1 * (2+E) / (5+V)")]
+    #[test_case(11, 13, 17; "non-divisible: 17 * (11+E) / (13+V)")]
     fn shares_for_deposit_rounds_down(supply: u64, total_assets: u64, amount: u64) {
         let got = VaultState::shares_for_deposit(supply, total_assets, amount).unwrap() as u128;
         let num = (amount as u128) * (supply as u128 + EXTRA_SHARES);
@@ -340,9 +483,9 @@ mod tests {
         assert!((got + 1) * den > num, "lost more than 1 LSB");
     }
 
-    #[test_case(1_000_000, 3_000_000, 7; "non-divisible: 7 * 3e6+1 / 1e6+1")]
-    #[test_case(5, 2, 1; "non-divisible: 1 * 3 / 6")]
-    #[test_case(13, 11, 17; "non-divisible: 17 * 12 / 14")]
+    #[test_case(1_000_000, 3_000_000, 7; "non-divisible: 7 * (3e6+V) / (1e6+E)")]
+    #[test_case(5, 2, 1; "non-divisible: 1 * (2+V) / (5+E)")]
+    #[test_case(13, 11, 17; "non-divisible: 17 * (11+V) / (13+E)")]
     fn assets_for_redeem_rounds_down(supply: u64, total_assets: u64, shares: u64) {
         let got = VaultState::assets_for_redeem(supply, total_assets, shares).unwrap() as u128;
         // Two bounds apply, and the payout is the floor of whichever is tighter:
@@ -393,8 +536,10 @@ mod tests {
 
     #[test]
     fn shares_for_deposit_narrowing_overflow_returns_number_overflow() {
-        // The u128 product fits; only the final narrowing to u64 fails.
-        let err = VaultState::shares_for_deposit(u64::MAX, 0, 1_000_000).unwrap_err();
+        // Both u128 products fit; only the final narrowing to u64 fails. (Here it
+        // is the pro-rata branch that exceeds u64, at a supply of u64::MAX against
+        // a single unit of assets.)
+        let err = VaultState::shares_for_deposit(u64::MAX, 1, 1_000_000).unwrap_err();
         let code = err_code(&err).expect("AnchorError expected");
         assert_eq!(
             code,
@@ -472,6 +617,7 @@ mod tests {
             (ErrorCode::NotProtocolAuthority, 6016),
             (ErrorCode::InvalidAuthority, 6017),
             (ErrorCode::SlippageExceeded, 6018),
+            (ErrorCode::SharePriceUndefined, 6019),
         ];
         for (variant, code) in expected {
             assert_eq!(

@@ -5,6 +5,7 @@
 #   (Solana v2.3.0, container Rust 1.86.0), driven by the committed Cargo.lock.
 #
 # Columns (whitespace-separated):
+#   program     — the crate/library name passed to `--library-name`.
 #   exec_sha256 — `solana-verify get-executable-hash` (trailing zero bytes
 #                 trimmed). Equals `solana-verify get-program-hash` for the
 #                 on-chain program, so this is the value used for on-chain
@@ -15,5 +16,16 @@
 # On an intentional bytecode change, update this file in the SAME PR; CI fails
 # if a rebuilt hash disagrees. Reproduce locally: see VERIFY.md.
 #
+# Provenance: these values are not self-attesting — the authority is the
+# `reproducible-build` CI job, which rebuilds from the commit under test and
+# fails on any disagreement. A green run on a commit is what establishes that
+# these hashes belong to that commit. That job also fails closed if this file
+# yields no records to compare, so a truncated file cannot pass silently.
+#
+# NOTE: line numbers are compiled into the bytecode (Anchor error macros capture
+# file!()/line!()), so inserting or deleting a line above any require! changes
+# these hashes even with no logic change — often at an unchanged size. See the
+# "Line numbers are part of the bytecode" note in VERIFY.md.
+#
 # program       exec_sha256                                                       raw_sha256                                                        size
-august_vault    b3145a457440876b6c9b33e770886c705315b3ef05306c155092425676aa76f2  8a47422375b492b233dfdb957e42cf5d1a27a6b8768ba00b9c46fa4cc0429fa3  597064
+august_vault    f9f43ca48589f82a8690e802c1d75cd016b01bff5404bd3f8b5a18d6348c79a8  5159566ba012f1f96e10bee6991b57db67e2d800c2475e01d15cbb6571b14747  598592

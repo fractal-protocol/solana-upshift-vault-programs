@@ -32,6 +32,9 @@ pub aum_decrease_limit: u32,
 pub pda_bump: [u8; 1],
 pub vault_version: [u8; 1],
 pub paused: bool,
+/// Reserved. New fields must be carved **out of** this array so `LEN` stays
+/// 455, the size of the live mainnet vault accounts. Enforced by a
+/// compile-time assertion in `programs/august-vault/src/state/vault.rs`.
 pub padding: [u64; 32],
 }
 

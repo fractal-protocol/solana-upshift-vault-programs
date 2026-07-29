@@ -7,7 +7,10 @@
 //!   1. deserializes the existing `VaultState` (guards the account layout);
 //!   2. reads the vault reserve token account back, consistent with accounting;
 //!   3. exercises a real user deposit against the live USDC vault state, minting
-//!      shares exactly per the on-chain formula with correct accounting.
+//!      shares exactly per the on-chain formula with correct accounting;
+//!   4. redeems those shares straight back out, so `assets_for_redeem` — which
+//!      carries the raised offsets and the pro-rata cap — is exercised against
+//!      real state too, and the round trip is shown not to extract value.
 //!
 //! Note the live snapshots are ~1:1 (supply == total_assets), a state in which the
 //! share-price offsets cancel exactly — so these tests are deliberately
@@ -116,11 +119,18 @@ fn read_vault_state(svm: &LiteSVM, addr: &Pubkey) -> VaultState {
         .expect("current code must deserialize the real on-chain VaultState")
 }
 
-/// Independent reference for the deposit share formula
-/// (`amount * (supply + EXTRA_SHARES) / (total_assets + VIRTUAL_ASSETS)`,
-/// floored). Deliberately does NOT call the program's `shares_for_deposit`, so a
-/// drift in the *shape* of the program's formula is caught here instead of being
-/// silently mirrored in the expectation.
+/// Independent reference for the deposit share formula:
+/// `floor(amount * (supply + EXTRA_SHARES) / (total_assets + VIRTUAL_ASSETS))`.
+///
+/// Deliberately does NOT call the program's `shares_for_deposit`, so a drift in
+/// the *shape* of the program's formula is caught here instead of being silently
+/// mirrored in the expectation.
+///
+/// Valid **at or above par only**: it implements the offset term and omits the
+/// pro-rata floor, which cannot bind while `total_assets >= supply`. Every
+/// caller here is at or above par, and the assertion below enforces that. If a
+/// future fixture refresh captures a vault that has booked a loss, add
+/// `.max(amount * supply / total_assets)`.
 ///
 /// It reads the offset *constants* rather than hardcoding them: hardcoded values
 /// would go stale the moment the offsets are retuned, leaving this reference
@@ -129,7 +139,32 @@ fn read_vault_state(svm: &LiteSVM, addr: &Pubkey) -> VaultState {
 /// `share_burn_pricing.rs`; what this file guards is the byte→field mapping and
 /// that live state still round-trips.
 fn ref_shares(supply: u64, total_assets: u64, amount: u64) -> u64 {
+    // Guard the precondition rather than trust it: this implements the offset
+    // term only and omits the pro-rata floor, which cannot bind at or above par.
+    // Every current caller is at or above par, but this file's header instructs
+    // future maintainers to refresh the fixtures from mainnet — and a vault that
+    // has booked a loss would land below par, where this reference would silently
+    // disagree with the program instead of failing loudly here.
+    assert!(
+        total_assets >= supply,
+        "ref_shares is only valid at or above par (total_assets={total_assets}, \
+         supply={supply}); below par the program applies a pro-rata floor this \
+         reference does not implement"
+    );
     ((amount as u128 * (supply as u128 + EXTRA_SHARES)) / (total_assets as u128 + VIRTUAL_ASSETS))
+        as u64
+}
+
+/// Companion reference for `assets_for_redeem`, valid at or above par for the
+/// same reason (there the offset term is the smaller and the pro-rata cap is
+/// inert).
+fn ref_assets(supply: u64, total_assets: u64, shares: u64) -> u64 {
+    assert!(
+        total_assets >= supply,
+        "ref_assets is only valid at or above par (total_assets={total_assets}, \
+         supply={supply})"
+    );
+    ((shares as u128 * (total_assets as u128 + VIRTUAL_ASSETS)) / (supply as u128 + EXTRA_SHARES))
         as u64
 }
 
@@ -294,6 +329,80 @@ fn usdc_vault_real_state_read_and_deposit() {
         "USDC fork OK: reserve={USDC_LOCAL_AUM} supply={supply} deposit={deposit} -> shares={minted} (formula {expected_shares}); local_aum {USDC_LOCAL_AUM}->{}",
         vs_after.local_aum
     );
+
+    // 4. EXERCISE THE OTHER DIRECTION — redeem straight back out.
+    //
+    // Without this, `assets_for_redeem` was never run against forked state at
+    // all, even though it carries both the raised offsets and the new pro-rata
+    // cap. The live vault's withdrawal_fee is 0, so the payout is the whole
+    // amount; the fee-bearing path is covered by `fee_bearing_redeem.rs`.
+    let fee_recipient_acct = Keypair::new().pubkey();
+    inject(
+        &mut svm,
+        fee_recipient_acct,
+        spl,
+        packed_token(deposit_mint, vs_after.fee_recipient, 0),
+    );
+    assert_eq!(
+        vs_after.withdrawal_fee, 0,
+        "fixture assumption: the live USDC vault charges no withdrawal fee"
+    );
+
+    let supply_after_deposit =
+        SplMint::unpack(&svm.get_account(&share_mint).unwrap().data[..SplMint::LEN])
+            .unwrap()
+            .supply;
+    let total_after_deposit = vs_after.total_assets().unwrap();
+    let expected_assets = ref_assets(supply_after_deposit, total_after_deposit, minted);
+
+    let redeem_ix = Instruction {
+        program_id: august_vault::ID,
+        accounts: ix_accounts::Redeem {
+            vault_state,
+            vault_deposit_ata: vault_ata,
+            sender_token_account: user_usdc,
+            sender_share_account: user_shares_acct,
+            fee_recipient_account: fee_recipient_acct,
+            share_mint,
+            deposit_mint,
+            signer: user.pubkey(),
+            token_program: spl,
+        }
+        .to_account_metas(None),
+        data: ix_data::Redeem { shares: minted }.data(),
+    };
+    let bh = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(&[redeem_ix], Some(&user.pubkey()), &[&user], bh);
+    let res = svm.send_transaction(tx);
+    assert!(
+        res.is_ok(),
+        "redeem against real USDC vault state failed: {:?}",
+        res.err()
+    );
+
+    let returned = token_amount(&svm, &user_usdc);
+    assert_eq!(
+        returned, expected_assets,
+        "assets returned must match the on-chain formula"
+    );
+    // The round trip must not extract value from the vault — the property the
+    // floor/cap pair exists to preserve, here against real on-chain state.
+    assert!(
+        returned <= deposit,
+        "round trip extracted value: paid {deposit}, took {returned}"
+    );
+    assert_eq!(
+        token_amount(&svm, &user_shares_acct),
+        0,
+        "all shares burned on redeem"
+    );
+    let vs_final = read_vault_state(&svm, &vault_state);
+    assert_eq!(
+        vs_final.local_aum,
+        token_amount(&svm, &vault_ata),
+        "local_aum must still equal the reserve after the round trip"
+    );
+    println!("USDC fork redeem OK: {minted} shares -> {returned} units (paid {deposit})");
 }
 
 #[test]
@@ -361,8 +470,8 @@ fn jito_vault_real_state_read() {
 /// (currently ~1:1) live snapshots don't exercise. Takes the REAL USDC vault +
 /// share mint but re-injects the VaultState with a SYNTHETIC total_assets =
 /// 2 * supply (0.5 share price). A 3-unit deposit then yields
-/// 3*(S+1)/(2S+1) = 1.4999… -> floors to 1 share. Expectation is BOTH the
-/// independent reference formula and a frozen literal.
+/// 3*(S+EXTRA_SHARES)/(2S+VIRTUAL_ASSETS) ≈ 1.5 -> floors to 1 share.
+/// Expectation is BOTH the independent reference formula and a frozen literal.
 #[test]
 fn usdc_deposit_rounding_on_nonunit_state() {
     let mut svm = new_svm();

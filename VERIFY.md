@@ -43,7 +43,7 @@ asserts the same three):
 
 ```
 # program       exec_sha256                                                       raw_sha256                                                        size
-august_vault    b3145a457440876b6c9b33e770886c705315b3ef05306c155092425676aa76f2  8a47422375b492b233dfdb957e42cf5d1a27a6b8768ba00b9c46fa4cc0429fa3  597064
+august_vault    f9f43ca48589f82a8690e802c1d75cd016b01bff5404bd3f8b5a18d6348c79a8  5159566ba012f1f96e10bee6991b57db67e2d800c2475e01d15cbb6571b14747  598592
 ```
 
 ## Compare against the on-chain program
@@ -55,16 +55,23 @@ solana-verify get-program-hash -u https://api.mainnet-beta.solana.com \
 
 ## Current on-chain status
 
-The mainnet program `up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt` was deployed
-**before** verifiable builds were introduced, so its current on-chain bytecode
-(`dcd22bfad72992fdd9688945f5ca44b94929a1e43a88ca258f410dcfd9aa8cd6`) is **not
-yet reproducible** from this source. A **verified upgrade** to a
-reproducibly-built binary is planned; after it lands, `get-program-hash` will
-equal the published `get-executable-hash` for a named release commit. Until
-then, this document establishes the **source → bytecode** reproducibility of the
-release build; the on-chain match follows the upgrade.
+The mainnet program `up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt` **is** running a
+reproducibly-built binary. Its on-chain executable hash is
 
-## On-chain verification (registered at/after the verified upgrade)
+```
+fca11d73ae5ba0635ee76964945c52ddcf78a167eb4c60317ae63df4a4e7cc1d   (505,216 B)
+```
+
+which is the build recorded in `verified-hashes.txt` **before** the current
+release — i.e. the program as it stood prior to the `ProgramConfig` gate and the
+share-price offset retune. The hash above is what `get-program-hash` returns
+today; the hash in the block above (`f9f43ca4…`) is the *pending* release and
+will only match on-chain once [the upgrade runbook](docs/UPGRADE.md) has been
+executed. Both values being present is expected while an upgrade is in flight —
+compare against the one matching the deployed release, not simply the newest
+line in `verified-hashes.txt`.
+
+## On-chain verification
 
 Verification is registered through the OtterSec verified-programs flow: the
 program's upgrade authority (a Fordefi MPC key) uploads an on-chain verification
@@ -79,13 +86,28 @@ as verified.
   `august_vault` in the pinned image and fails unless the executable hash, raw
   SHA-256, and size all match `verified-hashes.txt`; an intentional bytecode
   change must update that file in the same PR.
-- **Doc comments are part of the bytecode.** Anchor embeds the IDL — including
-  instruction and account doc comments — into the program binary, so editing a
-  `///` comment changes the hash even though no logic changed (and can leave the
-  size identical, which makes it easy to assume nothing moved). Rewording a
-  comment therefore requires re-running the build above and updating
-  `verified-hashes.txt`. Verified by rebuilding twice from identical sources: the
-  hash is stable run-to-run, so a changed hash always means changed input.
+- **Line numbers are part of the bytecode; doc comments are not.** Anchor's
+  `require!` / `err!` macros capture `file!()` and `line!()` at each error site,
+  so the source path and the line number of every check are compiled into
+  `.rodata`. Consequences, both measured on this program:
+  - **Inserting or deleting *any* line above an error site changes the hash** —
+    a plain `//` comment, a blank line, a reordered `use`. The size often stays
+    **identical** (a line number is a fixed-width immediate), which makes it easy
+    to assume nothing moved. Measured on a scratch build: adding one comment line
+    above the first `require!` in `deposit.rs` changed the hash while the size
+    stayed put at that build's 589,272 B. (That is a local `anchor build`, which
+    differs from the verifiable-build size recorded above — the point is the
+    unchanged size, not the number.)
+  - **Rewording a doc comment in place does not.** `///` text is *not* in the
+    binary — Anchor emits the IDL in a separate `idl-build` compilation to
+    `target/idl/august_vault.json`. Rewording one `///` line produced a
+    byte-identical `.so`.
+
+  So a hash change after a comment-only edit is **not** automatically benign:
+  it means a line shifted, and you should confirm that is all that happened. What
+  *is* in the bytecode besides line numbers: `#[msg("…")]` error strings,
+  instruction and account names, and `security_txt!`. Editing an error message is
+  a real bytecode change and requires re-recording `verified-hashes.txt`.
 - `security_txt!` is embedded in the program (`programs/august-vault/src/lib.rs`),
   exposing the security contact and source repository in the deployed bytecode.
 - Devnet program: `C8B1EpsSGVWK2vMrk3aDT3kL7RCE77otokUh4EC35kK7`.

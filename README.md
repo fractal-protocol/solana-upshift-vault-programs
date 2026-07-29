@@ -40,7 +40,7 @@ so each deposit mint has a finite number of vault lifecycles.
 | `redeem`                 | User     | Burn shares, receive tokens (minus fee)              |
 | `operator_withdraw`      | Operator | Withdraw tokens for external deployment              |
 | `operator_deposit`       | Operator | Return tokens to vault                               |
-| `operator_update_aum`    | Operator | Update externally deployed AUM (+-10% limit)         |
+| `operator_update_aum`    | Operator | Update externally deployed AUM (per-vault bps limit) |
 | `set_withdrawal_fee`     | Admin    | Set withdrawal fee (max 10%)                         |
 | `nominate_admin`         | Admin    | Nominate new admin (two-step transfer)               |
 | `accept_admin_nomination`| Nominee  | Accept admin role                                    |
@@ -49,8 +49,8 @@ so each deposit mint has a finite number of vault lifecycles.
 | `set_aum_limits`         | Admin    | Configure AUM limits                                 |
 | `pause` / `unpause`      | Admin    | Emergency pause/unpause                              |
 | `close_vault`            | Admin    | Close an empty vault                                 |
-| `create_metadata`        | Admin    | Create token metadata for share mint                 |
-| `update_metadata`        | Admin    | Update token metadata                                |
+| `create_share_token_metadata` | Admin | Create token metadata for share mint            |
+| `update_share_token_metadata` | Admin | Update token metadata                           |
 
 ## Development
 
@@ -58,9 +58,17 @@ so each deposit mint has a finite number of vault lifecycles.
 # Build
 anchor build
 
-# Test (runs local validator automatically)
-anchor test
+# Test
+./scripts/run-tests.sh
 ```
+
+> Use `scripts/run-tests.sh`, not a bare `anchor test`. Anchor's own validator
+> preloads the program through genesis, which leaves its ProgramData upgrade
+> authority set to the all-zero key — nobody can sign for it, so
+> `initialize_config` is unsatisfiable and every suite that creates a vault fails
+> in its `before` hook. The script starts a validator first and deploys through
+> the loader (so the provider wallet becomes the upgrade authority), then runs
+> `anchor test --skip-local-validator`. CI does the same.
 
 ## Deployment
 
@@ -69,18 +77,30 @@ anchor test
 cp deploy/deploy.config.example.json deploy/deploy.config.json
 # Edit with your keys
 
-# Deploy
+# Deploy a NEW program + vault
 pnpm run deploy:devnet
 pnpm run deploy:mainnet
 
-# Initialize vault
-pnpm run initialize:devnet
-pnpm run initialize:mainnet
+# Bootstrap the ProgramConfig of an ALREADY-DEPLOYED program.
+# Vault creation is gated on this and it does not exist until run.
+node deploy/bootstrap-config.mjs --program-id <ID> --url <RPC> \
+  --authority <VAULT_CREATION_AUTHORITY> --keypair <upgrade-authority.json>
 
-# Upgrade
+# Upgrade (devnet only — see below)
 pnpm run upgrade:devnet
-pnpm run upgrade:mainnet
 ```
+
+**Mainnet upgrades are not driven from these scripts.** The mainnet upgrade
+authority is a Fordefi MPC key, which cannot sign the way `anchor upgrade`
+requires, so `upgrade:mainnet` does not exist. Follow
+**[docs/UPGRADE.md](docs/UPGRADE.md)** — buffer upload, `solana program extend`,
+and three Fordefi-signed transactions. For an externally held authority,
+`bootstrap-config.mjs --unsigned out.json --nonce-account <PUBKEY>` emits a
+transaction that does not expire mid-ceremony.
+
+There is no `initialize:*` script: vault creation now needs the `ProgramConfig`
+account, a signer equal to its authority, a separate `payer`, and a
+`vault_version`. Use `deploy/new-vault.mjs`, or the runbook for mainnet.
 
 ## Security
 
@@ -88,7 +108,22 @@ pnpm run upgrade:mainnet
 - **Withdrawal Fee**: Protects against front-running of AUM updates.
 - **Emergency Pause**: Disables all user operations.
 - **Upgrade Authority**: Should be transferred to an admin multisig after production deployment.
-- **Token-2022**: Supported, but token extensions may require program upgrades for additional accounts.
+- **Vault creation is gated.** `initialize` requires a signature from the
+  `ProgramConfig` authority, a singleton PDA created once by the program's
+  upgrade authority (`initialize_config`). The upgrade authority can also reset
+  that key unilaterally via `override_config_authority` — a recovery path for a
+  lost config key, and a power it effectively already had by virtue of being able
+  to replace the program.
+- **Do not make this program immutable.** Revoking the upgrade authority
+  permanently prevents `ProgramConfig` from ever being created, and vault
+  creation is gated on it — so an immutable program with no config can never
+  create another vault, and one with a config can never recover that config's
+  authority. Existing vaults keep working; there is no on-chain remedy for
+  either case.
+- **Token-2022**: Supported, but token extensions may require program upgrades
+  for additional accounts. **Vaults must only be created on plain mints without
+  transfer-altering extensions**; the supported mint types are agreed as part of
+  vault onboarding.
 
 ## Reproducible Builds & Verification
 

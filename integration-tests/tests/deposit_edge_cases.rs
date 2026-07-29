@@ -75,7 +75,8 @@ fn deposit_rounding_to_zero_shares_is_rejected_with_no_side_effects() {
     ctx.deposit(min_first_deposit()).expect("seed deposit");
 
     // Inflate the share price ~10^6× by faking externally deployed assets:
-    // shares = 1 * (supply + 1) / (total_assets + 1) truncates to 0.
+    // shares = 1 * (supply + EXTRA_SHARES) / (total_assets + VIRTUAL_ASSETS),
+    // and the pro-rata floor, both truncate to 0.
     let mut state = ctx.vault_state_data();
     state.deployed_aum = 1_000_000_000_000;
     ctx.force_overwrite_vault_state(state);

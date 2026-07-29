@@ -67,6 +67,9 @@ pub enum AugustVaultError {
     /// 6018 - Received fewer shares than the caller's minimum
     #[error("Received fewer shares than the caller's minimum")]
     SlippageExceeded = 0x1782,
+    /// 6019 - Vault holds no assets while shares are outstanding; share price is undefined
+    #[error("Vault holds no assets while shares are outstanding; share price is undefined")]
+    SharePriceUndefined = 0x1783,
 }
 
 impl From<AugustVaultError> for solana_program_error::ProgramError {
