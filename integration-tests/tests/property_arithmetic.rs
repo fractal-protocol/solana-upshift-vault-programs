@@ -94,12 +94,22 @@ proptest! {
                 ),
             },
             Some(num) => {
-                let exact_floor = num / den;
+                // Redemptions are capped at pro-rata, which binds below par
+                // (`total_assets < supply`). The payout is the floor of whichever
+                // bound is tighter.
+                let offset_floor = num / den;
+                let expected = if supply == 0 {
+                    offset_floor
+                } else {
+                    let pro_rata =
+                        (shares as u128) * (total_assets as u128) / (supply as u128);
+                    offset_floor.min(pro_rata)
+                };
                 match result {
-                    Ok(assets) => prop_assert_eq!(assets as u128, exact_floor),
+                    Ok(assets) => prop_assert_eq!(assets as u128, expected),
                     Err(e) => {
-                        prop_assert!(exact_floor > u64::MAX as u128,
-                            "error returned though result {} fits u64", exact_floor);
+                        prop_assert!(expected > u64::MAX as u128,
+                            "error returned though result {} fits u64", expected);
                         prop_assert_eq!(
                             anchor_code(&e),
                             Some(vault_error_code(ErrorCode::NumberOverflow))

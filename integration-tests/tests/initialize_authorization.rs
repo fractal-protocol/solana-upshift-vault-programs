@@ -116,6 +116,29 @@ fn initialize_config_can_delegate_to_a_different_authority() {
     assert_eq!(ctx.program_config().unwrap().authority, ops_key);
 }
 
+/// The same zero-key guard both rotation instructions have. Bootstrapping to the
+/// zero key would create a config nobody can authorize with, and because the
+/// config is create-once the only remedy would be an upgrade-authority override —
+/// or nothing at all, if the program had since been made immutable.
+#[test]
+fn initialize_config_rejects_the_zero_key() {
+    let mut ctx = BareCtx::new();
+    let upgrade_authority = ctx.upgrade_authority.insecure_clone();
+
+    let err = ctx
+        .try_initialize_config_as(&upgrade_authority, Pubkey::default())
+        .expect_err("the zero key must not be installable as the authority");
+    assert_anchor_err(&err, ErrorCode::InvalidAuthority);
+    assert!(
+        ctx.program_config().is_none(),
+        "rejected bootstrap must not create the config"
+    );
+
+    // And the slot is still free for a real authority afterwards.
+    ctx.try_initialize_config_as(&upgrade_authority, upgrade_authority.pubkey())
+        .expect("a valid authority must still be installable");
+}
+
 #[test]
 fn initialize_config_is_singleton() {
     let mut ctx = BareCtx::new();

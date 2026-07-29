@@ -43,7 +43,7 @@ asserts the same three):
 
 ```
 # program       exec_sha256                                                       raw_sha256                                                        size
-august_vault    555ffd9f17b0c0d2d81547e239634e4d898f702ecb06335455199014fee96b64  0fc8ae3d6f6349d4090deae09ec12bab239987ad7a47cda5499b54ee1f170bad  595912
+august_vault    b3145a457440876b6c9b33e770886c705315b3ef05306c155092425676aa76f2  8a47422375b492b233dfdb957e42cf5d1a27a6b8768ba00b9c46fa4cc0429fa3  597064
 ```
 
 ## Compare against the on-chain program

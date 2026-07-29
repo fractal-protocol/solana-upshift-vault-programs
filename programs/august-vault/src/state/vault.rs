@@ -166,12 +166,42 @@ impl VaultState {
         let assets_eff = (total_assets as u128)
             .checked_add(VIRTUAL_ASSETS)
             .ok_or(ErrorCode::MathError)?;
-        let assets = (shares as u128)
+        let with_offsets = (shares as u128)
             .checked_mul(assets_eff)
             .ok_or(ErrorCode::MathError)?
             .checked_div(shares_eff)
             .ok_or(ErrorCode::MathError)?;
-        u64::try_from(assets).map_err(|_| ErrorCode::NumberOverflow.into())
+
+        // Never pay more than the position's pro-rata share of the assets that
+        // actually exist.
+        //
+        // The offsets pull the effective price toward 1.0. Above 1.0 that is
+        // conservative — the offset formula pays *less* than pro-rata. Below 1.0,
+        // reachable whenever an operator reports a loss, it pays *more*, and the
+        // excess grows as supply shrinks relative to the offsets: at a supply
+        // equal to the offsets a 50% loss overpays a half-position by 50%, and on
+        // a mint whose minimum first deposit is far below the offsets it
+        // approaches paying out the entire reserve. Whoever redeems first would
+        // take more than their share and leave later holders short of liquidity.
+        //
+        // Capping at pro-rata removes that without weakening anything: wherever
+        // the offsets matter as a defence — an inflated `total_assets`, or a
+        // supply collapsed by external burns, both of which put the price above
+        // 1.0 — the offset value is already the smaller of the two and still wins.
+        let capped = if supply == 0 {
+            // No shares outstanding, so pro-rata is undefined; a caller holding
+            // no shares can only redeem zero anyway.
+            with_offsets
+        } else {
+            let pro_rata = (shares as u128)
+                .checked_mul(total_assets as u128)
+                .ok_or(ErrorCode::MathError)?
+                .checked_div(supply as u128)
+                .ok_or(ErrorCode::MathError)?;
+            with_offsets.min(pro_rata)
+        };
+
+        u64::try_from(capped).map_err(|_| ErrorCode::NumberOverflow.into())
     }
 
     /// Minimum amount of the deposit token required for the *first* deposit,
@@ -230,6 +260,62 @@ mod tests {
         assert_eq!(got, expected);
     }
 
+    // ---- loss states: redemptions must stay within pro-rata ----
+    //
+    // `total_assets < supply` is reachable whenever an operator reports a loss.
+    // The offsets pull the price toward 1.0, which below 1.0 means *over*-paying,
+    // so redemptions are capped at pro-rata. The overpayment grew with the
+    // offset/supply ratio: unbounded in the limit, and on a 6-decimal mint whose
+    // minimum first deposit is 1,000 units it approached paying out the whole
+    // reserve to whoever redeemed first.
+
+    #[test_case(1_000_000, 500_000, 500_000, 250_000; "supply == offsets, 50% loss")]
+    #[test_case(1_000, 500, 500, 250; "supply far below offsets, 50% loss")]
+    #[test_case(1_000_000_000, 500_000_000, 500_000_000, 250_000_000; "supply above offsets")]
+    #[test_case(1_000_000, 1, 500_000, 0; "near-total loss floors to zero")]
+    fn assets_for_redeem_never_exceeds_pro_rata(
+        supply: u64,
+        total_assets: u64,
+        shares: u64,
+        expected: u64,
+    ) {
+        let got = VaultState::assets_for_redeem(supply, total_assets, shares).unwrap();
+        assert_eq!(got, expected, "must equal pro-rata in a loss state");
+        let pro_rata = ((shares as u128 * total_assets as u128) / supply as u128) as u64;
+        assert!(got <= pro_rata, "{got} exceeds pro-rata {pro_rata}");
+    }
+
+    /// The whole supply must never be able to claim more than the whole reserve —
+    /// the property that keeps later redeemers from being left short.
+    #[test_case(1_000, 500; "supply far below offsets")]
+    #[test_case(1_000_000, 500_000; "supply equal to offsets")]
+    #[test_case(1_000_000, 999_999; "1 unit of loss")]
+    #[test_case(2_166_176_445, 1_082_000_000; "live-vault magnitude, ~50% loss")]
+    fn redeeming_all_shares_never_exceeds_reserves(supply: u64, total_assets: u64) {
+        let out = VaultState::assets_for_redeem(supply, total_assets, supply).unwrap();
+        assert!(
+            out <= total_assets,
+            "redeeming the entire supply requested {out} against reserves of {total_assets}"
+        );
+    }
+
+    /// The cap must not weaken the offsets where they are the defence: above 1.0
+    /// (an inflated `total_assets`, or a supply collapsed by external burns) the
+    /// offset value is the smaller one and must still be what is paid.
+    #[test_case(1, 1_000_000, 1, 1; "supply collapsed to 1 against a large balance")]
+    #[test_case(4, 1_000_000_000, 4, 4_003; "supply collapsed to 4")]
+    #[test_case(1_000_000, 2_000_000, 500_000, 750_000; "price 2x")]
+    fn offsets_still_bind_above_par(supply: u64, total_assets: u64, shares: u64, expected: u64) {
+        let got = VaultState::assets_for_redeem(supply, total_assets, shares).unwrap();
+        assert_eq!(got, expected);
+        let pro_rata = ((shares as u128 * total_assets as u128) / supply as u128) as u64;
+        assert!(
+            got < pro_rata,
+            "above par the offsets must pay strictly less than pro-rata \
+             (got {got}, pro-rata {pro_rata})"
+        );
+    }
+
     // ---- rounding direction is a security property: pin it explicitly ----
     //
     // The exact rational value `r = amount * (supply + 1) / (total_assets + 1)`
@@ -259,15 +345,21 @@ mod tests {
     #[test_case(13, 11, 17; "non-divisible: 17 * 12 / 14")]
     fn assets_for_redeem_rounds_down(supply: u64, total_assets: u64, shares: u64) {
         let got = VaultState::assets_for_redeem(supply, total_assets, shares).unwrap() as u128;
-        let num = (shares as u128) * (total_assets as u128 + VIRTUAL_ASSETS);
-        let den = supply as u128 + EXTRA_SHARES;
-        assert!(
-            got * den <= num,
-            "rounded up: got*den={} > num={}",
-            got * den,
-            num
+        // Two bounds apply, and the payout is the floor of whichever is tighter:
+        // the offset formula, and pro-rata (which binds only below par). Asserting
+        // the exact value is stronger than the old "within 1 LSB" check, and it
+        // still pins the direction — rounding never favours the redeemer.
+        let offset_floor = ((shares as u128) * (total_assets as u128 + VIRTUAL_ASSETS))
+            / (supply as u128 + EXTRA_SHARES);
+        let pro_rata_floor = ((shares as u128) * (total_assets as u128)) / (supply as u128);
+        assert_eq!(
+            got,
+            offset_floor.min(pro_rata_floor),
+            "must be the floor of the tighter bound (offset {offset_floor}, \
+             pro-rata {pro_rata_floor})"
         );
-        assert!((got + 1) * den > num, "lost more than 1 LSB");
+        assert!(got <= offset_floor, "rounded up past the offset formula");
+        assert!(got <= pro_rata_floor, "paid more than pro-rata");
     }
 
     // ---- arithmetic narrowing path: only the final `u64::try_from` can fail

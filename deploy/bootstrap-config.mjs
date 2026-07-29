@@ -81,9 +81,9 @@ async function main() {
       .split('\n').slice(9, 31).join('\n'));
     process.exit(args.help ? 0 : 1);
   }
-  if (!args.keypair && !args.unsigned) {
-    throw new Error('pass --keypair to sign locally, or --unsigned <path>');
-  }
+  // No keypair and no --unsigned is still valid: it means "just tell me what is
+  // stored". That only fails below if the config does not exist yet, where there
+  // is genuinely nothing to report and nothing to sign with.
 
   const programId = new PublicKey(args.programId);
   const connection = new Connection(args.url || 'https://api.devnet.solana.com', 'confirmed');
@@ -106,6 +106,32 @@ async function main() {
 
   const authority = args.authority ? new PublicKey(args.authority) : upgradeAuthority;
   console.log(`Vault-creation auth: ${authority.toBase58()}`);
+
+  // Read-only path FIRST, before any signer requirement. Once an externally held
+  // authority (Fordefi) has submitted the bootstrap, the documented follow-up is
+  // to re-run this to confirm what got stored — and that must not demand a
+  // keypair equal to a key nobody holds locally.
+  const configPda = programConfigPda(programId);
+  const existing = await connection.getAccountInfo(configPda);
+  if (existing !== null && existing.data.length > 0 && existing.owner.equals(programId)) {
+    const readOnly = new AnchorProvider(
+      connection,
+      new Wallet(Keypair.generate()), // never signs
+      { commitment: 'confirmed' }
+    );
+    const cfg = await new Program(idl, readOnly).account.programConfig.fetch(configPda);
+    console.log(`\n✅ Program config already exists.`);
+    console.log(`   Stored vault-creation authority: ${cfg.authority.toBase58()}`);
+    if (args.authority && !cfg.authority.equals(authority)) {
+      console.log(
+        `⚠️  This differs from the --authority you passed ` +
+        `(${authority.toBase58()}). Rotate with set_config_authority, or reset it ` +
+        `with override_config_authority using the upgrade authority.`
+      );
+      process.exitCode = 1;
+    }
+    return;
+  }
 
   if (args.unsigned) {
     // Build the instruction only; the external signer supplies the signature.
@@ -137,6 +163,13 @@ async function main() {
     return;
   }
 
+  if (!args.keypair) {
+    throw new Error(
+      'the program config does not exist yet, so there is nothing to verify. ' +
+      'Pass --keypair to sign locally, or --unsigned <path> to emit a ' +
+      'transaction for an externally held upgrade authority.'
+    );
+  }
   const signer = loadKeypair(args.keypair);
   if (!signer.publicKey.equals(upgradeAuthority)) {
     throw new Error(
