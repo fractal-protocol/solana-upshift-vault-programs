@@ -7,8 +7,10 @@ today it does **not** match (the current deployment predates verifiable builds �
 see [VERIFY.md](../VERIFY.md)).
 
 > **This changes live mainnet bytecode over real user funds.** Do not deviate
-> from this runbook. Two transactions must be signed by the program's **Fordefi
-> MPC upgrade authority**; everything else is unprivileged prep. Verification is
+> from this runbook. **Three** transactions must be signed by the program's
+> **Fordefi MPC upgrade authority** — the `Upgrade` in Step 2, the verify-PDA
+> upload in Step 3, and `initialize_config` in Step 4 — so book three approval
+> ceremonies. Everything else is unprivileged prep. Verification is
 > **point-in-time** (the program stays upgradeable).
 
 ## Key facts
@@ -17,16 +19,21 @@ see [VERIFY.md](../VERIFY.md)).
 | --- | --- | --- |
 | Program ID | `up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt` | `C8B1EpsSGVWK2vMrk3aDT3kL7RCE77otokUh4EC35kK7` |
 | Upgrade authority | `B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM` (Fordefi MPC) | `APuzErEVGAbvhyj2hbmo6vp7pacNHRVXbu43UhcAne2i` |
-| ProgramData account size (at writing) | 497,541 B | verify with `solana account <programData>` |
+| ProgramData account size (at writing) | 507,781 B | verify with `solana account <programData>` |
 
 - **Expected reproducible hash** (mainnet build, committed source): the
   `exec_sha256` / `raw_sha256` / `size` in [`verified-hashes.txt`](../verified-hashes.txt)
-  (currently `fca11d73…`, 505,216 B), built with `solana-verify` 0.5.1 in
+  (currently `0bf2952a…`, 594,016 B), built with `solana-verify` 0.5.1 in
   `solanafoundation/solana-verifiable-build@sha256:695f890e…` (Solana 2.3.0).
-- **ProgramData must be extended first:** the new `.so` (505,216 B) is larger
+- **ProgramData must be extended first:** the new `.so` (594,016 B) is larger
   than the current allocation, so `solana program extend` is required or the
-  upgrade fails. Deficit = `505,216 + 45 (loader header) − 497,541 = 7,720` bytes
+  upgrade fails. Deficit = `594,016 + 45 (loader header) − 507,781 = 86,280` bytes
   (re-derive if the sizes change).
+- **Bootstrap the program config after upgrading:** vault creation is gated on a
+  `ProgramConfig` authority that does not exist yet. Until `initialize_config` is
+  run — by the upgrade authority, so a Fordefi-signed transaction on mainnet —
+  `initialize` fails closed and no new vault can be created. Existing vaults are
+  unaffected. See [Step 4](#step-4--bootstrap-the-program-config).
 
 ## Prerequisites
 
@@ -35,8 +42,8 @@ see [VERIFY.md](../VERIFY.md)).
 - A **funded ops fee-payer** keypair (a few SOL) — pays for `extend` /
   `write-buffer`. This is NOT the upgrade authority.
 - Fordefi access to the upgrade authority key, able to sign a
-  `BPFLoaderUpgradeable::Upgrade` instruction and an arbitrary transaction
-  (for the verify-PDA).
+  `BPFLoaderUpgradeable::Upgrade` instruction and two arbitrary transactions
+  (the verify-PDA upload in Step 3 and `initialize_config` in Step 4).
 - The repository protections below provisioned. (The workflow fails closed
   without the machine-enforced ones — `release` env reviewers, immutable
   releases, and the admin-read token; the `v*` tag ruleset is human-audited.)
@@ -103,7 +110,7 @@ Also confirm the GitHub **build attestation** exists for the asset
 
 > `declare_id!` is baked into the bytecode, so the **devnet** artifact must
 > declare the devnet program ID. Build a devnet-targeted `.so` (this hashes
-> differently from mainnet's `fca11d73…` — expected; the dry-run validates
+> differently from mainnet's `0bf2952a…` — expected; the dry-run validates
 > mechanics + state compatibility, not the mainnet bytes):
 
 ```bash
@@ -176,8 +183,12 @@ sha256sum pre-upgrade-august_vault.so
 **Prepare the buffer (unprivileged, ops fee-payer):**
 
 ```bash
-# Extend ProgramData to fit the larger binary (re-derive the byte count if sizes changed).
-solana program extend up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt 7720 \
+# Extend ProgramData to fit the larger binary.
+# Re-derive first — this value is release-specific:
+#   solana program show up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt -u m   # current allocation
+#   additional_bytes = <new .so size> + 45 - <current ProgramData account size>
+# For the hashes in verified-hashes.txt: 594,016 + 45 - 507,781 = 86,280.
+solana program extend up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt 86280 \
   -u mainnet-beta -k <ops-payer.json>
 
 # Upload the verified .so into a buffer.
@@ -207,7 +218,7 @@ Do **not** set the program immutable (no `--final`).
 
 ```bash
 solana-verify get-program-hash -u mainnet-beta up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt
-#   Now equals verified-hashes.txt exec_sha256 (fca11d73…)
+#   Now equals verified-hashes.txt exec_sha256 (0bf2952a…)
 ```
 
 If you paused, **unpause first** — `deposit` and `redeem` are pause-gated, so
@@ -251,6 +262,67 @@ Then confirm the "verified" badge on Solana Explorer, SolanaFM, Solscan, and
 
 ---
 
+## Step 4 — Bootstrap the program config
+
+`initialize` is gated on the `ProgramConfig` authority, and that account does not
+exist on a program that has never had it created. Until it does, **`initialize`
+fails closed and no new vault can be created** — existing vaults keep working
+normally, so this is not urgent, but the first new-vault deployment after the
+upgrade will fail without it.
+
+Only the program's **current upgrade authority** can create the config, verified
+on-chain against the loader's `ProgramData`. On mainnet that is the Fordefi MPC
+wallet, so this is a Fordefi-signed transaction like the upgrade itself.
+
+Choose the authority deliberately: it can be the upgrade authority itself, or a
+separate operational key so routine vault creation does not need Fordefi. It is
+rotatable later with `set_config_authority` (signed by the current config
+authority), so this is not a one-way decision.
+
+```bash
+# Emit an unsigned initialize_config transaction for the Fordefi authority.
+# --authority is the key that will be allowed to create vaults; omit it to use
+# the upgrade authority itself. The script prints every derived account so they
+# can be checked against the Fordefi review screen before signing.
+node deploy/bootstrap-config.mjs \
+  --program-id up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt \
+  --url https://api.mainnet-beta.solana.com \
+  --authority <VAULT_CREATION_AUTHORITY> \
+  --unsigned bootstrap-config.json
+
+# Have Fordefi sign and submit it, then re-run WITHOUT --unsigned to read back
+# and confirm the stored authority:
+node deploy/bootstrap-config.mjs \
+  --program-id up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt \
+  --url https://api.mainnet-beta.solana.com --keypair <any-readonly.json>
+```
+
+On devnet, where the team holds the upgrade authority directly, the same script
+signs and sends in one step with `--keypair <devnet-authority.json>`.
+
+Do **not** use `deploy/new-vault.mjs` for this. That script generates a fresh
+program keypair and deploys a **new** program, so it would bootstrap that
+program's config and leave the just-upgraded one still gated — while rewriting
+`declare_id!` in your working tree.
+
+Then create one vault end-to-end as the smoke test.
+
+**Downstream clients must be updated in lockstep.** This release changes
+`initialize`'s account list: `program_config` and a separate `payer` are added,
+and `signer` must now be the config authority. Any consumer built against the
+previous IDL will fail. Concretely, after the upgrade:
+
+1. Bump the `solana-upshift-vault-programs` submodule in the private
+   `solana-vaults` repo and re-run `scripts/sync-idl.sh` so `frontend/idl/`
+   carries the new IDL (its CI drift-guards the committed copy).
+2. Provision the admin UI's signer as the config authority, or rotate the
+   authority to whatever key that UI signs with — otherwise its create-vault
+   flow fails with `6016 NotProtocolAuthority` even with a fresh IDL.
+3. Rebuild any Rust consumers of `clients/rust/august-vault` (the generated
+   client in this repo is already regenerated).
+
+---
+
 ## Rollback
 
 The program stays upgradeable, so a bad upgrade is recoverable by another
@@ -272,8 +344,16 @@ established by the fork test + devnet rehearsal makes a rollback unlikely.
 
 - The `VaultState` account **layout is byte-identical** to the deployed version
   (verified), so existing accounts are read unchanged — no migration.
-- The new code is **behaviorally equivalent** for the live (classic-SPL) vaults;
-  the only functional delta (a Token-2022 operator-ATA fix) is latent.
+- The new code is **behaviorally equivalent for existing vaults**: deposit,
+  redeem, the operator instructions and every admin instruction are unchanged, so
+  live user flows are unaffected. (The one latent functional delta is a
+  Token-2022 operator-ATA fix, which no live vault exercises.)
+- **`initialize` is the exception, and it is a breaking change.** Vault *creation*
+  now requires the `ProgramConfig` account and a signer equal to its authority,
+  and gains a separate `payer`. This affects no existing vault, but it does mean
+  (a) no vault can be created between the upgrade and Step 4, and (b) every
+  client that creates vaults must be rebuilt against the new IDL — see the
+  lockstep list in Step 4.
 - `integration-tests/tests/mainnet_fork_compat.rs` proves the new code reads +
   operates on the **real** on-chain vault accounts.
 - This upgrade does **not** address the open audit items (virtual-offset size;

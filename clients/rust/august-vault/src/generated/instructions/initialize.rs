@@ -14,7 +14,42 @@ pub const INITIALIZE_DISCRIMINATOR: [u8; 8] = [175, 175, 109, 31, 13, 152, 155, 
 /// Accounts.
 #[derive(Debug)]
 pub struct Initialize {
-      
+            /// Gates vault creation: it is restricted to the authority recorded in
+/// `ProgramConfig`, rather than being open to any paying signer.
+/// 
+/// **Declared first on purpose.** Anchor applies each field's constraints in
+/// declaration order, so putting the config and the authority check ahead of
+/// the three `init` accounts makes an unauthorized call fail with
+/// `NotProtocolAuthority` before any account is created. Declared after
+/// them, a caller too poor to fund the rent would instead fail with a System
+/// Program "insufficient lamports" error, so the rejection reason would
+/// depend on the caller's balance rather than on authorization.
+/// 
+/// **Namespace note**: `vault_version` is a `u8` seed byte, so each deposit
+/// mint has 256 namespaces and each is single-use. `close_vault` cannot
+/// close the share mint (classic SPL Token has no close-mint instruction)
+/// and revokes its mint authority irreversibly, so a retired version can
+/// never be re-initialized. Retiring a vault therefore consumes one of the
+/// 256 permanently and strands its share-mint rent.
+
+    
+              
+          pub program_config: solana_pubkey::Pubkey,
+                /// The protocol authority. Authorizes creation but does not fund it, so a
+/// cold or MPC-held key can hold this role without carrying SOL.
+
+    
+              
+          pub signer: solana_pubkey::Pubkey,
+                /// Funds the three accounts below. May be the same key as `signer`.
+
+    
+              
+          pub payer: solana_pubkey::Pubkey,
+          
+              
+          pub deposit_mint: solana_pubkey::Pubkey,
+          
               
           pub vault_state: solana_pubkey::Pubkey,
           
@@ -23,12 +58,6 @@ pub struct Initialize {
           
               
           pub vault_token_ata: solana_pubkey::Pubkey,
-          
-              
-          pub deposit_mint: solana_pubkey::Pubkey,
-          
-              
-          pub signer: solana_pubkey::Pubkey,
           
               
           pub system_program: solana_pubkey::Pubkey,
@@ -47,8 +76,24 @@ impl Initialize {
   #[allow(clippy::arithmetic_side_effects)]
   #[allow(clippy::vec_init_then_push)]
   pub fn instruction_with_remaining_accounts(&self, args: InitializeInstructionArgs, remaining_accounts: &[solana_instruction::AccountMeta]) -> solana_instruction::Instruction {
-    let mut accounts = Vec::with_capacity(8+ remaining_accounts.len());
-                            accounts.push(solana_instruction::AccountMeta::new(
+    let mut accounts = Vec::with_capacity(10+ remaining_accounts.len());
+                            accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.program_config,
+            false
+          ));
+                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.signer,
+            true
+          ));
+                                          accounts.push(solana_instruction::AccountMeta::new(
+            self.payer,
+            true
+          ));
+                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.deposit_mint,
+            false
+          ));
+                                          accounts.push(solana_instruction::AccountMeta::new(
             self.vault_state,
             false
           ));
@@ -59,14 +104,6 @@ impl Initialize {
                                           accounts.push(solana_instruction::AccountMeta::new(
             self.vault_token_ata,
             false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.deposit_mint,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new(
-            self.signer,
-            true
           ));
                                           accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.system_program,
@@ -137,21 +174,25 @@ impl InitializeInstructionArgs {
 ///
 /// ### Accounts:
 ///
-                ///   0. `[writable]` vault_state
-                ///   1. `[writable]` share_mint
-                ///   2. `[writable]` vault_token_ata
+          ///   0. `[]` program_config
+                ///   1. `[signer]` signer
+                      ///   2. `[writable, signer]` payer
           ///   3. `[]` deposit_mint
-                      ///   4. `[writable, signer]` signer
-                ///   5. `[optional]` system_program (default to `11111111111111111111111111111111`)
-                ///   6. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
-                ///   7. `[optional]` rent (default to `SysvarRent111111111111111111111111111111111`)
+                ///   4. `[writable]` vault_state
+                ///   5. `[writable]` share_mint
+                ///   6. `[writable]` vault_token_ata
+                ///   7. `[optional]` system_program (default to `11111111111111111111111111111111`)
+                ///   8. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
+                ///   9. `[optional]` rent (default to `SysvarRent111111111111111111111111111111111`)
 #[derive(Clone, Debug, Default)]
 pub struct InitializeBuilder {
-            vault_state: Option<solana_pubkey::Pubkey>,
+            program_config: Option<solana_pubkey::Pubkey>,
+                signer: Option<solana_pubkey::Pubkey>,
+                payer: Option<solana_pubkey::Pubkey>,
+                deposit_mint: Option<solana_pubkey::Pubkey>,
+                vault_state: Option<solana_pubkey::Pubkey>,
                 share_mint: Option<solana_pubkey::Pubkey>,
                 vault_token_ata: Option<solana_pubkey::Pubkey>,
-                deposit_mint: Option<solana_pubkey::Pubkey>,
-                signer: Option<solana_pubkey::Pubkey>,
                 system_program: Option<solana_pubkey::Pubkey>,
                 token_program: Option<solana_pubkey::Pubkey>,
                 rent: Option<solana_pubkey::Pubkey>,
@@ -166,6 +207,46 @@ impl InitializeBuilder {
   pub fn new() -> Self {
     Self::default()
   }
+            /// Gates vault creation: it is restricted to the authority recorded in
+/// `ProgramConfig`, rather than being open to any paying signer.
+/// 
+/// **Declared first on purpose.** Anchor applies each field's constraints in
+/// declaration order, so putting the config and the authority check ahead of
+/// the three `init` accounts makes an unauthorized call fail with
+/// `NotProtocolAuthority` before any account is created. Declared after
+/// them, a caller too poor to fund the rent would instead fail with a System
+/// Program "insufficient lamports" error, so the rejection reason would
+/// depend on the caller's balance rather than on authorization.
+/// 
+/// **Namespace note**: `vault_version` is a `u8` seed byte, so each deposit
+/// mint has 256 namespaces and each is single-use. `close_vault` cannot
+/// close the share mint (classic SPL Token has no close-mint instruction)
+/// and revokes its mint authority irreversibly, so a retired version can
+/// never be re-initialized. Retiring a vault therefore consumes one of the
+/// 256 permanently and strands its share-mint rent.
+#[inline(always)]
+    pub fn program_config(&mut self, program_config: solana_pubkey::Pubkey) -> &mut Self {
+                        self.program_config = Some(program_config);
+                    self
+    }
+            /// The protocol authority. Authorizes creation but does not fund it, so a
+/// cold or MPC-held key can hold this role without carrying SOL.
+#[inline(always)]
+    pub fn signer(&mut self, signer: solana_pubkey::Pubkey) -> &mut Self {
+                        self.signer = Some(signer);
+                    self
+    }
+            /// Funds the three accounts below. May be the same key as `signer`.
+#[inline(always)]
+    pub fn payer(&mut self, payer: solana_pubkey::Pubkey) -> &mut Self {
+                        self.payer = Some(payer);
+                    self
+    }
+            #[inline(always)]
+    pub fn deposit_mint(&mut self, deposit_mint: solana_pubkey::Pubkey) -> &mut Self {
+                        self.deposit_mint = Some(deposit_mint);
+                    self
+    }
             #[inline(always)]
     pub fn vault_state(&mut self, vault_state: solana_pubkey::Pubkey) -> &mut Self {
                         self.vault_state = Some(vault_state);
@@ -179,16 +260,6 @@ impl InitializeBuilder {
             #[inline(always)]
     pub fn vault_token_ata(&mut self, vault_token_ata: solana_pubkey::Pubkey) -> &mut Self {
                         self.vault_token_ata = Some(vault_token_ata);
-                    self
-    }
-            #[inline(always)]
-    pub fn deposit_mint(&mut self, deposit_mint: solana_pubkey::Pubkey) -> &mut Self {
-                        self.deposit_mint = Some(deposit_mint);
-                    self
-    }
-            #[inline(always)]
-    pub fn signer(&mut self, signer: solana_pubkey::Pubkey) -> &mut Self {
-                        self.signer = Some(signer);
                     self
     }
             /// `[optional account, default to '11111111111111111111111111111111']`
@@ -244,11 +315,13 @@ impl InitializeBuilder {
   #[allow(clippy::clone_on_copy)]
   pub fn instruction(&self) -> solana_instruction::Instruction {
     let accounts = Initialize {
-                              vault_state: self.vault_state.expect("vault_state is not set"),
+                              program_config: self.program_config.expect("program_config is not set"),
+                                        signer: self.signer.expect("signer is not set"),
+                                        payer: self.payer.expect("payer is not set"),
+                                        deposit_mint: self.deposit_mint.expect("deposit_mint is not set"),
+                                        vault_state: self.vault_state.expect("vault_state is not set"),
                                         share_mint: self.share_mint.expect("share_mint is not set"),
                                         vault_token_ata: self.vault_token_ata.expect("vault_token_ata is not set"),
-                                        deposit_mint: self.deposit_mint.expect("deposit_mint is not set"),
-                                        signer: self.signer.expect("signer is not set"),
                                         system_program: self.system_program.unwrap_or(solana_pubkey::pubkey!("11111111111111111111111111111111")),
                                         token_program: self.token_program.unwrap_or(solana_pubkey::pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")),
                                         rent: self.rent.unwrap_or(solana_pubkey::pubkey!("SysvarRent111111111111111111111111111111111")),
@@ -266,7 +339,42 @@ impl InitializeBuilder {
 
   /// `initialize` CPI accounts.
   pub struct InitializeCpiAccounts<'a, 'b> {
-          
+                  /// Gates vault creation: it is restricted to the authority recorded in
+/// `ProgramConfig`, rather than being open to any paying signer.
+/// 
+/// **Declared first on purpose.** Anchor applies each field's constraints in
+/// declaration order, so putting the config and the authority check ahead of
+/// the three `init` accounts makes an unauthorized call fail with
+/// `NotProtocolAuthority` before any account is created. Declared after
+/// them, a caller too poor to fund the rent would instead fail with a System
+/// Program "insufficient lamports" error, so the rejection reason would
+/// depend on the caller's balance rather than on authorization.
+/// 
+/// **Namespace note**: `vault_version` is a `u8` seed byte, so each deposit
+/// mint has 256 namespaces and each is single-use. `close_vault` cannot
+/// close the share mint (classic SPL Token has no close-mint instruction)
+/// and revokes its mint authority irreversibly, so a retired version can
+/// never be re-initialized. Retiring a vault therefore consumes one of the
+/// 256 permanently and strands its share-mint rent.
+
+      
+                    
+              pub program_config: &'b solana_account_info::AccountInfo<'a>,
+                        /// The protocol authority. Authorizes creation but does not fund it, so a
+/// cold or MPC-held key can hold this role without carrying SOL.
+
+      
+                    
+              pub signer: &'b solana_account_info::AccountInfo<'a>,
+                        /// Funds the three accounts below. May be the same key as `signer`.
+
+      
+                    
+              pub payer: &'b solana_account_info::AccountInfo<'a>,
+                
+                    
+              pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
+                
                     
               pub vault_state: &'b solana_account_info::AccountInfo<'a>,
                 
@@ -275,12 +383,6 @@ impl InitializeBuilder {
                 
                     
               pub vault_token_ata: &'b solana_account_info::AccountInfo<'a>,
-                
-                    
-              pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
-                
-                    
-              pub signer: &'b solana_account_info::AccountInfo<'a>,
                 
                     
               pub system_program: &'b solana_account_info::AccountInfo<'a>,
@@ -296,7 +398,42 @@ impl InitializeBuilder {
 pub struct InitializeCpi<'a, 'b> {
   /// The program to invoke.
   pub __program: &'b solana_account_info::AccountInfo<'a>,
-      
+            /// Gates vault creation: it is restricted to the authority recorded in
+/// `ProgramConfig`, rather than being open to any paying signer.
+/// 
+/// **Declared first on purpose.** Anchor applies each field's constraints in
+/// declaration order, so putting the config and the authority check ahead of
+/// the three `init` accounts makes an unauthorized call fail with
+/// `NotProtocolAuthority` before any account is created. Declared after
+/// them, a caller too poor to fund the rent would instead fail with a System
+/// Program "insufficient lamports" error, so the rejection reason would
+/// depend on the caller's balance rather than on authorization.
+/// 
+/// **Namespace note**: `vault_version` is a `u8` seed byte, so each deposit
+/// mint has 256 namespaces and each is single-use. `close_vault` cannot
+/// close the share mint (classic SPL Token has no close-mint instruction)
+/// and revokes its mint authority irreversibly, so a retired version can
+/// never be re-initialized. Retiring a vault therefore consumes one of the
+/// 256 permanently and strands its share-mint rent.
+
+    
+              
+          pub program_config: &'b solana_account_info::AccountInfo<'a>,
+                /// The protocol authority. Authorizes creation but does not fund it, so a
+/// cold or MPC-held key can hold this role without carrying SOL.
+
+    
+              
+          pub signer: &'b solana_account_info::AccountInfo<'a>,
+                /// Funds the three accounts below. May be the same key as `signer`.
+
+    
+              
+          pub payer: &'b solana_account_info::AccountInfo<'a>,
+          
+              
+          pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
+          
               
           pub vault_state: &'b solana_account_info::AccountInfo<'a>,
           
@@ -305,12 +442,6 @@ pub struct InitializeCpi<'a, 'b> {
           
               
           pub vault_token_ata: &'b solana_account_info::AccountInfo<'a>,
-          
-              
-          pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
-          
-              
-          pub signer: &'b solana_account_info::AccountInfo<'a>,
           
               
           pub system_program: &'b solana_account_info::AccountInfo<'a>,
@@ -332,11 +463,13 @@ impl<'a, 'b> InitializeCpi<'a, 'b> {
       ) -> Self {
     Self {
       __program: program,
+              program_config: accounts.program_config,
+              signer: accounts.signer,
+              payer: accounts.payer,
+              deposit_mint: accounts.deposit_mint,
               vault_state: accounts.vault_state,
               share_mint: accounts.share_mint,
               vault_token_ata: accounts.vault_token_ata,
-              deposit_mint: accounts.deposit_mint,
-              signer: accounts.signer,
               system_program: accounts.system_program,
               token_program: accounts.token_program,
               rent: accounts.rent,
@@ -363,8 +496,24 @@ impl<'a, 'b> InitializeCpi<'a, 'b> {
     signers_seeds: &[&[&[u8]]],
     remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)]
   ) -> solana_program_error::ProgramResult {
-    let mut accounts = Vec::with_capacity(8+ remaining_accounts.len());
-                            accounts.push(solana_instruction::AccountMeta::new(
+    let mut accounts = Vec::with_capacity(10+ remaining_accounts.len());
+                            accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.program_config.key,
+            false
+          ));
+                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.signer.key,
+            true
+          ));
+                                          accounts.push(solana_instruction::AccountMeta::new(
+            *self.payer.key,
+            true
+          ));
+                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.deposit_mint.key,
+            false
+          ));
+                                          accounts.push(solana_instruction::AccountMeta::new(
             *self.vault_state.key,
             false
           ));
@@ -375,14 +524,6 @@ impl<'a, 'b> InitializeCpi<'a, 'b> {
                                           accounts.push(solana_instruction::AccountMeta::new(
             *self.vault_token_ata.key,
             false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.deposit_mint.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new(
-            *self.signer.key,
-            true
           ));
                                           accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.system_program.key,
@@ -412,13 +553,15 @@ impl<'a, 'b> InitializeCpi<'a, 'b> {
       accounts,
       data,
     };
-    let mut account_infos = Vec::with_capacity(9 + remaining_accounts.len());
+    let mut account_infos = Vec::with_capacity(11 + remaining_accounts.len());
     account_infos.push(self.__program.clone());
-                  account_infos.push(self.vault_state.clone());
+                  account_infos.push(self.program_config.clone());
+                        account_infos.push(self.signer.clone());
+                        account_infos.push(self.payer.clone());
+                        account_infos.push(self.deposit_mint.clone());
+                        account_infos.push(self.vault_state.clone());
                         account_infos.push(self.share_mint.clone());
                         account_infos.push(self.vault_token_ata.clone());
-                        account_infos.push(self.deposit_mint.clone());
-                        account_infos.push(self.signer.clone());
                         account_infos.push(self.system_program.clone());
                         account_infos.push(self.token_program.clone());
                         account_infos.push(self.rent.clone());
@@ -436,14 +579,16 @@ impl<'a, 'b> InitializeCpi<'a, 'b> {
 ///
 /// ### Accounts:
 ///
-                ///   0. `[writable]` vault_state
-                ///   1. `[writable]` share_mint
-                ///   2. `[writable]` vault_token_ata
+          ///   0. `[]` program_config
+                ///   1. `[signer]` signer
+                      ///   2. `[writable, signer]` payer
           ///   3. `[]` deposit_mint
-                      ///   4. `[writable, signer]` signer
-          ///   5. `[]` system_program
-          ///   6. `[]` token_program
-          ///   7. `[]` rent
+                ///   4. `[writable]` vault_state
+                ///   5. `[writable]` share_mint
+                ///   6. `[writable]` vault_token_ata
+          ///   7. `[]` system_program
+          ///   8. `[]` token_program
+          ///   9. `[]` rent
 #[derive(Clone, Debug)]
 pub struct InitializeCpiBuilder<'a, 'b> {
   instruction: Box<InitializeCpiBuilderInstruction<'a, 'b>>,
@@ -453,11 +598,13 @@ impl<'a, 'b> InitializeCpiBuilder<'a, 'b> {
   pub fn new(program: &'b solana_account_info::AccountInfo<'a>) -> Self {
     let instruction = Box::new(InitializeCpiBuilderInstruction {
       __program: program,
+              program_config: None,
+              signer: None,
+              payer: None,
+              deposit_mint: None,
               vault_state: None,
               share_mint: None,
               vault_token_ata: None,
-              deposit_mint: None,
-              signer: None,
               system_program: None,
               token_program: None,
               rent: None,
@@ -469,6 +616,46 @@ impl<'a, 'b> InitializeCpiBuilder<'a, 'b> {
     });
     Self { instruction }
   }
+      /// Gates vault creation: it is restricted to the authority recorded in
+/// `ProgramConfig`, rather than being open to any paying signer.
+/// 
+/// **Declared first on purpose.** Anchor applies each field's constraints in
+/// declaration order, so putting the config and the authority check ahead of
+/// the three `init` accounts makes an unauthorized call fail with
+/// `NotProtocolAuthority` before any account is created. Declared after
+/// them, a caller too poor to fund the rent would instead fail with a System
+/// Program "insufficient lamports" error, so the rejection reason would
+/// depend on the caller's balance rather than on authorization.
+/// 
+/// **Namespace note**: `vault_version` is a `u8` seed byte, so each deposit
+/// mint has 256 namespaces and each is single-use. `close_vault` cannot
+/// close the share mint (classic SPL Token has no close-mint instruction)
+/// and revokes its mint authority irreversibly, so a retired version can
+/// never be re-initialized. Retiring a vault therefore consumes one of the
+/// 256 permanently and strands its share-mint rent.
+#[inline(always)]
+    pub fn program_config(&mut self, program_config: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
+                        self.instruction.program_config = Some(program_config);
+                    self
+    }
+      /// The protocol authority. Authorizes creation but does not fund it, so a
+/// cold or MPC-held key can hold this role without carrying SOL.
+#[inline(always)]
+    pub fn signer(&mut self, signer: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
+                        self.instruction.signer = Some(signer);
+                    self
+    }
+      /// Funds the three accounts below. May be the same key as `signer`.
+#[inline(always)]
+    pub fn payer(&mut self, payer: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
+                        self.instruction.payer = Some(payer);
+                    self
+    }
+      #[inline(always)]
+    pub fn deposit_mint(&mut self, deposit_mint: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
+                        self.instruction.deposit_mint = Some(deposit_mint);
+                    self
+    }
       #[inline(always)]
     pub fn vault_state(&mut self, vault_state: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
                         self.instruction.vault_state = Some(vault_state);
@@ -482,16 +669,6 @@ impl<'a, 'b> InitializeCpiBuilder<'a, 'b> {
       #[inline(always)]
     pub fn vault_token_ata(&mut self, vault_token_ata: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
                         self.instruction.vault_token_ata = Some(vault_token_ata);
-                    self
-    }
-      #[inline(always)]
-    pub fn deposit_mint(&mut self, deposit_mint: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.deposit_mint = Some(deposit_mint);
-                    self
-    }
-      #[inline(always)]
-    pub fn signer(&mut self, signer: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.signer = Some(signer);
                     self
     }
       #[inline(always)]
@@ -560,15 +737,19 @@ impl<'a, 'b> InitializeCpiBuilder<'a, 'b> {
         let instruction = InitializeCpi {
         __program: self.instruction.__program,
                   
+          program_config: self.instruction.program_config.expect("program_config is not set"),
+                  
+          signer: self.instruction.signer.expect("signer is not set"),
+                  
+          payer: self.instruction.payer.expect("payer is not set"),
+                  
+          deposit_mint: self.instruction.deposit_mint.expect("deposit_mint is not set"),
+                  
           vault_state: self.instruction.vault_state.expect("vault_state is not set"),
                   
           share_mint: self.instruction.share_mint.expect("share_mint is not set"),
                   
           vault_token_ata: self.instruction.vault_token_ata.expect("vault_token_ata is not set"),
-                  
-          deposit_mint: self.instruction.deposit_mint.expect("deposit_mint is not set"),
-                  
-          signer: self.instruction.signer.expect("signer is not set"),
                   
           system_program: self.instruction.system_program.expect("system_program is not set"),
                   
@@ -584,11 +765,13 @@ impl<'a, 'b> InitializeCpiBuilder<'a, 'b> {
 #[derive(Clone, Debug)]
 struct InitializeCpiBuilderInstruction<'a, 'b> {
   __program: &'b solana_account_info::AccountInfo<'a>,
-            vault_state: Option<&'b solana_account_info::AccountInfo<'a>>,
+            program_config: Option<&'b solana_account_info::AccountInfo<'a>>,
+                signer: Option<&'b solana_account_info::AccountInfo<'a>>,
+                payer: Option<&'b solana_account_info::AccountInfo<'a>>,
+                deposit_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
+                vault_state: Option<&'b solana_account_info::AccountInfo<'a>>,
                 share_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
                 vault_token_ata: Option<&'b solana_account_info::AccountInfo<'a>>,
-                deposit_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
-                signer: Option<&'b solana_account_info::AccountInfo<'a>>,
                 system_program: Option<&'b solana_account_info::AccountInfo<'a>>,
                 token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
                 rent: Option<&'b solana_account_info::AccountInfo<'a>>,

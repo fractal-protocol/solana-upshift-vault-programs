@@ -12,6 +12,7 @@ import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
+import { ensureProgramConfig } from "../deploy/helpers/program-config.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -74,6 +75,21 @@ async function main() {
   if (vaultAccount) {
     console.log("\n⚠️  Vault already exists at this PDA! Skipping initialization...");
   } else {
+    // Vault creation is gated on the ProgramConfig authority; bootstrap it (or
+    // fail loudly) before attempting to initialize.
+    console.log("\n=== Program Config ===");
+    const configAuthority = await ensureProgramConfig({
+      program,
+      signer: walletKeypair,
+      desiredAuthority: walletKeypair.publicKey,
+    });
+    if (!configAuthority.equals(walletKeypair.publicKey)) {
+      throw new Error(
+        `Vault creation is restricted to ${configAuthority.toBase58()}, but this ` +
+        `script signs as ${walletKeypair.publicKey.toBase58()}.`
+      );
+    }
+
     console.log("\n=== Initializing Vault ===");
     console.log("Admin/Operator/Fee Recipient:", walletKeypair.publicKey.toBase58());
 

@@ -52,4 +52,8 @@ pub enum ErrorCode {
     UnauthorizedAdmin,
     #[msg("Vault must be empty to close")]
     VaultNotEmpty,
+    #[msg("Signer is not the protocol authority")]
+    NotProtocolAuthority,
+    #[msg("Authority must not be the zero key")]
+    InvalidAuthority,
 }

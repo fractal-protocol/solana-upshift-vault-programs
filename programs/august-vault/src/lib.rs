@@ -13,13 +13,16 @@ use instructions::close_vault::*;
 use instructions::create_metadata::*;
 use instructions::deposit::*;
 use instructions::initialize::*;
+use instructions::initialize_config::*;
 use instructions::nominate_admin::*;
 use instructions::operator_deposit::*;
 use instructions::operator_update_aum::*;
 use instructions::operator_withdraw::*;
+use instructions::override_config_authority::*;
 use instructions::pause::*;
 use instructions::redeem::*;
 use instructions::set_aum_limits::*;
+use instructions::set_config_authority::*;
 use instructions::set_fee_recipient::*;
 use instructions::set_operator::*;
 use instructions::set_withdrawal_fee::*;
@@ -52,8 +55,45 @@ security_txt! {
 #[program]
 pub mod august_vault {
     use super::*;
+
+    /// Create the singleton program config, naming the key permitted to create
+    /// vaults. Callable only by the program's current upgrade authority, and
+    /// only once.
+    ///
+    /// ### Parameters
+    /// - `authority` - The key that may call `initialize` from now on
+    pub fn initialize_config(ctx: Context<InitializeConfig>, authority: Pubkey) -> Result<()> {
+        return instructions::initialize_config::handler(ctx, authority);
+    }
+
+    /// Rotate the key permitted to create vaults. Signed by the current
+    /// authority; see `override_config_authority` for the recovery path.
+    ///
+    /// ### Parameters
+    /// - `new_authority` - The replacement authority (must not be the zero key)
+    pub fn set_config_authority(
+        ctx: Context<SetConfigAuthority>,
+        new_authority: Pubkey,
+    ) -> Result<()> {
+        return instructions::set_config_authority::handler(ctx, new_authority);
+    }
+
+    /// Reset the vault-creation authority using the program's **upgrade
+    /// authority**, for when the current config authority is wrong or lost.
+    ///
+    /// ### Parameters
+    /// - `new_authority` - The replacement authority (must not be the zero key)
+    pub fn override_config_authority(
+        ctx: Context<OverrideConfigAuthority>,
+        new_authority: Pubkey,
+    ) -> Result<()> {
+        return instructions::override_config_authority::handler(ctx, new_authority);
+    }
+
     /// Initialize the Vault state
     /// Mint Vault shares
+    ///
+    /// Requires the signer to be the protocol authority from `ProgramConfig`.
     ///
     /// ### Parameters
     /// - `admin` - The Admin of the Vault

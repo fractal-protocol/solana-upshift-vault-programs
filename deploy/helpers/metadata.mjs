@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // Copyright (C) 2026 Fractal Network Ltd
 //
 // Use of this software is governed by the Business Source License
@@ -5,8 +6,6 @@
 //
 // As of 10 March 2036 (the "Change Date"), use of this software will be
 // governed by version 2.0 of the Apache License.
-
-#!/usr/bin/env node
 import { Connection, Keypair, PublicKey, SystemProgram, SYSVAR_RENT_PUBKEY } from '@solana/web3.js';
 import { AnchorProvider, Program, Wallet } from '@coral-xyz/anchor';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
@@ -37,8 +36,7 @@ const args = process.argv.slice(2).reduce((acc, arg, i, arr) => {
 const programId = new PublicKey(args.programId);
 
 async function main() {
-  log('
-🎨 Creating Vault Token Metadata', 'green');
+  log('\n🎨 Creating Vault Token Metadata', 'green');
 
   // Load config
   const configPath = join(__dirname, '..', 'deploy.config.json');
@@ -134,8 +132,7 @@ async function main() {
   } catch (error) {
     logError(`Failed: ${error.message}`);
     if (error.logs) {
-      console.log('
-Program logs:');
+      console.log('\nProgram logs:');
       error.logs.forEach(log => console.log(log));
     }
     process.exit(1);

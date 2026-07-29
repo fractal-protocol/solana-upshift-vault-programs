@@ -43,7 +43,7 @@ asserts the same three):
 
 ```
 # program       exec_sha256                                                       raw_sha256                                                        size
-august_vault    fca11d73ae5ba0635ee76964945c52ddcf78a167eb4c60317ae63df4a4e7cc1d  1a6d69193603d2be74ed805386bda46c81b74c147fcef8b2c89272a76be8f535  505216
+august_vault    0bf2952ae48cf2711cc405e2006b370ac2463a8bebebb1630340869e872e0267  af79a40a02388eadd4a50252c9c5489fb804a6d404e98570a70c9ae561dc9496  594016
 ```
 
 ## Compare against the on-chain program
@@ -79,6 +79,13 @@ as verified.
   `august_vault` in the pinned image and fails unless the executable hash, raw
   SHA-256, and size all match `verified-hashes.txt`; an intentional bytecode
   change must update that file in the same PR.
+- **Doc comments are part of the bytecode.** Anchor embeds the IDL — including
+  instruction and account doc comments — into the program binary, so editing a
+  `///` comment changes the hash even though no logic changed (and can leave the
+  size identical, which makes it easy to assume nothing moved). Rewording a
+  comment therefore requires re-running the build above and updating
+  `verified-hashes.txt`. Verified by rebuilding twice from identical sources: the
+  hash is stable run-to-run, so a changed hash always means changed input.
 - `security_txt!` is embedded in the program (`programs/august-vault/src/lib.rs`),
   exposing the security contact and source repository in the deployed bytecode.
 - Devnet program: `C8B1EpsSGVWK2vMrk3aDT3kL7RCE77otokUh4EC35kK7`.

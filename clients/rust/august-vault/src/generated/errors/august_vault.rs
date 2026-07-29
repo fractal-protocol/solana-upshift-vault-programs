@@ -58,6 +58,12 @@ pub enum AugustVaultError {
     /// 6015 - Vault must be empty to close
     #[error("Vault must be empty to close")]
     VaultNotEmpty = 0x177F,
+    /// 6016 - Signer is not the protocol authority
+    #[error("Signer is not the protocol authority")]
+    NotProtocolAuthority = 0x1780,
+    /// 6017 - Authority must not be the zero key
+    #[error("Authority must not be the zero key")]
+    InvalidAuthority = 0x1781,
 }
 
 impl From<AugustVaultError> for solana_program_error::ProgramError {

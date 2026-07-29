@@ -14,6 +14,7 @@ import { sha256 } from "js-sha256";
 import * as token from "@solana/spl-token";
 import { getOrCreateAssociatedTokenAccount } from "@solana/spl-token";
 import * as assert from "assert";
+import { protocolAuthority, ensureProgramConfig } from "./helper/program-config";
 
 /**
  * Helper: Derive all vault PDAs from a deposit mint and version
@@ -97,6 +98,9 @@ describe("multi-vault", () => {
     let vault3TokenAta: PublicKey;
 
     before(async () => {
+        // Vault creation is gated on the ProgramConfig authority; whichever
+        // suite runs first bootstraps it for the shared validator.
+        await ensureProgramConfig(vaultProgram);
         // Initialize deployer and other wallets
         deployer = Keypair.fromSeed(Uint8Array.from(sha256.digest("multiVaultDeployer")));
         admin = Keypair.fromSeed(Uint8Array.from(sha256.digest("multiVaultAdmin")));
@@ -180,10 +184,10 @@ describe("multi-vault", () => {
                     shareMint: vault1ShareMint,
                     vaultTokenAta: vault1TokenAta,
                     depositMint: usdcMint,
-                    signer: deployer.publicKey,
+                    signer: protocolAuthority.publicKey,
                     tokenProgram: token.TOKEN_PROGRAM_ID,
                 })
-                .signers([deployer])
+                .signers([protocolAuthority])
                 .rpc();
 
             const vault = await vaultProgram.account.vaultState.fetch(vault1StatePda);
@@ -203,10 +207,10 @@ describe("multi-vault", () => {
                     shareMint: vault2ShareMint,
                     vaultTokenAta: vault2TokenAta,
                     depositMint: usdtMint,
-                    signer: deployer.publicKey,
+                    signer: protocolAuthority.publicKey,
                     tokenProgram: token.TOKEN_PROGRAM_ID,
                 })
-                .signers([deployer])
+                .signers([protocolAuthority])
                 .rpc();
 
             const vault = await vaultProgram.account.vaultState.fetch(vault2StatePda);
@@ -225,10 +229,10 @@ describe("multi-vault", () => {
                     shareMint: vault3ShareMint,
                     vaultTokenAta: vault3TokenAta,
                     depositMint: wsolMint,
-                    signer: deployer.publicKey,
+                    signer: protocolAuthority.publicKey,
                     tokenProgram: token.TOKEN_PROGRAM_ID,
                 })
-                .signers([deployer])
+                .signers([protocolAuthority])
                 .rpc();
 
             const vault = await vaultProgram.account.vaultState.fetch(vault3StatePda);
@@ -256,10 +260,10 @@ describe("multi-vault", () => {
                         shareMint: vault1ShareMint,
                         vaultTokenAta: vault1TokenAta,
                         depositMint: usdcMint,
-                        signer: deployer.publicKey,
+                        signer: protocolAuthority.publicKey,
                         tokenProgram: token.TOKEN_PROGRAM_ID,
                     })
-                    .signers([deployer])
+                    .signers([protocolAuthority])
                     .rpc(),
                 /0x0/ // already initialized
             );

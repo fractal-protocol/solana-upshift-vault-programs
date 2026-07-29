@@ -16,4 +16,4 @@
 # if a rebuilt hash disagrees. Reproduce locally: see VERIFY.md.
 #
 # program       exec_sha256                                                       raw_sha256                                                        size
-august_vault    fca11d73ae5ba0635ee76964945c52ddcf78a167eb4c60317ae63df4a4e7cc1d  1a6d69193603d2be74ed805386bda46c81b74c147fcef8b2c89272a76be8f535  505216
+august_vault    0bf2952ae48cf2711cc405e2006b370ac2463a8bebebb1630340869e872e0267  af79a40a02388eadd4a50252c9c5489fb804a6d404e98570a70c9ae561dc9496  594016

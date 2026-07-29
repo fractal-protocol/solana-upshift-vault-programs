@@ -314,6 +314,8 @@ mod tests {
             (ErrorCode::NotEnoughLiquidity, 6013),
             (ErrorCode::UnauthorizedAdmin, 6014),
             (ErrorCode::VaultNotEmpty, 6015),
+            (ErrorCode::NotProtocolAuthority, 6016),
+            (ErrorCode::InvalidAuthority, 6017),
         ];
         for (variant, code) in expected {
             assert_eq!(
