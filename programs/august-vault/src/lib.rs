@@ -119,10 +119,26 @@ pub mod august_vault {
     /// Deposit funds in the Vault
     /// Mint Vault shares
     ///
+    /// No slippage bound — prefer `deposit_checked` in new integrations.
+    ///
     /// ### Parameters
     /// - `amount` - The amount to deposit
     pub fn deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
         return instructions::deposit::handler(ctx, amount);
+    }
+
+    /// Deposit funds in the Vault, refusing to mint fewer than
+    /// `min_shares_out` shares.
+    ///
+    /// Same accounts and semantics as `deposit`, plus a caller-stated worst
+    /// acceptable rate. Additive rather than a change to `deposit`, so existing
+    /// integrations keep working; pass 0 for identical behaviour.
+    ///
+    /// ### Parameters
+    /// - `amount` - The amount to deposit
+    /// - `min_shares_out` - Revert with `SlippageExceeded` below this many shares
+    pub fn deposit_checked(ctx: Context<Deposit>, amount: u64, min_shares_out: u64) -> Result<()> {
+        return instructions::deposit::handler_checked(ctx, amount, min_shares_out);
     }
 
     /// Redeem funds from the Vault

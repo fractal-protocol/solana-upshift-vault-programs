@@ -13,7 +13,21 @@ use anchor_spl::token_interface::{
     mint_to_checked, transfer_checked, Mint, MintToChecked, TokenAccount, TokenInterface,
     TransferChecked,
 };
+/// Deposit without a slippage bound. Equivalent to `handler_checked` with
+/// `min_shares_out = 0`.
 pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
+    handler_checked(ctx, amount, 0)
+}
+
+/// Deposit, refusing to mint fewer than `min_shares_out` shares.
+///
+/// Share count is `floor(amount * (supply + EXTRA_SHARES) / (total + VIRTUAL_ASSETS))`,
+/// so a depositor always forfeits the fractional remainder — normally dust. The
+/// price can also move between quoting and execution, since share supply is read
+/// from the SPL mint and any holder may burn their own tokens (see
+/// `EXTRA_SHARES`). This lets a caller state the worst rate it will accept
+/// instead of trusting the rate it is given. Pass 0 to opt out.
+pub fn handler_checked(ctx: Context<Deposit>, amount: u64, min_shares_out: u64) -> Result<()> {
     require!(amount > 0, ErrorCode::ZeroAmount);
     require!(!ctx.accounts.vault_state.paused, ErrorCode::VaultPaused);
 
@@ -30,6 +44,7 @@ pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
     let shares = VaultState::shares_for_deposit(supply, total_assets, amount)?;
 
     require!(shares > 0, ErrorCode::ZeroAmount);
+    require!(shares >= min_shares_out, ErrorCode::SlippageExceeded);
 
     ctx.accounts.mint_to(shares)?;
     ctx.accounts.vault_state.local_aum = ctx

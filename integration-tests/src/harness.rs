@@ -674,6 +674,157 @@ impl VaultCtx {
         airdrop_keypair(&mut self.svm, lamports)
     }
 
+    /// An additional independent depositor: funded keypair plus deposit and
+    /// share ATAs, seeded with `mint_amount` of the deposit token.
+    ///
+    /// `VaultCtx` has one built-in `user`; share-price manipulation is inherently
+    /// multi-party (an attacker's position has to be distinguishable from its
+    /// victims'), so those tests need more.
+    pub fn new_depositor(&mut self, mint_amount: u64) -> Depositor {
+        let keypair = airdrop_keypair(&mut self.svm, 1_000_000_000);
+        let payer = self.payer.insecure_clone();
+        let (deposit_mint, share_mint, token_program) =
+            (self.deposit_mint, self.share_mint, self.token_program);
+        let deposit_ata = create_ata(
+            &mut self.svm,
+            &payer,
+            &keypair.pubkey(),
+            &deposit_mint,
+            token_program,
+        );
+        let share_ata = create_ata(
+            &mut self.svm,
+            &payer,
+            &keypair.pubkey(),
+            &share_mint,
+            token_program,
+        );
+        if mint_amount > 0 {
+            let ix = mint_to_ix(
+                token_program,
+                &deposit_mint,
+                &deposit_ata,
+                &payer.pubkey(),
+                mint_amount,
+            );
+            send_tx(&mut self.svm, &payer, &[ix], &[&payer]).expect("mint to depositor");
+        }
+        Depositor {
+            keypair,
+            deposit_ata,
+            share_ata,
+        }
+    }
+
+    /// `deposit` signed by an arbitrary depositor.
+    pub fn deposit_as(
+        &mut self,
+        depositor: &Depositor,
+        amount: u64,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts: ix_accounts::Deposit {
+                vault_state: self.vault_state,
+                vault_token_ata: self.vault_token_pda,
+                sender_token_account: depositor.deposit_ata,
+                sender_share_account: depositor.share_ata,
+                share_mint: self.share_mint,
+                deposit_mint: self.deposit_mint,
+                signer: depositor.keypair.pubkey(),
+                token_program: self.token_program.id(),
+            }
+            .to_account_metas(None),
+            data: ix_data::Deposit { amount }.data(),
+        };
+        self.send_as(&depositor.keypair, ix)
+    }
+
+    /// `deposit_checked` signed by an arbitrary depositor, with a slippage bound.
+    pub fn deposit_checked_as(
+        &mut self,
+        depositor: &Depositor,
+        amount: u64,
+        min_shares_out: u64,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts: ix_accounts::Deposit {
+                vault_state: self.vault_state,
+                vault_token_ata: self.vault_token_pda,
+                sender_token_account: depositor.deposit_ata,
+                sender_share_account: depositor.share_ata,
+                share_mint: self.share_mint,
+                deposit_mint: self.deposit_mint,
+                signer: depositor.keypair.pubkey(),
+                token_program: self.token_program.id(),
+            }
+            .to_account_metas(None),
+            data: ix_data::DepositChecked {
+                amount,
+                min_shares_out,
+            }
+            .data(),
+        };
+        self.send_as(&depositor.keypair, ix)
+    }
+
+    /// `redeem` signed by an arbitrary depositor.
+    pub fn redeem_as(
+        &mut self,
+        depositor: &Depositor,
+        shares: u64,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts: ix_accounts::Redeem {
+                vault_state: self.vault_state,
+                vault_deposit_ata: self.vault_token_pda,
+                sender_token_account: depositor.deposit_ata,
+                sender_share_account: depositor.share_ata,
+                fee_recipient_account: self.fee_recipient_deposit_ata,
+                share_mint: self.share_mint,
+                deposit_mint: self.deposit_mint,
+                signer: depositor.keypair.pubkey(),
+                token_program: self.token_program.id(),
+            }
+            .to_account_metas(None),
+            data: ix_data::Redeem { shares }.data(),
+        };
+        self.send_as(&depositor.keypair, ix)
+    }
+
+    /// Burn share tokens **directly through the token program**, bypassing the
+    /// vault entirely.
+    ///
+    /// SPL Token lets any holder burn their own balance, which shrinks
+    /// `share_mint.supply` — the value the vault reads to price deposits and
+    /// redeems. The vault cannot prevent this, so the share math has to stay
+    /// sound in spite of it.
+    pub fn burn_shares_as(&mut self, depositor: &Depositor, amount: u64) {
+        let ix = match self.token_program {
+            TokenProgramKind::Spl => spl_token::instruction::burn(
+                &spl_token::ID,
+                &depositor.share_ata,
+                &self.share_mint,
+                &depositor.keypair.pubkey(),
+                &[],
+                amount,
+            ),
+            TokenProgramKind::Token2022 => spl_token_2022::instruction::burn(
+                &spl_token_2022::ID,
+                &depositor.share_ata,
+                &self.share_mint,
+                &depositor.keypair.pubkey(),
+                &[],
+                amount,
+            ),
+        }
+        .expect("build burn instruction");
+        self.send_as(&depositor.keypair, ix)
+            .expect("an SPL holder can always burn their own shares");
+    }
+
     /// The singleton program-config PDA.
     pub fn program_config_pda(&self) -> Pubkey {
         program_config_pda()
@@ -954,6 +1105,13 @@ impl VaultCtx {
             deployed_aum: state.deployed_aum,
         }
     }
+}
+
+/// An independent vault participant created by [`VaultCtx::new_depositor`].
+pub struct Depositor {
+    pub keypair: Keypair,
+    pub deposit_ata: Pubkey,
+    pub share_ata: Pubkey,
 }
 
 /// A fresh SVM with the program loaded and a `ProgramData` fixture installed,

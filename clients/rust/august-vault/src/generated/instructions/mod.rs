@@ -9,6 +9,7 @@
   pub(crate) mod r#close_vault;
   pub(crate) mod r#create_share_token_metadata;
   pub(crate) mod r#deposit;
+  pub(crate) mod r#deposit_checked;
   pub(crate) mod r#initialize;
   pub(crate) mod r#initialize_config;
   pub(crate) mod r#nominate_admin;
@@ -30,6 +31,7 @@
   pub use self::r#close_vault::*;
   pub use self::r#create_share_token_metadata::*;
   pub use self::r#deposit::*;
+  pub use self::r#deposit_checked::*;
   pub use self::r#initialize::*;
   pub use self::r#initialize_config::*;
   pub use self::r#nominate_admin::*;

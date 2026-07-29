@@ -36,6 +36,7 @@ so each deposit mint has a finite number of vault lifecycles.
 | `override_config_authority` | Upgrade authority | Reset the vault-creation authority (recovery) |
 | `initialize`             | Protocol authority | Create vault, share mint, set roles         |
 | `deposit`                | User     | Deposit tokens, receive shares                       |
+| `deposit_checked`        | User     | As `deposit`, reverting below a caller-stated minimum share output |
 | `redeem`                 | User     | Burn shares, receive tokens (minus fee)              |
 | `operator_withdraw`      | Operator | Withdraw tokens for external deployment              |
 | `operator_deposit`       | Operator | Return tokens to vault                               |

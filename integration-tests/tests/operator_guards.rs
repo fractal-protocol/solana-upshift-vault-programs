@@ -128,6 +128,109 @@ fn update_aum_from_zero_rejects_any_nonzero_report() {
     assert_anchor_err(&err, ErrorCode::AumIncreaseTooBig);
 }
 
+// ---- large-magnitude AUM: the guard scales both sides by 10 000 ----
+//
+// Scaling in `u64` overflows once `deployed_aum` passes
+// `u64::MAX / (10000 + increase_limit)` — 1,840,992,422,525,903 at the default
+// 20 bps, and only 922,337,203,685,477 if an admin widens the limits to their
+// 10000 bps maximum (looser limits *lower* the ceiling, which is the opposite of
+// the intuition). Past that point every legitimate report aborted, freezing yield
+// reporting. `operator_update_aum` widens to `u128` first.
+//
+// These magnitudes are unreachable through deposits in a test, so the state is
+// engineered directly. `local_aum` is left at 0 so nothing else overflows.
+
+/// Above the old u64 ceiling, both `new_aum * 10000` and
+/// `increase_limit * deployed_aum` overflowed. A legitimate in-window report at
+/// that scale must now succeed.
+#[test]
+fn update_aum_accepts_in_window_report_past_the_u64_scaling_ceiling() {
+    const HUGE: u64 = 2_000_000_000_000_000; // > u64::MAX / 10_020
+
+    let mut ctx = VaultCtx::fresh();
+    let mut state = ctx.vault_state_data();
+    state.local_aum = 0;
+    state.deployed_aum = HUGE;
+    ctx.force_overwrite_vault_state(state);
+
+    let boundary = max_accepted_aum(HUGE, DEFAULT_LIMIT_BPS);
+    ctx.operator_update_aum(boundary)
+        .expect("an in-window report must not abort merely because of magnitude");
+    assert_eq!(ctx.vault_state_data().deployed_aum, boundary);
+}
+
+/// Not crashing is not enough — the guard must still *reject* out-of-window
+/// reports at these magnitudes rather than let anything through.
+#[test]
+fn update_aum_still_enforces_the_window_past_the_u64_scaling_ceiling() {
+    const HUGE: u64 = 2_000_000_000_000_000;
+
+    let mut ctx = VaultCtx::fresh();
+    let mut state = ctx.vault_state_data();
+    state.local_aum = 0;
+    state.deployed_aum = HUGE;
+    ctx.force_overwrite_vault_state(state);
+
+    let err = ctx
+        .operator_update_aum(max_accepted_aum(HUGE, DEFAULT_LIMIT_BPS) + 1)
+        .expect_err("one unit above the window must still be rejected");
+    assert_anchor_err(&err, ErrorCode::AumIncreaseTooBig);
+
+    let err = ctx
+        .operator_update_aum(min_accepted_aum(HUGE, DEFAULT_LIMIT_BPS) - 1)
+        .expect_err("one unit below the window must still be rejected");
+    assert_anchor_err(&err, ErrorCode::AumDecreaseTooBig);
+    assert_eq!(ctx.vault_state_data().deployed_aum, HUGE);
+}
+
+/// Widening the limits to the 10000 bps maximum doubles the multiplier and so
+/// halves the old u64 ceiling — the amplification the audit report did not note.
+#[test]
+fn update_aum_handles_max_limits_at_large_magnitude() {
+    const HUGE: u64 = 2_000_000_000_000_000; // > u64::MAX / 20_000 by ~2.2x
+    const MAX_BPS: u32 = 10_000;
+
+    let mut ctx = VaultCtx::fresh();
+    ctx.set_aum_limits(MAX_BPS, MAX_BPS)
+        .expect("admin widens the window to ±100%");
+    let mut state = ctx.vault_state_data();
+    state.local_aum = 0;
+    state.deployed_aum = HUGE;
+    ctx.force_overwrite_vault_state(state);
+
+    // +100% is the edge of the widened window: 2x the current value.
+    let doubled = max_accepted_aum(HUGE, MAX_BPS);
+    ctx.operator_update_aum(doubled)
+        .expect("+100% is in window once the limits allow it");
+    assert_eq!(ctx.vault_state_data().deployed_aum, doubled);
+
+    let err = ctx
+        .operator_update_aum(max_accepted_aum(doubled, MAX_BPS) + 1)
+        .expect_err("beyond +100% must still be rejected");
+    assert_anchor_err(&err, ErrorCode::AumIncreaseTooBig);
+}
+
+/// The extreme: `deployed_aum` at `u64::MAX`. Scaling this by 10 000 needs 78
+/// bits, so it is only expressible in `u128`.
+#[test]
+fn update_aum_handles_deployed_aum_at_u64_max() {
+    let mut ctx = VaultCtx::fresh();
+    let mut state = ctx.vault_state_data();
+    state.local_aum = 0;
+    state.deployed_aum = u64::MAX;
+    ctx.force_overwrite_vault_state(state);
+
+    // No increase is representable, but holding steady must be accepted, and a
+    // decrease to the window's floor must be too.
+    ctx.operator_update_aum(u64::MAX)
+        .expect("reporting the same value must be in window");
+
+    let floor = min_accepted_aum(u64::MAX, DEFAULT_LIMIT_BPS);
+    ctx.operator_update_aum(floor)
+        .expect("the decrease floor must be accepted at u64::MAX");
+    assert_eq!(ctx.vault_state_data().deployed_aum, floor);
+}
+
 #[test]
 fn update_aum_rejects_non_operator() {
     let mut ctx = vault_with_deployed_aum();

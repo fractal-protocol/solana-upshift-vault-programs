@@ -22,22 +22,47 @@ pub const VAULT_TOKEN_SEED: &[u8] = b"token_vault";
 
 pub const FEE_RATE_DENOMINATOR_VALUE: u32 = 1_000_000;
 
+/// Basis-point denominator for the AUM change limits: 10 000 bps = 100%.
+///
+/// **Widen before multiplying.** The AUM guard scales both sides of its
+/// comparison by this value, and doing so in `u64` overflows once
+/// `deployed_aum` exceeds `u64::MAX / (BPS_DENOMINATOR + increase_limit)`.
+/// `operator_update_aum` therefore casts to `u128` first. Note that the *safe*
+/// failure mode of the old u64 form depended on the root manifest's
+/// `[profile.release] overflow-checks = true`: with checks on it panicked
+/// (aborting the transaction), but built without them the products would wrap
+/// and a wrapped comparison could satisfy the guard, permitting an arbitrarily
+/// large AUM change. The `u128` form removes that dependency entirely.
+pub const BPS_DENOMINATOR: u32 = 10_000;
+
 /// Virtual-share offset used by `shares_for_deposit` / `assets_for_redeem`.
 ///
-/// The math treats every vault as if it had `EXTRA_SHARES` "ghost" share(s)
+/// The math treats every vault as if it had `EXTRA_SHARES` "ghost" shares
 /// permanently outstanding. This defends against the OpenZeppelin ERC-4626
 /// share-inflation attack: an attacker who is first to deposit a single unit
 /// and then donates a large asset balance directly to the reserve would
 /// otherwise be able to round subsequent depositors' shares down to zero.
 /// See <https://docs.openzeppelin.com/contracts/5.x/erc4626#inflation-attack>.
 ///
-/// This is **not** tunable — changing it changes the share-price math and
-/// breaks the security property. Tests in this module pin the behaviour.
-pub const EXTRA_SHARES: u128 = 1;
+/// **Why 10^6 and not 1.** The ghost shares act as a permanent co-holder that
+/// cannot be burned. With an offset of 1, a sole holder who burns their position
+/// down to a handful of shares out-holds that co-holder and captures most of the
+/// value that later depositors forfeit to rounding; at 10^6 the co-holder
+/// dominates any such position and the manoeuvre is loss-making. Share supply is
+/// read from the SPL mint, and SPL Token lets any holder burn their own tokens,
+/// so the vault cannot prevent supply from shrinking — it can only make shrinking
+/// it unprofitable.
+///
+/// **Both offsets must move together.** Raising `EXTRA_SHARES` alone would
+/// inflate minted share counts by `EXTRA_SHARES / VIRTUAL_ASSETS` (a first
+/// deposit of `d` would mint `d * 10^6` shares) and eat `u64` headroom. Equal
+/// offsets keep first-deposit minting exactly 1:1.
+pub const EXTRA_SHARES: u128 = 1_000_000;
 
 /// Companion virtual-asset offset; see `EXTRA_SHARES`. Both offsets must be
-/// non-zero for the inflation defense to hold.
-pub const VIRTUAL_ASSETS: u128 = 1;
+/// non-zero for the inflation defense to hold, and equal to each other so that
+/// minting stays 1:1 into an empty vault.
+pub const VIRTUAL_ASSETS: u128 = 1_000_000;
 
 #[account]
 #[derive(Default, InitSpace)]
@@ -173,11 +198,16 @@ mod tests {
 
     // ---- shares_for_deposit: exact-value cases ----
 
+    // The offsets are 10^6, so cases below that magnitude are dominated by them
+    // (which is the point — see `EXTRA_SHARES`). Ratio cases therefore use
+    // magnitudes where the offsets are negligible, and the offset-dominated
+    // regime gets its own cases.
     #[test_case(0, 0, 1_000_000, 1_000_000; "first deposit: 1:1 mint")]
     #[test_case(0, 0, 1, 1; "first deposit: single unit")]
     #[test_case(0, 0, u64::MAX, u64::MAX; "first deposit: max amount preserved")]
     #[test_case(1_000_000, 1_000_000, 1_000_000, 1_000_000; "1:1 ratio mid-life")]
-    #[test_case(1_000_000, 2_000_000, 1_000_000, 500_000; "share price 2x: half shares")]
+    #[test_case(1_000_000_000_000, 2_000_000_000_000, 1_000_000_000_000, 500_000_249_999;
+        "share price 2x: about half the shares")]
     #[test_case(1_000_000, 3_000_000, 1, 0; "rounds down to zero on tiny deposit")]
     fn shares_for_deposit_cases(supply: u64, total_assets: u64, amount: u64, expected: u64) {
         let got = VaultState::shares_for_deposit(supply, total_assets, amount).unwrap();
@@ -187,10 +217,14 @@ mod tests {
     // ---- assets_for_redeem: exact-value cases ----
 
     #[test_case(1_000_000, 1_000_000, 1_000_000, 1_000_000; "1:1 ratio: offsets cancel")]
-    #[test_case(1_000_000, 2_000_000, 500_000, 999_999; "share price 2x: ~2 per share (rounded)")]
-    // Inflation-defense: a tiny supply against a huge balance does NOT let the
-    // single-share holder drain the vault — the virtual share absorbs ~half.
-    #[test_case(1, 1_000_000, 1, 500_000; "tiny supply: virtual share absorbs half")]
+    #[test_case(1_000_000_000_000, 2_000_000_000_000, 500_000_000_000, 999_999_500_000;
+        "share price 2x: about 2 per share")]
+    // Inflation-defense: a tiny supply against a large balance does NOT let the
+    // single-share holder drain the vault. With 10^6 ghost shares the sole real
+    // share is worth ~1 unit of a 10^6 balance, not half of it — the defence is
+    // far stronger than it was with a single ghost share.
+    #[test_case(1, 1_000_000, 1, 1; "tiny supply: ghost shares absorb nearly everything")]
+    #[test_case(1, 1_000_000_000_000, 1, 1_000_000; "tiny supply against a huge balance")]
     fn assets_for_redeem_cases(supply: u64, total_assets: u64, shares: u64, expected: u64) {
         let got = VaultState::assets_for_redeem(supply, total_assets, shares).unwrap();
         assert_eq!(got, expected);
@@ -259,9 +293,16 @@ mod tests {
     /// gives the on-chain code for each variant.
     const ANCHOR_USER_ERROR_OFFSET: u32 = 6000;
 
+    // Two distinct arithmetic failure paths, pinned separately. Which one fires
+    // depends on the magnitude of the inputs, and the boundary moved when the
+    // offsets grew to 10^6: `u64::MAX * (u64::MAX + 1)` still fits `u128`, but
+    // `u64::MAX * (u64::MAX + 10^6)` does not. Both revert the transaction; the
+    // codes differ only in which check caught it.
+
     #[test]
     fn shares_for_deposit_narrowing_overflow_returns_number_overflow() {
-        let err = VaultState::shares_for_deposit(u64::MAX, 1, u64::MAX).unwrap_err();
+        // The u128 product fits; only the final narrowing to u64 fails.
+        let err = VaultState::shares_for_deposit(u64::MAX, 0, 1_000_000).unwrap_err();
         let code = err_code(&err).expect("AnchorError expected");
         assert_eq!(
             code,
@@ -271,16 +312,38 @@ mod tests {
     }
 
     #[test]
+    fn shares_for_deposit_u128_product_overflow_returns_math_error() {
+        // `amount * (supply + EXTRA_SHARES)` exceeds u128 before any division.
+        let err = VaultState::shares_for_deposit(u64::MAX, 1, u64::MAX).unwrap_err();
+        let code = err_code(&err).expect("AnchorError expected");
+        assert_eq!(
+            code,
+            ErrorCode::MathError as u32 + ANCHOR_USER_ERROR_OFFSET,
+            "expected MathError (u128 product path), got code {code}",
+        );
+    }
+
+    #[test]
     fn assets_for_redeem_narrowing_overflow_returns_number_overflow() {
-        // Symmetric boundary case to `shares_for_deposit`: with assets_eff
-        // small (supply=0 → shares_eff=1, after the +1 offset), a maximal
-        // `shares` * (`total_assets` + 1) overflows the u64 narrowing.
-        let err = VaultState::assets_for_redeem(0, u64::MAX, u64::MAX).unwrap_err();
+        // Symmetric to `shares_for_deposit`: the u128 product fits, the u64
+        // narrowing does not.
+        let err = VaultState::assets_for_redeem(0, u64::MAX, 1_000_000).unwrap_err();
         let code = err_code(&err).expect("AnchorError expected");
         assert_eq!(
             code,
             ErrorCode::NumberOverflow as u32 + ANCHOR_USER_ERROR_OFFSET,
             "expected NumberOverflow (narrowing path), got code {code}",
+        );
+    }
+
+    #[test]
+    fn assets_for_redeem_u128_product_overflow_returns_math_error() {
+        let err = VaultState::assets_for_redeem(0, u64::MAX, u64::MAX).unwrap_err();
+        let code = err_code(&err).expect("AnchorError expected");
+        assert_eq!(
+            code,
+            ErrorCode::MathError as u32 + ANCHOR_USER_ERROR_OFFSET,
+            "expected MathError (u128 product path), got code {code}",
         );
     }
 
@@ -316,6 +379,7 @@ mod tests {
             (ErrorCode::VaultNotEmpty, 6015),
             (ErrorCode::NotProtocolAuthority, 6016),
             (ErrorCode::InvalidAuthority, 6017),
+            (ErrorCode::SlippageExceeded, 6018),
         ];
         for (variant, code) in expected {
             assert_eq!(

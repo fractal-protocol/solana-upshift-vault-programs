@@ -15,15 +15,27 @@ pub fn handler(ctx: Context<OperatorUpdateAum>, new_aum: u64) -> Result<()> {
     let state = &mut ctx.accounts.vault_state;
 
     // Calculate limits using configurable values (in basis points)
-    let decrease_limit = (10000 - state.aum_decrease_limit) as u64;
-    let increase_limit = (10000 + state.aum_increase_limit) as u64;
+    let decrease_limit = (BPS_DENOMINATOR - state.aum_decrease_limit) as u128;
+    let increase_limit = (BPS_DENOMINATOR + state.aum_increase_limit) as u128;
+
+    // Widen before multiplying. As u64 these products overflow once
+    // `deployed_aum` passes `u64::MAX / (10000 + increase_limit)` — about 1.84M
+    // whole tokens on a 9-decimal mint with the default 20 bps, and only ~922k
+    // if an admin widens the limits to their 10000 bps maximum. Past that point
+    // every legitimate AUM report aborts, freezing yield reporting for the vault
+    // (the program is built with `overflow-checks`, so the multiplication panics
+    // rather than wrapping — see the note on `BPS_DENOMINATOR`). In `u128` the
+    // worst case is ~3.7e23 against a ~3.4e38 ceiling, so no u64 input can
+    // overflow these comparisons.
+    let scaled_new_aum = (new_aum as u128) * (BPS_DENOMINATOR as u128);
+    let deployed_aum = state.deployed_aum as u128;
 
     require!(
-        new_aum * 10000 >= decrease_limit * state.deployed_aum,
+        scaled_new_aum >= decrease_limit * deployed_aum,
         ErrorCode::AumDecreaseTooBig
     );
     require!(
-        new_aum * 10000 <= increase_limit * state.deployed_aum,
+        scaled_new_aum <= increase_limit * deployed_aum,
         ErrorCode::AumIncreaseTooBig
     );
 

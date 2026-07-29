@@ -56,4 +56,6 @@ pub enum ErrorCode {
     NotProtocolAuthority,
     #[msg("Authority must not be the zero key")]
     InvalidAuthority,
+    #[msg("Received fewer shares than the caller's minimum")]
+    SlippageExceeded,
 }

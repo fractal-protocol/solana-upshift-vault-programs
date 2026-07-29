@@ -6,7 +6,7 @@
 // As of 10 March 2036 (the "Change Date"), use of this software will be
 // governed by version 2.0 of the Apache License.
 
-use crate::state::vault::{VaultState, VAULT_STATE_SEED};
+use crate::state::vault::{VaultState, BPS_DENOMINATOR, VAULT_STATE_SEED};
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::Mint;
 
@@ -35,13 +35,13 @@ pub struct SetAumLimits<'info> {
 pub fn handler(ctx: Context<SetAumLimits>, increase_limit: u32, decrease_limit: u32) -> Result<()> {
     let state = &mut ctx.accounts.vault_state;
 
-    // Validate limits are reasonable (max 100% = 10000 basis points)
+    // Validate limits are reasonable (max 100% = BPS_DENOMINATOR basis points)
     require!(
-        increase_limit <= 10000,
+        increase_limit <= BPS_DENOMINATOR,
         crate::errors::ErrorCode::AumLimitTooHigh
     );
     require!(
-        decrease_limit <= 10000,
+        decrease_limit <= BPS_DENOMINATOR,
         crate::errors::ErrorCode::AumLimitTooHigh
     );
 

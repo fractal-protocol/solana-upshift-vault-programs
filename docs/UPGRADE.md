@@ -23,11 +23,11 @@ see [VERIFY.md](../VERIFY.md)).
 
 - **Expected reproducible hash** (mainnet build, committed source): the
   `exec_sha256` / `raw_sha256` / `size` in [`verified-hashes.txt`](../verified-hashes.txt)
-  (currently `0bf2952a…`, 594,016 B), built with `solana-verify` 0.5.1 in
+  (currently `555ffd9f…`, 595,912 B), built with `solana-verify` 0.5.1 in
   `solanafoundation/solana-verifiable-build@sha256:695f890e…` (Solana 2.3.0).
-- **ProgramData must be extended first:** the new `.so` (594,016 B) is larger
+- **ProgramData must be extended first:** the new `.so` (595,912 B) is larger
   than the current allocation, so `solana program extend` is required or the
-  upgrade fails. Deficit = `594,016 + 45 (loader header) − 507,781 = 86,280` bytes
+  upgrade fails. Deficit = `595,912 + 45 (loader header) − 507,781 = 88,176` bytes
   (re-derive if the sizes change).
 - **Bootstrap the program config after upgrading:** vault creation is gated on a
   `ProgramConfig` authority that does not exist yet. Until `initialize_config` is
@@ -110,7 +110,7 @@ Also confirm the GitHub **build attestation** exists for the asset
 
 > `declare_id!` is baked into the bytecode, so the **devnet** artifact must
 > declare the devnet program ID. Build a devnet-targeted `.so` (this hashes
-> differently from mainnet's `0bf2952a…` — expected; the dry-run validates
+> differently from mainnet's `555ffd9f…` — expected; the dry-run validates
 > mechanics + state compatibility, not the mainnet bytes):
 
 ```bash
@@ -187,8 +187,8 @@ sha256sum pre-upgrade-august_vault.so
 # Re-derive first — this value is release-specific:
 #   solana program show up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt -u m   # current allocation
 #   additional_bytes = <new .so size> + 45 - <current ProgramData account size>
-# For the hashes in verified-hashes.txt: 594,016 + 45 - 507,781 = 86,280.
-solana program extend up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt 86280 \
+# For the hashes in verified-hashes.txt: 595,912 + 45 - 507,781 = 88,176.
+solana program extend up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt 88176 \
   -u mainnet-beta -k <ops-payer.json>
 
 # Upload the verified .so into a buffer.
@@ -226,7 +226,7 @@ remedy. If immutability is ever wanted, Step 4 must happen first. Pinned by
 
 ```bash
 solana-verify get-program-hash -u mainnet-beta up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt
-#   Now equals verified-hashes.txt exec_sha256 (0bf2952a…)
+#   Now equals verified-hashes.txt exec_sha256 (555ffd9f…)
 ```
 
 If you paused, **unpause first** — `deposit` and `redeem` are pause-gated, so
@@ -356,6 +356,16 @@ established by the fork test + devnet rehearsal makes a rollback unlikely.
   redeem, the operator instructions and every admin instruction are unchanged, so
   live user flows are unaffected. (The one latent functional delta is a
   Token-2022 operator-ATA fix, which no live vault exercises.)
+- **The share-price offsets change, and the effect on the live vaults is exactly
+  zero.** `EXTRA_SHARES` / `VIRTUAL_ASSETS` go from 1 to 10^6, which alters the
+  deposit and redeem formulas. Both live vaults currently hold `total_assets`
+  exactly equal to share supply (no yield reported yet), and with equal offsets
+  the price is `(T + O)/(S + O)` — identically 1.0 for any `O` when `T == S`. Every
+  deposit and redeem amount checked against both vaults' real on-chain state
+  returns a byte-identical result before and after. Once yield is reported the
+  two formulas diverge, always in the vault's favour and bounded well under 0.01%
+  (worst case measured: −0.0077% on a full-supply redeem of the smaller vault at
+  +20% yield). No migration, no rebasing, no action for holders.
 - **`initialize` is the exception, and it is a breaking change.** Vault *creation*
   now requires the `ProgramConfig` account and a signer equal to its authority,
   and gains a separate `payer`. This affects no existing vault, but it does mean

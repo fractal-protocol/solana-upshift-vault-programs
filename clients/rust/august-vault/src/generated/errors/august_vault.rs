@@ -64,6 +64,9 @@ pub enum AugustVaultError {
     /// 6017 - Authority must not be the zero key
     #[error("Authority must not be the zero key")]
     InvalidAuthority = 0x1781,
+    /// 6018 - Received fewer shares than the caller's minimum
+    #[error("Received fewer shares than the caller's minimum")]
+    SlippageExceeded = 0x1782,
 }
 
 impl From<AugustVaultError> for solana_program_error::ProgramError {

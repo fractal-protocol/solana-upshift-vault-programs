@@ -34,20 +34,39 @@ proptest! {
         total_assets in any::<u64>(),
         amount in any::<u64>(),
     ) {
-        let num = (amount as u128) * (supply as u128 + EXTRA_SHARES);
         let den = total_assets as u128 + VIRTUAL_ASSETS;
-        let exact_floor = num / den;
+        let result = VaultState::shares_for_deposit(supply, total_assets, amount);
 
-        match VaultState::shares_for_deposit(supply, total_assets, amount) {
-            Ok(shares) => prop_assert_eq!(shares as u128, exact_floor),
-            Err(e) => {
-                // Only the final u64 narrowing may fail for u64 inputs.
-                prop_assert!(exact_floor > u64::MAX as u128,
-                    "error returned though result {} fits u64", exact_floor);
-                prop_assert_eq!(
+        // `checked_mul`, not `*`: with the offsets at 10^6 the exact product
+        // exceeds u128 when `amount` and `supply` are both near u64::MAX, so
+        // computing it unchecked would panic inside this test rather than test
+        // anything. When it does not fit, the program cannot compute it either
+        // and must say so.
+        match (amount as u128).checked_mul(supply as u128 + EXTRA_SHARES) {
+            None => match result {
+                Ok(v) => prop_assert!(
+                    false,
+                    "returned Ok({}) though the exact product exceeds u128", v
+                ),
+                Err(e) => prop_assert_eq!(
                     anchor_code(&e),
-                    Some(vault_error_code(ErrorCode::NumberOverflow))
-                );
+                    Some(vault_error_code(ErrorCode::MathError))
+                ),
+            },
+            Some(num) => {
+                let exact_floor = num / den;
+                match result {
+                    Ok(shares) => prop_assert_eq!(shares as u128, exact_floor),
+                    Err(e) => {
+                        // The product fit, so only the u64 narrowing may fail.
+                        prop_assert!(exact_floor > u64::MAX as u128,
+                            "error returned though result {} fits u64", exact_floor);
+                        prop_assert_eq!(
+                            anchor_code(&e),
+                            Some(vault_error_code(ErrorCode::NumberOverflow))
+                        );
+                    }
+                }
             }
         }
     }
@@ -59,19 +78,34 @@ proptest! {
         total_assets in any::<u64>(),
         shares in any::<u64>(),
     ) {
-        let num = (shares as u128) * (total_assets as u128 + VIRTUAL_ASSETS);
         let den = supply as u128 + EXTRA_SHARES;
-        let exact_floor = num / den;
+        let result = VaultState::assets_for_redeem(supply, total_assets, shares);
 
-        match VaultState::assets_for_redeem(supply, total_assets, shares) {
-            Ok(assets) => prop_assert_eq!(assets as u128, exact_floor),
-            Err(e) => {
-                prop_assert!(exact_floor > u64::MAX as u128,
-                    "error returned though result {} fits u64", exact_floor);
-                prop_assert_eq!(
+        // See the companion property: the exact product can exceed u128.
+        match (shares as u128).checked_mul(total_assets as u128 + VIRTUAL_ASSETS) {
+            None => match result {
+                Ok(v) => prop_assert!(
+                    false,
+                    "returned Ok({}) though the exact product exceeds u128", v
+                ),
+                Err(e) => prop_assert_eq!(
                     anchor_code(&e),
-                    Some(vault_error_code(ErrorCode::NumberOverflow))
-                );
+                    Some(vault_error_code(ErrorCode::MathError))
+                ),
+            },
+            Some(num) => {
+                let exact_floor = num / den;
+                match result {
+                    Ok(assets) => prop_assert_eq!(assets as u128, exact_floor),
+                    Err(e) => {
+                        prop_assert!(exact_floor > u64::MAX as u128,
+                            "error returned though result {} fits u64", exact_floor);
+                        prop_assert_eq!(
+                            anchor_code(&e),
+                            Some(vault_error_code(ErrorCode::NumberOverflow))
+                        );
+                    }
+                }
             }
         }
     }
