@@ -212,7 +212,15 @@ solana program set-buffer-authority <BUFFER_ADDRESS> \
 - authority = `B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM`
 - spill = the ops fee-payer
 
-Do **not** set the program immutable (no `--final`).
+Do **not** set the program immutable (no `--final`) — and note this is now
+load-bearing beyond keeping future upgrades possible. `initialize_config`
+authorizes against `program_data.upgrade_authority_address == Some(signer)`, and
+an immutable program stores `None`, which no signer can ever match. Making the
+program immutable therefore **permanently prevents the config from being created,
+and so permanently prevents any new vault from being created**, with no on-chain
+remedy. If immutability is ever wanted, Step 4 must happen first. Pinned by
+`immutable_program_can_never_bootstrap_config` in
+`integration-tests/tests/initialize_authorization.rs`.
 
 **Post-upgrade verification:**
 

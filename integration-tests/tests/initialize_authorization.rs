@@ -61,6 +61,42 @@ fn initialize_config_rejects_non_upgrade_authority() {
     );
 }
 
+/// An **immutable** program can never be bootstrapped, and therefore can never
+/// create a vault.
+///
+/// The check is `program_data.upgrade_authority_address == Some(signer)`, and a
+/// program with no upgrade authority stores `None`, which no `Some(_)` can equal.
+/// So this is not "someone else holds the key" — it is nobody, permanently.
+///
+/// Recorded as a test because it imposes an ordering rule on deployment that is
+/// invisible from the code: the config must be bootstrapped **before** anyone
+/// considers making the program immutable. Reversing that order permanently
+/// prevents vault creation, with no on-chain remedy. See docs/UPGRADE.md Step 2.
+#[test]
+fn immutable_program_can_never_bootstrap_config() {
+    let mut ctx = BareCtx::new();
+    let upgrade_authority = ctx.upgrade_authority.insecure_clone();
+    ctx.make_program_immutable();
+
+    // Not the erstwhile upgrade authority...
+    let err = ctx
+        .try_initialize_config_as(&upgrade_authority, upgrade_authority.pubkey())
+        .expect_err("an immutable program has no authority to authorize this");
+    assert_anchor_err(&err, ErrorCode::NotProtocolAuthority);
+
+    // ...and not anyone else either.
+    let anyone = ctx.new_funded_keypair(10_000_000_000);
+    let err = ctx
+        .try_initialize_config_as(&anyone, anyone.pubkey())
+        .expect_err("nor may an arbitrary signer step in");
+    assert_anchor_err(&err, ErrorCode::NotProtocolAuthority);
+
+    assert!(
+        ctx.program_config().is_none(),
+        "no config may exist after either attempt"
+    );
+}
+
 /// The upgrade authority need not keep the role: it can name a separate
 /// operational key as the vault creator, so routine deployments do not require
 /// the Fordefi-held upgrade key.

@@ -1026,6 +1026,11 @@ impl BareCtx {
         install_program_data_at(&mut self.svm, address, upgrade_authority);
     }
 
+    /// Drop the program's upgrade authority, modelling an immutable program.
+    pub fn make_program_immutable(&mut self) {
+        write_program_data(&mut self.svm, program_data_pda(), None);
+    }
+
     /// Attempt `initialize` on a program whose config has never been created,
     /// with a fully funded signer so the only possible objection is the missing
     /// config. Pins the "fails closed until bootstrapped" property.
@@ -1293,12 +1298,22 @@ fn install_program_data(svm: &mut LiteSVM, upgrade_authority: &Pubkey) {
 }
 
 fn install_program_data_at(svm: &mut LiteSVM, address: Pubkey, upgrade_authority: &Pubkey) {
+    write_program_data(svm, address, Some(upgrade_authority));
+}
+
+/// `upgrade_authority = None` models an **immutable** program (deployed or set
+/// with `--final`), which is a materially different state from "some other key
+/// holds it": `Some(signer)` can never equal `None`, so no one at all can pass
+/// the `initialize_config` check.
+fn write_program_data(svm: &mut LiteSVM, address: Pubkey, upgrade_authority: Option<&Pubkey>) {
     const PROGRAM_DATA_VARIANT: u32 = 3;
     let mut data = vec![0u8; UpgradeableLoaderState::size_of_programdata_metadata()];
     data[0..4].copy_from_slice(&PROGRAM_DATA_VARIANT.to_le_bytes());
     // data[4..12] is the deployment slot; 0 is fine, nothing reads it.
-    data[12] = 1; // Option::Some
-    data[13..45].copy_from_slice(upgrade_authority.as_ref());
+    if let Some(authority) = upgrade_authority {
+        data[12] = 1; // Option::Some
+        data[13..45].copy_from_slice(authority.as_ref());
+    } // else leave the Option tag at 0 (None) and the key bytes zeroed
 
     let acct = SolanaAccount {
         lamports: Rent::default().minimum_balance(data.len()),
