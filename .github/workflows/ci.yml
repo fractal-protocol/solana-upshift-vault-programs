@@ -212,8 +212,36 @@ jobs:
             - name: Rebuild with localnet program ID
               run: anchor build
 
+            # The validator is started HERE rather than by `anchor test`, and the
+            # run uses --skip-local-validator. This is load-bearing, not a
+            # preference: when `anchor test` starts its own validator it preloads
+            # the program through genesis, which leaves ProgramData's upgrade
+            # authority as the all-zero key that nobody can sign for. Vault
+            # creation is gated on a ProgramConfig that only the upgrade
+            # authority may bootstrap, so `initialize_config` would be
+            # unsatisfiable and every suite's before hook would fail. Deploying
+            # into an already-running validator goes through the loader instead
+            # and sets the authority to the provider wallet, which is what the
+            # suites sign with. scripts/run-tests.sh does the same locally.
             - name: TS end-to-end suite (local validator)
-              run: anchor test --skip-build
+              run: |
+                  set -euo pipefail
+                  RPC=http://127.0.0.1:8899
+
+                  echo "::group::Start local validator"
+                  solana-test-validator --reset --quiet &
+                  VALIDATOR_PID=$!
+                  trap 'kill "$VALIDATOR_PID" 2>/dev/null || true' EXIT
+                  for _ in $(seq 1 60); do
+                      if curl -s "$RPC/health" | grep -q ok; then break; fi
+                      sleep 1
+                  done
+                  curl -s "$RPC/health" | grep -q ok \
+                      || { echo "::error::local validator did not become healthy at $RPC"; exit 1; }
+                  solana airdrop 100 "$(solana-keygen pubkey /tmp/deployer_keypair.json)" -u "$RPC"
+                  echo "::endgroup::"
+
+                  anchor test --skip-build --skip-local-validator
 
     # Rebuild each program with the pinned verifiable-build image and assert the
     # hashes recorded in verified-hashes.txt. A bytecode change must update that
