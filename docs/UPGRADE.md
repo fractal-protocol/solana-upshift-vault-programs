@@ -362,10 +362,20 @@ established by the fork test + devnet rehearsal makes a rollback unlikely.
   exactly equal to share supply (no yield reported yet), and with equal offsets
   the price is `(T + O)/(S + O)` — identically 1.0 for any `O` when `T == S`. Every
   deposit and redeem amount checked against both vaults' real on-chain state
-  returns a byte-identical result before and after. Once yield is reported the
-  two formulas diverge, always in the vault's favour and bounded well under 0.01%
-  (worst case measured: −0.0077% on a full-supply redeem of the smaller vault at
-  +20% yield). No migration, no rebasing, no action for holders.
+  returns a byte-identical result before and after. Once yield is reported the two
+  formulas diverge, bounded well under 0.01% (worst case measured: −0.0077% on a
+  full-supply redeem of the smaller vault at +20% yield). No migration, no
+  rebasing, no action for holders.
+
+  The divergence is **not** uniformly in the vault's favour, so be precise about
+  it: larger offsets damp the share price toward 1.0 in both directions. Above
+  1.0, redeemers receive marginally less (favours the vault) while depositors
+  receive marginally more shares for the same assets (marginally dilutes existing
+  holders). Measured on the larger live vault at +5% yield: a 185,265,261,060-unit
+  deposit mints 4,535 more shares out of 176 billion, and the equivalent redeem
+  returns 5,000 fewer units out of 194 billion. The floor-rounding on every
+  operation still favours the vault, as before; it is the offset change itself
+  that is two-sided.
 - **`initialize` is the exception, and it is a breaking change.** Vault *creation*
   now requires the `ProgramConfig` account and a signer equal to its authority,
   and gains a separate `payer`. This affects no existing vault, but it does mean

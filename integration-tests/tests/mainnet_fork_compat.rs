@@ -9,6 +9,11 @@
 //!   3. exercises a real user deposit against the live USDC vault state, minting
 //!      shares exactly per the on-chain formula with correct accounting.
 //!
+//! Note the live snapshots are ~1:1 (supply == total_assets), a state in which the
+//! share-price offsets cancel exactly — so these tests are deliberately
+//! insensitive to the offsets' *values*. That is the point: they guard
+//! compatibility with existing accounts, not the tuning of the math.
+//!
 //! WHY THIS EXISTS: every other test uses *fresh* vaults, so they can't catch a
 //! change that breaks compatibility with accounts created by an *earlier*
 //! program version. For an upgradeable program with live funds this is the one
@@ -26,7 +31,10 @@
 //!     | jq -r .result.value.data[0] | base64 -d > tests/fixtures/<name>.bin
 
 use anchor_lang::{AccountDeserialize, InstructionData, ToAccountMetas};
-use august_vault::{accounts as ix_accounts, instruction as ix_data, state::vault::VaultState};
+use august_vault::{
+    accounts as ix_accounts, instruction as ix_data,
+    state::vault::{VaultState, EXTRA_SHARES, VIRTUAL_ASSETS},
+};
 use litesvm::LiteSVM;
 use solana_sdk::{
     account::Account,
@@ -109,11 +117,20 @@ fn read_vault_state(svm: &LiteSVM, addr: &Pubkey) -> VaultState {
 }
 
 /// Independent reference for the deposit share formula
-/// (`amount * (supply + 1) / (total_assets + 1)`, floored). Deliberately does
-/// NOT call the program's `shares_for_deposit`, so a drift in the program's
-/// formula is caught here instead of being silently mirrored in the expectation.
+/// (`amount * (supply + EXTRA_SHARES) / (total_assets + VIRTUAL_ASSETS)`,
+/// floored). Deliberately does NOT call the program's `shares_for_deposit`, so a
+/// drift in the *shape* of the program's formula is caught here instead of being
+/// silently mirrored in the expectation.
+///
+/// It reads the offset *constants* rather than hardcoding them: hardcoded values
+/// would go stale the moment the offsets are retuned, leaving this reference
+/// quietly asserting a formula the program no longer uses. The offsets' chosen
+/// values are pinned by the unit tests in `state/vault.rs` and by
+/// `share_burn_pricing.rs`; what this file guards is the byte→field mapping and
+/// that live state still round-trips.
 fn ref_shares(supply: u64, total_assets: u64, amount: u64) -> u64 {
-    ((amount as u128 * (supply as u128 + 1)) / (total_assets as u128 + 1)) as u64
+    ((amount as u128 * (supply as u128 + EXTRA_SHARES)) / (total_assets as u128 + VIRTUAL_ASSETS))
+        as u64
 }
 
 /// Re-serialize a (possibly modified) VaultState back into its account, keeping
@@ -412,7 +429,10 @@ fn usdc_deposit_rounding_on_nonunit_state() {
     );
 
     let expected = ref_shares(supply, total_assets, deposit);
-    assert_eq!(expected, 1, "reference: 3*(S+1)/(2S+1) floors to 1");
+    assert_eq!(
+        expected, 1,
+        "reference: 3 * (S + offset) / (2S + offset) floors to 1"
+    );
 
     let ix = Instruction {
         program_id: august_vault::ID,
