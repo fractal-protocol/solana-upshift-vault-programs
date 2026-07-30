@@ -13,15 +13,17 @@
 //! cannot be burned and that dominates any small retained position.
 //!
 //! **The parameters below are not guesses.** The grid was derived by sweeping
-//! `keep` x `deposit size` x `depositor count` against a build with the offsets
-//! at 1, and it deliberately covers the whole region that was profitable there —
-//! so these tests fail if the offsets are ever reduced. Against the current
+//! `keep` x `deposit size` x `depositor count` and is deliberately wide enough
+//! that these tests fail if the offsets are ever reduced. Against the current
 //! constants no configuration in the grid pays, by several orders of magnitude.
-//! Exact figures are recorded in the internal security review rather than here.
+//! The sweep, the regions it covered and the figures are recorded in the
+//! internal security review; they are deliberately not reproduced here.
 
 use august_vault::errors::ErrorCode;
 use august_vault::state::vault::FEE_RATE_DENOMINATOR_VALUE;
-use integration_tests::harness::{assert_anchor_err, VaultCtx, DEPOSIT_DECIMALS};
+use integration_tests::harness::{
+    assert_anchor_err, harness_min_first_deposit, VaultCtx, DEPOSIT_DECIMALS, HARNESS_SHARE_OFFSET,
+};
 
 /// 1 whole token at the harness mint's 9 decimals.
 const ONE_TOKEN: u64 = 10u64.pow(DEPOSIT_DECIMALS as u32);
@@ -86,15 +88,15 @@ fn burn_then_exit(keep: u64, deposit_each: u64, depositors: usize) -> u64 {
     ctx.token_account_amount(&attacker.deposit_ata)
 }
 
-/// The single worst configuration found against the vulnerable build. Kept as a
-/// fast, precise regression anchor.
+/// A fast, precise regression anchor drawn from the swept grid. Deliberately
+/// not annotated with how it ranked against the pre-fix build — see the module
+/// docs on why the ranking lives in the internal review rather than here.
 #[test]
-fn worst_known_configuration_is_loss_making() {
+fn single_configuration_is_loss_making() {
     let proceeds = burn_then_exit(4, ONE_TOKEN * 4 / 10, 25);
     assert!(
         proceeds < ONE_TOKEN,
-        "burner recovered {proceeds} of {ONE_TOKEN} staked — this configuration \
-         was the worst configuration before the ghost-share count was raised"
+        "burner recovered {proceeds} of {ONE_TOKEN} staked"
     );
 }
 
@@ -166,6 +168,7 @@ fn deposit_checked_rejects_a_rate_moved_by_a_burn() {
         ctx.share_mint_supply(),
         ctx.vault_state_data().total_assets().unwrap(),
         amount,
+        HARNESS_SHARE_OFFSET,
     )
     .unwrap();
 
@@ -243,6 +246,7 @@ fn zero_share_deposit_reports_slippage_when_a_bound_was_set() {
         ctx.share_mint_supply(),
         ctx.vault_state_data().total_assets().unwrap(),
         1,
+        HARNESS_SHARE_OFFSET,
     )
     .unwrap();
     assert_eq!(minted, 0, "test setup: a 1-unit deposit must mint nothing");
@@ -262,19 +266,30 @@ fn zero_share_deposit_reports_slippage_when_a_bound_was_set() {
 /// instruction is a strict superset rather than a subtly different path.
 #[test]
 fn deposit_checked_with_zero_bound_matches_deposit() {
+    // Seed past the first-deposit floor, then compare a SECOND deposit at a
+    // non-1:1 price — a first deposit would mint 1:1 on both paths and so would
+    // not distinguish them.
+    let seed = harness_min_first_deposit();
+    let follow_up = seed / 3;
+
     let plain = {
         let mut ctx = VaultCtx::fresh();
-        let d = ctx.new_depositor(ONE_TOKEN);
-        ctx.deposit_as(&d, ONE_TOKEN / 3).expect("deposit");
+        let s = ctx.new_depositor(seed);
+        ctx.deposit_as(&s, seed).expect("seed deposit");
+        let d = ctx.new_depositor(follow_up);
+        ctx.deposit_as(&d, follow_up).expect("deposit");
         ctx.token_account_amount(&d.share_ata)
     };
     let checked = {
         let mut ctx = VaultCtx::fresh();
-        let d = ctx.new_depositor(ONE_TOKEN);
-        ctx.deposit_checked_as(&d, ONE_TOKEN / 3, 0)
+        let s = ctx.new_depositor(seed);
+        ctx.deposit_as(&s, seed).expect("seed deposit");
+        let d = ctx.new_depositor(follow_up);
+        ctx.deposit_checked_as(&d, follow_up, 0)
             .expect("deposit_checked with no bound");
         ctx.token_account_amount(&d.share_ata)
     };
+    assert!(plain > 0, "the comparison must not be trivially 0 == 0");
     assert_eq!(plain, checked, "the two paths must mint identically");
 }
 

@@ -70,6 +70,9 @@ pub enum AugustVaultError {
     /// 6019 - Vault holds no assets while shares are outstanding; share price is undefined
     #[error("Vault holds no assets while shares are outstanding; share price is undefined")]
     SharePriceUndefined = 0x1783,
+    /// 6020 - Share offset must be a power of ten within the permitted range
+    #[error("Share offset must be a power of ten within the permitted range")]
+    InvalidShareOffset = 0x1784,
 }
 
 impl From<AugustVaultError> for solana_program_error::ProgramError {

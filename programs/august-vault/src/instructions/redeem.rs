@@ -43,7 +43,12 @@ pub fn handler_checked(ctx: Context<Redeem>, shares: u64, min_assets_out: u64) -
 
     let supply = ctx.accounts.share_mint.supply;
     let total_assets = ctx.accounts.vault_state.total_assets()?;
-    let assets = VaultState::assets_for_redeem(supply, total_assets, shares)?;
+    let assets = VaultState::assets_for_redeem(
+        supply,
+        total_assets,
+        shares,
+        ctx.accounts.vault_state.share_offset(),
+    )?;
 
     let fee_numerator = (assets as u128)
         .checked_mul(ctx.accounts.vault_state.withdrawal_fee as u128)

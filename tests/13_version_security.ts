@@ -7,6 +7,7 @@
 // governed by version 2.0 of the Apache License.
 
 import * as anchor from "@coral-xyz/anchor";
+import { DEFAULT_SHARE_OFFSET } from "./helper/config";
 import { Program } from "@coral-xyz/anchor";
 import { AugustVault } from "../target/types/august_vault";
 import { PublicKey, Keypair, LAMPORTS_PER_SOL } from "@solana/web3.js";
@@ -158,7 +159,7 @@ describe("version-security", () => {
 
         it("Can initialize version 0 vault", async () => {
             await vaultProgram.methods
-                .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, 0)
+                .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, 0, DEFAULT_SHARE_OFFSET)
                 .accounts({
                     vaultState: v0StatePda,
                     shareMint: v0ShareMint,
@@ -176,7 +177,7 @@ describe("version-security", () => {
 
         it("Can initialize version 1 vault with same deposit mint (both active)", async () => {
             await vaultProgram.methods
-                .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, 1)
+                .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, 1, DEFAULT_SHARE_OFFSET)
                 .accounts({
                     vaultState: v1StatePda,
                     shareMint: v1ShareMint,
@@ -501,7 +502,7 @@ describe("version-security", () => {
 
             // Initialize version 0 vault
             await vaultProgram.methods
-                .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, 0)
+                .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, 0, DEFAULT_SHARE_OFFSET)
                 .accounts({
                     vaultState: v0StatePda,
                     shareMint: v0ShareMint,
@@ -813,7 +814,7 @@ describe("version-security", () => {
 
             // Initialize version 0 vault
             await vaultProgram.methods
-                .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, 0)
+                .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, 0, DEFAULT_SHARE_OFFSET)
                 .accounts({
                     vaultState: v0StatePda,
                     shareMint: v0ShareMint,
@@ -918,7 +919,7 @@ describe("version-security", () => {
 
             it("Can initialize vault with version 0", async () => {
                 await vaultProgram.methods
-                    .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, 0)
+                    .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, 0, DEFAULT_SHARE_OFFSET)
                     .accounts({
                         vaultState: v0StatePda,
                         shareMint: v0ShareMint,
@@ -1017,7 +1018,7 @@ describe("version-security", () => {
 
             it("Can initialize vault with version 255", async () => {
                 await vaultProgram.methods
-                    .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, 255)
+                    .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, 255, DEFAULT_SHARE_OFFSET)
                     .accounts({
                         vaultState: v255StatePda,
                         shareMint: v255ShareMint,
@@ -1138,7 +1139,7 @@ describe("version-security", () => {
                 v5TokenAta = pdas.tokenAta;
 
                 await vaultProgram.methods
-                    .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, 5)
+                    .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, 5, DEFAULT_SHARE_OFFSET)
                     .accounts({
                         vaultState: v5StatePda,
                         shareMint: v5ShareMint,

@@ -7,6 +7,7 @@
 // governed by version 2.0 of the Apache License.
 
 import * as anchor from "@coral-xyz/anchor";
+import { DEFAULT_SHARE_OFFSET } from "./helper/config";
 import * as assert from "assert";
 import {VaultContext} from "./helper/context";
 import * as token from "@solana/spl-token";
@@ -41,7 +42,7 @@ describe("august-vault-initialize", () => {
         const vaultVersion = 0;
         await assert.rejects(
             vaultContext.vaultProgram.methods
-                .initialize(vaultContext.admin.publicKey, vaultContext.operator.publicKey, vaultContext.feeRecipient.publicKey, vaultVersion)
+                .initialize(vaultContext.admin.publicKey, vaultContext.operator.publicKey, vaultContext.feeRecipient.publicKey, vaultVersion, DEFAULT_SHARE_OFFSET)
                 .accounts({
                     vaultState: vaultContext.vaultStatePda,
                     shareMint: vaultContext.shareMint,

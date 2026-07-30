@@ -34,6 +34,25 @@ use spl_associated_token_account::{
 use spl_token::state::{Account as SplAccount, Mint as SplMint};
 
 pub const VAULT_VERSION: u8 = 0;
+/// Offset the harness vaults are created with. Uses the program's own default so
+/// the suite exercises the value real vaults get unless a test says otherwise.
+pub const HARNESS_SHARE_OFFSET: u128 = august_vault::state::vault::EXTRA_SHARES;
+
+/// The same value as the `u64` the instruction actually takes.
+pub const HARNESS_SHARE_OFFSET_U64: u64 = HARNESS_SHARE_OFFSET as u64;
+
+/// The program's minimum first deposit for a harness vault.
+///
+/// Derived, never hardcoded: the floor is tied to the vault's offset, so a
+/// literal here would silently drop below the program's floor the next time
+/// either is retuned and every affected test would fail on `InsufficientAmount`
+/// for reasons unrelated to what it is testing.
+pub fn harness_min_first_deposit() -> u64 {
+    august_vault::state::vault::VaultState::min_first_deposit_for(
+        DEPOSIT_DECIMALS,
+        HARNESS_SHARE_OFFSET,
+    )
+}
 pub const DEPOSIT_DECIMALS: u8 = 9;
 
 /// First 6000 user-facing Anchor error codes are reserved; user variants start
@@ -144,6 +163,7 @@ impl VaultCtx {
             operator.pubkey(),
             fee_recipient.pubkey(),
             token_program,
+            HARNESS_SHARE_OFFSET_U64,
         );
         send_tx(
             &mut svm,
@@ -919,10 +939,48 @@ impl VaultCtx {
             self.operator.pubkey(),
             self.fee_recipient.pubkey(),
             self.token_program,
+            HARNESS_SHARE_OFFSET_U64,
         );
         // `payer` pays the fee so an intentionally-broke `signer` still reaches
         // the program instead of failing pre-flight.
         send_tx(&mut self.svm, payer, &[ix], &[signer, payer]).map(|_| ())
+    }
+
+    /// Create a vault with an explicit share offset, for tests that care which
+    /// offset a vault carries rather than accepting the harness default.
+    pub fn try_initialize_vault_with_offset(
+        &mut self,
+        signer: &Keypair,
+        deposit_mint: Pubkey,
+        vault_version: u8,
+        // `u64`, matching the wire type. Taking `u128` and narrowing with `as u64`
+        // would silently truncate a boundary value a test meant to reject.
+        share_offset: u64,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let ix = initialize_ix(
+            deposit_mint,
+            vault_version,
+            &signer.pubkey(),
+            &signer.pubkey(),
+            self.admin.pubkey(),
+            self.operator.pubkey(),
+            self.fee_recipient.pubkey(),
+            self.token_program,
+            share_offset,
+        );
+        let payer = signer.insecure_clone();
+        send_tx(&mut self.svm, &payer, &[ix], &[signer]).map(|_| ())
+    }
+
+    /// Read a vault's stored offset straight from its account, so a test can
+    /// assert what was actually persisted rather than what was requested.
+    pub fn stored_share_offset_raw(&self, deposit_mint: Pubkey, vault_version: u8) -> u64 {
+        use anchor_lang::AccountDeserialize;
+        let addr = derive_vault_state(&deposit_mint, vault_version).0;
+        let acct = self.svm.get_account(&addr).expect("vault state exists");
+        august_vault::state::vault::VaultState::try_deserialize(&mut acct.data.as_slice())
+            .expect("deserialize vault state")
+            .share_offset
     }
 
     /// `override_config_authority` signed by an arbitrary keypair, which must be
@@ -1261,6 +1319,7 @@ impl BareCtx {
             payer.pubkey(),
             payer.pubkey(),
             TokenProgramKind::Spl,
+            HARNESS_SHARE_OFFSET_U64,
         );
         send_tx(&mut self.svm, &payer, &[ix], &[&payer]).map(|_| ())
     }
@@ -1577,6 +1636,7 @@ fn initialize_ix(
     operator: Pubkey,
     fee_recipient: Pubkey,
     token_program: TokenProgramKind,
+    share_offset: u64,
 ) -> Instruction {
     Instruction {
         program_id: august_vault::ID,
@@ -1598,6 +1658,7 @@ fn initialize_ix(
             operator,
             fee_recipient,
             vault_version,
+            share_offset,
         }
         .data(),
     }

@@ -8,7 +8,15 @@
 // governed by version 2.0 of the Apache License.
 import { Keypair, PublicKey } from '@solana/web3.js';
 import bs58 from 'bs58';
-import { writeFileSync, readFileSync, existsSync, unlinkSync } from 'fs';
+import {
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  unlinkSync,
+  mkdtempSync,
+  rmSync,
+} from 'fs';
+import { tmpdir } from 'os';
 import { execFileSync } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -22,8 +30,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // performed a DEVNET upgrade of an unrelated program and then printed a success
 // banner. Accepting a flag and ignoring it is worse than not accepting it.
 const argv = process.argv.slice(2);
+// LAST occurrence wins. package.json's `upgrade:devnet` already supplies
+// --network/--program-id and pnpm appends the user's extra args after them, so
+// taking the first match would silently ignore what the operator typed — the
+// same accept-and-discard defect this file was rewritten to remove.
 const flag = (name) => {
-  const i = argv.indexOf(name);
+  const i = argv.lastIndexOf(name);
   if (i === -1) return undefined;
   const v = argv[i + 1];
   if (v === undefined || v.startsWith('--')) {
@@ -73,6 +85,16 @@ try {
   process.exit(1);
 }
 
+const repoRoot = join(__dirname, '..', '..');
+const artifact = join(repoRoot, 'target', 'deploy', 'august_vault.so');
+if (!existsSync(artifact)) {
+  console.error(
+    `❌ No build artifact at ${artifact}.\n\n` +
+    '   Run `anchor build` (or `pnpm run build`) first.'
+  );
+  process.exit(1);
+}
+
 // `deploy/deploy.config.json`, not `deploy/helpers/` — this was one level short,
 // so every run died with an unhandled ENOENT stack trace before reaching the
 // upgrade. `metadata.mjs` resolves it the same way.
@@ -93,9 +115,13 @@ if (!config.deployerPrivateKey) {
 }
 const deployer = Keypair.fromSecretKey(bs58.decode(config.deployerPrivateKey));
 
-// Create temp keypair
-const tmpPath = '/tmp/upgrade_keypair.json';
-writeFileSync(tmpPath, JSON.stringify(Array.from(deployer.secretKey)));
+// Write the signing keypair somewhere only this user can read, in a directory
+// created with 0700. The previous fixed /tmp path was written at the default
+// 0644 and could be pre-empted by a symlink planted by another local user, which
+// on a shared or CI host exports the key.
+const tmpDir = mkdtempSync(join(tmpdir(), 'august-upgrade-'));
+const tmpPath = join(tmpDir, 'upgrade_keypair.json');
+writeFileSync(tmpPath, JSON.stringify(Array.from(deployer.secretKey)), { mode: 0o600 });
 
 try {
   console.log(`Upgrading ${programKey.toBase58()} on ${network}...`);
@@ -109,7 +135,10 @@ try {
       '--provider.cluster', network,
       '--provider.wallet', tmpPath,
     ],
-    { cwd: join(__dirname, '..'), stdio: 'inherit' }
+    // Repo root, not `deploy/`. anchor canonicalizes the artifact path against
+    // the invoking cwd before chdir-ing to the workspace root, so a `deploy/`
+    // cwd makes it look for deploy/target/deploy/august_vault.so.
+    { cwd: repoRoot, stdio: 'inherit' }
   );
   console.log('✅ Upgrade complete!');
   console.log('');
@@ -130,4 +159,5 @@ try {
   console.log('   mainnet), use --unsigned and have the authority sign it.');
 } finally {
   if (existsSync(tmpPath)) unlinkSync(tmpPath);
+  rmSync(tmpDir, { recursive: true, force: true });
 }

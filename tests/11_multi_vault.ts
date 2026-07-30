@@ -7,6 +7,7 @@
 // governed by version 2.0 of the Apache License.
 
 import * as anchor from "@coral-xyz/anchor";
+import { DEFAULT_SHARE_OFFSET } from "./helper/config";
 import { Program } from "@coral-xyz/anchor";
 import { AugustVault } from "../target/types/august_vault";
 import { PublicKey, LAMPORTS_PER_SOL, Connection, Keypair } from "@solana/web3.js";
@@ -178,7 +179,7 @@ describe("multi-vault", () => {
         it("Can initialize Vault 1 (USDC)", async () => {
             const vaultVersion = 0;
             await vaultProgram.methods
-                .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, vaultVersion)
+                .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, vaultVersion, DEFAULT_SHARE_OFFSET)
                 .accounts({
                     vaultState: vault1StatePda,
                     shareMint: vault1ShareMint,
@@ -201,7 +202,7 @@ describe("multi-vault", () => {
         it("Can initialize Vault 2 (USDT) - same program, different deposit token", async () => {
             const vaultVersion = 0;
             await vaultProgram.methods
-                .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, vaultVersion)
+                .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, vaultVersion, DEFAULT_SHARE_OFFSET)
                 .accounts({
                     vaultState: vault2StatePda,
                     shareMint: vault2ShareMint,
@@ -223,7 +224,7 @@ describe("multi-vault", () => {
         it("Can initialize Vault 3 (WSOL) - third vault with 9 decimals", async () => {
             const vaultVersion = 0;
             await vaultProgram.methods
-                .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, vaultVersion)
+                .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, vaultVersion, DEFAULT_SHARE_OFFSET)
                 .accounts({
                     vaultState: vault3StatePda,
                     shareMint: vault3ShareMint,
@@ -254,7 +255,7 @@ describe("multi-vault", () => {
             const vaultVersion = 0;
             await assert.rejects(
                 vaultProgram.methods
-                    .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, vaultVersion)
+                    .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, vaultVersion, DEFAULT_SHARE_OFFSET)
                     .accounts({
                         vaultState: vault1StatePda,
                         shareMint: vault1ShareMint,

@@ -18,7 +18,16 @@ pub fn handler(
     operator: Pubkey,
     fee_recipient: Pubkey,
     vault_version: u8,
+    share_offset: u64,
 ) -> Result<()> {
+    // Validate before storing: an out-of-range or non-power-of-ten offset would
+    // silently weaken the inflation and burn defences for the life of the vault,
+    // and the field cannot be changed afterwards.
+    require!(
+        VaultState::is_valid_share_offset(share_offset as u128),
+        ErrorCode::InvalidShareOffset
+    );
+
     let state = &mut ctx.accounts.vault_state;
     state.init(
         operator,
@@ -29,6 +38,7 @@ pub fn handler(
         0,
         [ctx.bumps.vault_state],
         [vault_version],
+        share_offset,
     );
     Ok(())
 }

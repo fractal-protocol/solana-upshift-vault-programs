@@ -28,11 +28,11 @@ offset retune, and the two slippage-bounded instructions `deposit_checked` and
 
 - **Expected reproducible hash** (mainnet build, committed source): the
   `exec_sha256` / `raw_sha256` / `size` in [`verified-hashes.txt`](../verified-hashes.txt)
-  (currently `7ce47734…`, 600,200 B), built with `solana-verify` 0.5.1 in
+  (currently `c0d3d527…`, 602,888 B), built with `solana-verify` 0.5.1 in
   `solanafoundation/solana-verifiable-build@sha256:695f890e…` (Solana 2.3.0).
-- **ProgramData must be extended first:** the new `.so` (600,200 B) is larger
+- **ProgramData must be extended first:** the new `.so` (602,888 B) is larger
   than the current allocation, so `solana program extend` is required or the
-  upgrade fails. Deficit = `600,200 + 45 (loader header) − 507,781 = 92,464` bytes
+  upgrade fails. Deficit = `602,888 + 45 (loader header) − 507,781 = 95,152` bytes
   (re-derive if the sizes change).
 - **Bootstrap the program config after upgrading:** vault creation is gated on a
   `ProgramConfig` authority that does not exist yet. Until `initialize_config` is
@@ -44,6 +44,11 @@ offset retune, and the two slippage-bounded instructions `deposit_checked` and
 
 - `solana-verify` 0.5.1 + Docker (for the reproducible build).
 - Solana CLI.
+- **`anchor build` run once in the checkout**, and `pnpm install`. Step 4's
+  script encodes its instruction from `target/idl/august_vault.json`, which
+  `solana-verify build` does *not* emit — without it both Step 4 commands abort.
+  The IDL is only used locally to encode the instruction; the bytecode being
+  deployed still comes from the verifiable build.
 - A **funded ops fee-payer** keypair (a few SOL) — pays for `extend` /
   `write-buffer`. This is NOT the upgrade authority.
 - Fordefi access to the upgrade authority key, able to sign a
@@ -124,7 +129,7 @@ Also confirm the GitHub **build attestation** exists for the asset
 
 > `declare_id!` is baked into the bytecode, so the **devnet** artifact must
 > declare the devnet program ID. Build a devnet-targeted `.so` (this hashes
-> differently from mainnet's `7ce47734…` — expected; the dry-run validates
+> differently from mainnet's `c0d3d527…` — expected; the dry-run validates
 > mechanics + state compatibility, not the mainnet bytes):
 
 ```bash
@@ -202,10 +207,16 @@ sha256sum pre-upgrade-august_vault.so
 ```bash
 # Extend ProgramData to fit the larger binary.
 # Re-derive first — this value is release-specific:
-#   solana program show up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt -u m   # current allocation
-#   additional_bytes = <new .so size> + 45 - <current ProgramData account size>
-# For the hashes in verified-hashes.txt: 600,200 + 45 - 507,781 = 92,464.
-solana program extend up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt 92464 \
+#   solana program show up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt -u m
+#   additional_bytes = <new .so size> - <Data Length from the command above>
+#
+# NOTE which size you read. `solana program show` reports `Data Length`, which is
+# the ProgramData account size MINUS the 45-byte loader header (verified live:
+# 507,736 vs the account's 507,781). So with `program show` the +45 cancels and
+# you subtract directly. Using `Data Length` in the `+ 45 - size` form instead
+# over-extends by exactly 45 bytes.
+# For the hashes in verified-hashes.txt: 602,888 - 507,736 = 95,152.
+solana program extend up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt 95152 \
   -u mainnet-beta -k <ops-payer.json>
 
 # Upload the verified .so into a buffer.
@@ -243,7 +254,7 @@ remedy. If immutability is ever wanted, Step 4 must happen first. Pinned by
 
 ```bash
 solana-verify get-program-hash -u mainnet-beta up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt
-#   Now equals verified-hashes.txt exec_sha256 (7ce47734…)
+#   Now equals verified-hashes.txt exec_sha256 (c0d3d527…)
 ```
 
 If you paused, **unpause first** — `deposit` and `redeem` are pause-gated, so
@@ -372,9 +383,18 @@ program's config and leave the just-upgraded one still gated — while rewriting
 Then create one vault end-to-end as the smoke test.
 
 **Downstream clients must be updated in lockstep.** This release changes
-`initialize`'s account list: `program_config` and a separate `payer` are added,
-and `signer` must now be the config authority. Any consumer built against the
+`initialize`'s account list *and* its arguments: `program_config` and a separate
+`payer` are added, `signer` must now be the config authority, and a new
+`share_offset: u64` argument is **required**. Any consumer built against the
 previous IDL will fail. Concretely, after the upgrade:
+
+> **The admin UI must now send a share offset when creating a vault.** It is a
+> power of ten from 1,000 to 1,000,000, it is **permanent for that vault**, and it
+> sets both the share pricing and the minimum first deposit. It cannot be
+> defaulted server-side without making a permanent economic decision on the
+> operator's behalf — surface it as a deliberate choice. See the guidance in the
+> [root README](../README.md#security).
+
 
 1. Bump the `solana-upshift-vault-programs` submodule in the private
    `solana-vaults` repo and re-run `scripts/sync-idl.sh` so `frontend/idl/`
@@ -464,12 +484,19 @@ established by the fork test + devnet rehearsal makes a rollback unlikely.
   in both cases, so the anti-inflation and anti-burn behaviour is unchanged, and
   at `total_assets == supply` — where both live vaults sit — all three formulas
   agree. A vault holding no assets while shares are outstanding has no defined
-  price and now rejects deposits with `SharePriceUndefined`; `operator_deposit`
+  price and now rejects **both deposits and redemptions** with
+  `SharePriceUndefined` — on redeem that replaces the previous `ZeroAmount`
+  (6001 -> 6019), so any client matching on the old code needs updating; `operator_deposit`
   can recapitalise it without minting. Proven end to end in
   `integration-tests/tests/loss_state_solvency.rs`.
 - **`initialize` is also a breaking change.** Vault *creation*
   now requires the `ProgramConfig` account and a signer equal to its authority,
-  and gains a separate `payer`. This affects no existing vault, but it does mean
+  gains a separate `payer`, and takes a `share_offset` argument that is fixed for
+  the vault's life (a power of ten in the program's permitted band). The offset
+  sets both the pricing and the minimum first deposit, so it must be chosen for
+  what a base unit of the deposit mint is worth — see the note in README.
+  Existing vaults store zero there and resolve to the default, so their pricing
+  is unchanged. This affects no existing vault, but it does mean
   (a) no vault can be created between the upgrade and Step 4, and (b) every
   client that creates vaults must be rebuilt against the new IDL — see the
   lockstep list in Step 4.

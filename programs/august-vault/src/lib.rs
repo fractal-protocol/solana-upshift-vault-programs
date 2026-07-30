@@ -100,12 +100,21 @@ pub mod august_vault {
     /// - `operator` - The Operator of the Vault
     /// - `fee_recipient` - The Fee recipient of the Vault
     /// - `vault_version` - Version number for the vault (allows multiple vaults per deposit mint)
+    /// - `share_offset` - This vault's virtual-share offset, in base units of the
+    ///   deposit mint. Must be a power of ten within
+    ///   `MIN_SHARE_OFFSET..=MAX_SHARE_OFFSET`. It is fixed for the life of the
+    ///   vault and also sets the minimum first deposit
+    ///   (`MIN_SUPPLY_MULTIPLE * share_offset`), so choose it for what a base
+    ///   unit of this mint is worth: a larger offset buys a wider margin against
+    ///   share-burn price manipulation, a smaller one keeps a high-value mint
+    ///   launchable.
     pub fn initialize(
         ctx: Context<Initialize>,
         admin: Pubkey,
         operator: Pubkey,
         fee_recipient: Pubkey,
         vault_version: u8,
+        share_offset: u64,
     ) -> Result<()> {
         return instructions::initialize::handler(
             ctx,
@@ -113,6 +122,7 @@ pub mod august_vault {
             operator,
             fee_recipient,
             vault_version,
+            share_offset,
         );
     }
 

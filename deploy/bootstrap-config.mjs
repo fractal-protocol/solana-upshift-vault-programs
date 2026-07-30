@@ -62,7 +62,7 @@ import {
   Transaction,
 } from '@solana/web3.js';
 import { AnchorProvider, Program, Wallet } from '@coral-xyz/anchor';
-import { readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -126,9 +126,20 @@ async function main() {
   const programId = new PublicKey(args.programId);
   const connection = new Connection(args.url || 'https://api.devnet.solana.com', 'confirmed');
 
-  const idl = JSON.parse(
-    readFileSync(join(__dirname, '..', 'target', 'idl', 'august_vault.json'), 'utf-8')
-  );
+  // The Anchor IDL is required by every branch below. `solana-verify build`
+  // (the only build step in the upgrade runbook) produces target/deploy/*.so and
+  // NO IDL, so a clean checkout following that runbook would otherwise die here
+  // with a bare ENOENT on the first and last command of the ceremony.
+  const idlPath = join(__dirname, '..', 'target', 'idl', 'august_vault.json');
+  if (!existsSync(idlPath)) {
+    throw new Error(
+      `no Anchor IDL at ${idlPath}.\n` +
+      `   Run \`anchor build\` first — \`solana-verify build\` alone does not ` +
+      `emit one. The IDL is only used to encode the instruction locally; it does ` +
+      `not have to come from the verifiable build.`
+    );
+  }
+  const idl = JSON.parse(readFileSync(idlPath, 'utf-8'));
   idl.address = programId.toBase58();
 
   const configPda = programConfigPda(programId);
@@ -352,6 +363,13 @@ async function main() {
       'transaction for an externally held upgrade authority.'
     );
   }
+  if (args.nonceAccount) {
+    throw new Error(
+      '--nonce-account applies only to --unsigned. A durable nonce exists so an ' +
+      'exported transaction does not expire during an external signing ceremony; ' +
+      'this path signs and sends immediately.'
+    );
+  }
   const signer = loadKeypair(args.keypair);
   if (!signer.publicKey.equals(upgradeAuthority)) {
     throw new Error(
@@ -363,10 +381,24 @@ async function main() {
     commitment: 'confirmed',
   });
   const program = new Program(idl, provider);
+  // Honour --payer here too, rather than accepting it and silently charging the
+  // upgrade authority — the accept-and-ignore defect this PR removed elsewhere.
+  const localPayer = args.payer ? loadKeypair(args.payer) : null;
+  const payerPubkey = (localPayer ?? signer).publicKey;
+  const rent = await connection.getMinimumBalanceForRentExemption(169);
+  const needed = rent + 10_000;
+  const payerBalance = await connection.getBalance(payerPubkey);
+  if (payerBalance < needed) {
+    throw new Error(
+      `${payerPubkey.toBase58()} holds ${payerBalance / 1e9} SOL but needs about ` +
+      `${needed / 1e9} SOL (ProgramConfig rent ${rent / 1e9} + fee).`
+    );
+  }
   const stored = await ensureProgramConfig({
     program,
     signer,
     desiredAuthority: authority,
+    payer: localPayer,
   });
   console.log(`\n✅ Stored vault-creation authority: ${stored.toBase58()}`);
 }

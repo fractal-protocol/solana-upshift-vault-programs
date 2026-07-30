@@ -6,6 +6,7 @@
 //
 // As of 10 March 2036 (the "Change Date"), use of this software will be
 // governed by version 2.0 of the Apache License.
+import { redactEndpoint } from './redact.mjs';
 import { Connection, Keypair, PublicKey, SystemProgram, SYSVAR_RENT_PUBKEY } from '@solana/web3.js';
 import { AnchorProvider, Program, Wallet } from '@coral-xyz/anchor';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
@@ -52,8 +53,12 @@ const args = process.argv.slice(2).reduce((acc, arg, i, arr) => {
   if (arg === '--program-id') acc.programId = value(arg);
   if (arg === '--network') acc.network = value(arg);
   return acc;
-}, { programId: 'up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt' });
-const programId = new PublicKey(args.programId);
+}, {});
+
+/// The mainnet program. Used as a default ONLY when the resolved cluster is
+/// mainnet — previously it was the unconditional default, so `meta:devnet`
+/// derived every PDA under the mainnet program and sent to devnet.
+const MAINNET_PROGRAM_ID = 'up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt';
 
 async function main() {
   log('\n🎨 Creating Vault Token Metadata', 'green');
@@ -62,35 +67,60 @@ async function main() {
   const configPath = join(__dirname, '..', 'deploy.config.json');
   const config = JSON.parse(readFileSync(configPath, 'utf-8'));
 
-  // The RPC is what actually decides the cluster, so `network` in the config is
-  // only advisory — and an ABSENT `network` must not silently disable this
-  // check, or `meta:devnet` against a mainnet rpcEndpoint proceeds exactly as
-  // before. Require it whenever --network is passed.
-  if (args.network) {
-    if (!config.network) {
-      logError(
-        `--network ${args.network} was passed but deploy.config.json has no ` +
-        `"network" field to check it against.\n` +
-        `   The cluster is decided by rpcEndpoint (${config.rpcEndpoint}).\n` +
-        `   Add "network" to the config so the two can be cross-checked.`
-      );
-      process.exit(1);
-    }
-    if (args.network !== config.network) {
-      logError(
-        `--network ${args.network} contradicts deploy.config.json ` +
-        `("network": "${config.network}", rpcEndpoint drives the actual cluster).\n` +
-        `   This script sends to the config's RPC, so it would have targeted ` +
-        `${config.network}. Fix the config or drop the flag.`
-      );
-      process.exit(1);
-    }
+  // Resolve the cluster ONCE, and never skip the check. `rpcEndpoint` is what
+  // actually decides where the transaction goes; `network` is the label. The
+  // check used to be wrapped in `if (args.network)`, so `pnpm meta` — which
+  // passes no flag — sent a real transaction to whatever the config pointed at
+  // with no confirmation at all.
+  if (!config.network) {
+    logError(
+      `deploy.config.json has no "network" field, so the cluster implied by ` +
+      `rpcEndpoint (${redactEndpoint(config.rpcEndpoint)}) cannot be confirmed.\n` +
+      `   Add "network": "devnet" | "mainnet" to the config.`
+    );
+    process.exit(1);
   }
-  logInfo(`Cluster: ${config.network ?? 'unspecified'} (${config.rpcEndpoint})`);
+  if (args.network && args.network !== config.network) {
+    logError(
+      `--network ${args.network} contradicts deploy.config.json ` +
+      `("network": "${config.network}", rpcEndpoint drives the actual cluster).\n` +
+      `   This script sends to the config's RPC, so it would have targeted ` +
+      `${config.network}. Fix the config or drop the flag.`
+    );
+    process.exit(1);
+  }
+
+  // The program must match the cluster too. Defaulting to the mainnet program
+  // is only ever right on mainnet.
+  if (!args.programId && config.network !== 'mainnet') {
+    logError(
+      `--program-id is required on ${config.network}: the built-in default is ` +
+      `the MAINNET program (${MAINNET_PROGRAM_ID}), which does not exist there.`
+    );
+    process.exit(1);
+  }
+  const programId = new PublicKey(args.programId ?? MAINNET_PROGRAM_ID);
+
+  logInfo(`Cluster: ${config.network} (${redactEndpoint(config.rpcEndpoint)})`);
   logInfo(`Program: ${programId.toBase58()}`);
 
   const deployer = Keypair.fromSecretKey(bs58.decode(config.deployerPrivateKey));
   logSuccess(`Deployer: ${deployer.publicKey.toBase58()}`);
+
+  // `create_share_token_metadata` takes `admin` as a Signer, and the only key
+  // this script holds is the deployer. If they differ the transaction cannot be
+  // signed at all — say so here rather than failing inside `serialize()` with a
+  // bare "Signature verification failed".
+  if (config.vaultConfig?.admin && config.vaultConfig.admin !== deployer.publicKey.toBase58()) {
+    logError(
+      `vaultConfig.admin (${config.vaultConfig.admin}) is not the deployer ` +
+      `(${deployer.publicKey.toBase58()}), but the instruction requires the ` +
+      `admin's signature and this script holds only deployerPrivateKey.\n` +
+      `   Run this from the admin key, or build the transaction for external ` +
+      `signing the way deploy/bootstrap-config.mjs --unsigned does.`
+    );
+    process.exit(1);
+  }
 
   // Setup connection
   const connection = new Connection(config.rpcEndpoint, 'confirmed');

@@ -14,9 +14,9 @@ use anchor_lang::prelude::*;
 /// new variants anywhere except the end, or assigning explicit discriminants
 /// silently renumbers downstream variants — every off-chain client matching on
 /// numeric codes (and every test using `(ErrorCode as u32) + 6000`) breaks
-/// without a compile error. The `errors_discriminant_canary` test in
-/// `state/vault.rs` pins the expected codes; update it in lockstep if you
-/// must reorder.
+/// without a compile error. The exhaustive `abi_ordinal` match below pins every
+/// variant's ordinal at **compile time**, so appending or reordering will not
+/// build until it is updated.
 #[error_code]
 #[derive(PartialEq)]
 pub enum ErrorCode {
@@ -60,32 +60,77 @@ pub enum ErrorCode {
     SlippageExceeded,
     #[msg("Vault holds no assets while shares are outstanding; share price is undefined")]
     SharePriceUndefined,
+    #[msg("Share offset must be a power of ten within the permitted range")]
+    InvalidShareOffset,
 }
 
-/// Compile-time pin of the ABI described above, placed next to the enum it
-/// guards. The runtime `errors_discriminant_canary` test in `state/vault.rs`
-/// checks the same mapping including the `+ 6000` offset; this one turns a
-/// reorder into a **build** failure rather than a test failure, and cannot drift
-/// away from the enum the way a test three files over can.
+/// Compile-time pin of the ABI described above, placed next to the enum it guards.
+///
+/// This is an **exhaustive match**, not a list of assertions, and that is the
+/// point: a non-exhaustive match is a hard compile error, so appending a variant
+/// breaks the build until it is pinned here. A value-only assertion block cannot
+/// do that — it silently keeps passing for the variants it happens to list, which
+/// is exactly how the previous runtime canary drifted and stopped covering the
+/// most recently added code.
+///
+/// Anchor adds `ANCHOR_USER_ERROR_OFFSET` (6000) to these ordinals on-chain.
+#[allow(dead_code)]
+const fn abi_ordinal(e: ErrorCode) -> u32 {
+    match e {
+        ErrorCode::NotOperator => 0,
+        ErrorCode::ZeroAmount => 1,
+        ErrorCode::InsufficientAmount => 2,
+        ErrorCode::AumIncreaseTooBig => 3,
+        ErrorCode::AumDecreaseTooBig => 4,
+        ErrorCode::WithdrawalFeeTooHigh => 5,
+        ErrorCode::AumLimitTooHigh => 6,
+        ErrorCode::NotAdmin => 7,
+        ErrorCode::VaultPaused => 8,
+        ErrorCode::InvalidNominatedAdmin => 9,
+        ErrorCode::NominationExpired => 10,
+        ErrorCode::MathError => 11,
+        ErrorCode::NumberOverflow => 12,
+        ErrorCode::NotEnoughLiquidity => 13,
+        ErrorCode::UnauthorizedAdmin => 14,
+        ErrorCode::VaultNotEmpty => 15,
+        ErrorCode::NotProtocolAuthority => 16,
+        ErrorCode::InvalidAuthority => 17,
+        ErrorCode::SlippageExceeded => 18,
+        ErrorCode::SharePriceUndefined => 19,
+        ErrorCode::InvalidShareOffset => 20,
+    }
+}
+
 const _: () = {
-    assert!(ErrorCode::NotOperator as u32 == 0);
-    assert!(ErrorCode::ZeroAmount as u32 == 1);
-    assert!(ErrorCode::InsufficientAmount as u32 == 2);
-    assert!(ErrorCode::AumIncreaseTooBig as u32 == 3);
-    assert!(ErrorCode::AumDecreaseTooBig as u32 == 4);
-    assert!(ErrorCode::WithdrawalFeeTooHigh as u32 == 5);
-    assert!(ErrorCode::AumLimitTooHigh as u32 == 6);
-    assert!(ErrorCode::NotAdmin as u32 == 7);
-    assert!(ErrorCode::VaultPaused as u32 == 8);
-    assert!(ErrorCode::InvalidNominatedAdmin as u32 == 9);
-    assert!(ErrorCode::NominationExpired as u32 == 10);
-    assert!(ErrorCode::MathError as u32 == 11);
-    assert!(ErrorCode::NumberOverflow as u32 == 12);
-    assert!(ErrorCode::NotEnoughLiquidity as u32 == 13);
-    assert!(ErrorCode::UnauthorizedAdmin as u32 == 14);
-    assert!(ErrorCode::VaultNotEmpty as u32 == 15);
-    assert!(ErrorCode::NotProtocolAuthority as u32 == 16);
-    assert!(ErrorCode::InvalidAuthority as u32 == 17);
-    assert!(ErrorCode::SlippageExceeded as u32 == 18);
-    assert!(ErrorCode::SharePriceUndefined as u32 == 19);
+    // Two independent halves, and both are needed:
+    //   * the exhaustive match above forces COMPLETENESS — appending a variant
+    //     without pinning it is a non-exhaustive-match build error;
+    //   * these asserts force CORRECTNESS — each pinned ordinal is compared to
+    //     the variant's real discriminant, so reordering two existing variants
+    //     fails here even though the match stays exhaustive.
+    // A value-only block (the previous form) had neither property, which is how
+    // it silently stopped covering the most recently added variant.
+    assert!(ErrorCode::NotOperator as u32 == abi_ordinal(ErrorCode::NotOperator));
+    assert!(ErrorCode::ZeroAmount as u32 == abi_ordinal(ErrorCode::ZeroAmount));
+    assert!(ErrorCode::InsufficientAmount as u32 == abi_ordinal(ErrorCode::InsufficientAmount));
+    assert!(ErrorCode::AumIncreaseTooBig as u32 == abi_ordinal(ErrorCode::AumIncreaseTooBig));
+    assert!(ErrorCode::AumDecreaseTooBig as u32 == abi_ordinal(ErrorCode::AumDecreaseTooBig));
+    assert!(ErrorCode::WithdrawalFeeTooHigh as u32 == abi_ordinal(ErrorCode::WithdrawalFeeTooHigh));
+    assert!(ErrorCode::AumLimitTooHigh as u32 == abi_ordinal(ErrorCode::AumLimitTooHigh));
+    assert!(ErrorCode::NotAdmin as u32 == abi_ordinal(ErrorCode::NotAdmin));
+    assert!(ErrorCode::VaultPaused as u32 == abi_ordinal(ErrorCode::VaultPaused));
+    assert!(
+        ErrorCode::InvalidNominatedAdmin as u32 == abi_ordinal(ErrorCode::InvalidNominatedAdmin)
+    );
+    assert!(ErrorCode::NominationExpired as u32 == abi_ordinal(ErrorCode::NominationExpired));
+    assert!(ErrorCode::MathError as u32 == abi_ordinal(ErrorCode::MathError));
+    assert!(ErrorCode::NumberOverflow as u32 == abi_ordinal(ErrorCode::NumberOverflow));
+    assert!(ErrorCode::NotEnoughLiquidity as u32 == abi_ordinal(ErrorCode::NotEnoughLiquidity));
+    assert!(ErrorCode::UnauthorizedAdmin as u32 == abi_ordinal(ErrorCode::UnauthorizedAdmin));
+    assert!(ErrorCode::VaultNotEmpty as u32 == abi_ordinal(ErrorCode::VaultNotEmpty));
+    assert!(ErrorCode::NotProtocolAuthority as u32 == abi_ordinal(ErrorCode::NotProtocolAuthority));
+    assert!(ErrorCode::InvalidAuthority as u32 == abi_ordinal(ErrorCode::InvalidAuthority));
+    assert!(ErrorCode::SlippageExceeded as u32 == abi_ordinal(ErrorCode::SlippageExceeded));
+    assert!(ErrorCode::SharePriceUndefined as u32 == abi_ordinal(ErrorCode::SharePriceUndefined));
+    assert!(ErrorCode::InvalidShareOffset as u32 == abi_ordinal(ErrorCode::InvalidShareOffset));
 };

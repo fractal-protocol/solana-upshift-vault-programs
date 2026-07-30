@@ -26,13 +26,7 @@
 //! above them.
 
 use august_vault::errors::ErrorCode;
-use integration_tests::harness::{assert_anchor_err, VaultCtx, DEPOSIT_DECIMALS};
-
-/// The minimum first deposit for a 9-decimal mint, which is the same order as
-/// the share-price offsets. Note this is *not* the worst case for the divergence
-/// — smaller supplies diverge more (see the module docs) — but it is the regime
-/// the harness mint puts us in.
-const MIN_FIRST: u64 = 10u64.pow(DEPOSIT_DECIMALS as u32 - 3);
+use integration_tests::harness::{assert_anchor_err, harness_min_first_deposit, VaultCtx};
 
 /// Drive a vault into a loss state: two equal depositors, the operator takes
 /// everything out, reports half of it lost, and returns only what is left.
@@ -75,7 +69,7 @@ fn vault_after_50_percent_loss(
 /// position, and the second would hit `NotEnoughLiquidity`.
 #[test]
 fn all_holders_can_exit_after_a_loss() {
-    let each = MIN_FIRST;
+    let each = harness_min_first_deposit();
     let (mut ctx, holders) = vault_after_50_percent_loss(each);
 
     let reserve_before = ctx.token_account_amount(&ctx.vault_token_pda);
@@ -108,7 +102,7 @@ fn all_holders_can_exit_after_a_loss() {
 /// the mechanism by which later holders would be left short.
 #[test]
 fn first_redeemer_cannot_exceed_pro_rata_after_a_loss() {
-    let each = MIN_FIRST;
+    let each = harness_min_first_deposit();
     let (mut ctx, holders) = vault_after_50_percent_loss(each);
 
     let supply = ctx.share_mint_supply();
@@ -140,7 +134,7 @@ fn first_redeemer_cannot_exceed_pro_rata_after_a_loss() {
 /// reserve balance at every step.
 #[test]
 fn accounting_stays_consistent_through_a_loss() {
-    let each = MIN_FIRST;
+    let each = harness_min_first_deposit();
     let (mut ctx, holders) = vault_after_50_percent_loss(each);
 
     assert_eq!(
@@ -172,7 +166,7 @@ fn accounting_stays_consistent_through_a_loss() {
 /// worth what was paid, not fewer.
 ///
 /// Without the pro-rata floor the offsets under-mint here, and the shortfall is
-/// not dust: at this supply a deposit of `MIN_FIRST` into a vault carrying a 50%
+/// not dust: at this supply a deposit of the minimum into a vault carrying a 50%
 /// loss was minted 1,500,000 shares instead of 2,000,000 and could redeem only
 /// 857,142 of the 1,000,000 it paid — 14.3% handed to the incumbents on arrival.
 /// This is a mid-range case, not the worst one: the shortfall grows as supply
@@ -180,7 +174,7 @@ fn accounting_stays_consistent_through_a_loss() {
 /// assertions below allow only dust.
 #[test]
 fn depositing_after_a_loss_is_not_a_donation_to_incumbents() {
-    let each = MIN_FIRST;
+    let each = harness_min_first_deposit();
     let (mut ctx, holders) = vault_after_50_percent_loss(each);
 
     // What the incumbents could claim before the new money arrives.
@@ -234,7 +228,7 @@ fn depositing_after_a_loss_is_not_a_donation_to_incumbents() {
 /// The operator can recapitalise without minting, and deposits then work again.
 #[test]
 fn deposit_is_rejected_when_the_vault_has_lost_everything() {
-    let each = MIN_FIRST;
+    let each = harness_min_first_deposit();
     let mut ctx = VaultCtx::fresh();
 
     let a = ctx.new_depositor(each);
@@ -258,6 +252,21 @@ fn deposit_is_rejected_when_the_vault_has_lost_everything() {
         .expect_err("deposit into a priceless vault must be refused");
     assert_anchor_err(&err, ErrorCode::SharePriceUndefined);
 
+    // Redeeming is refused for the same reason and with the same error, rather
+    // than surfacing a misleading ZeroAmount. The holder keeps their shares, so
+    // a later recapitalisation still leaves them a claim.
+    let shares_held = ctx.token_account_amount(&a.share_ata);
+    assert!(shares_held > 0, "holder should still hold shares");
+    let err = ctx
+        .redeem_as(&a, shares_held)
+        .expect_err("redeem from a priceless vault must be refused");
+    assert_anchor_err(&err, ErrorCode::SharePriceUndefined);
+    assert_eq!(
+        ctx.token_account_amount(&a.share_ata),
+        shares_held,
+        "a refused redeem must not burn shares"
+    );
+
     // Recapitalising mints nothing, so it cannot be used to dilute anyone; it
     // just restores a defined price.
     let supply_before = ctx.share_mint_supply();
@@ -275,7 +284,7 @@ fn deposit_is_rejected_when_the_vault_has_lost_everything() {
 /// small-supply regime, it just matters most there.
 #[test]
 fn all_holders_can_exit_after_a_loss_at_larger_scale() {
-    let each = MIN_FIRST * 1_000;
+    let each = harness_min_first_deposit() * 1_000;
     let (mut ctx, holders) = vault_after_50_percent_loss(each);
 
     let reserve_before = ctx.token_account_amount(&ctx.vault_token_pda);

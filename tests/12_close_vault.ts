@@ -7,6 +7,7 @@
 // governed by version 2.0 of the Apache License.
 
 import * as anchor from "@coral-xyz/anchor";
+import { DEFAULT_SHARE_OFFSET } from "./helper/config";
 import { Program } from "@coral-xyz/anchor";
 import { AugustVault } from "../target/types/august_vault";
 import { PublicKey, Keypair, LAMPORTS_PER_SOL } from "@solana/web3.js";
@@ -85,7 +86,7 @@ describe("august-vault-close-vault", () => {
 
         // Initialize the vault with version
         await vaultProgram.methods
-            .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, vaultVersion)
+            .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, vaultVersion, DEFAULT_SHARE_OFFSET)
             .accounts({
                 vaultState: vaultStatePda,
                 shareMint: shareMint,
@@ -319,7 +320,7 @@ describe("august-vault-close-vault", () => {
             );
 
             await vaultProgram.methods
-                .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, newVersion)
+                .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, newVersion, DEFAULT_SHARE_OFFSET)
                 .accounts({
                     vaultState: newVaultStatePda,
                     shareMint: newShareMint,

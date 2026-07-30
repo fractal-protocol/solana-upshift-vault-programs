@@ -53,16 +53,56 @@ pub const BPS_DENOMINATOR: u32 = 10_000;
 /// so the vault cannot prevent supply from shrinking — it can only make shrinking
 /// it unprofitable.
 ///
-/// **Both offsets must move together.** Raising `EXTRA_SHARES` alone would
-/// inflate minted share counts by `EXTRA_SHARES / VIRTUAL_ASSETS` (a first
-/// deposit of `d` would mint `d * 10^6` shares) and eat `u64` headroom. Equal
-/// offsets keep first-deposit minting exactly 1:1.
+/// **This constant is now on-chain state for pre-existing vaults.** Every vault
+/// created before `share_offset` existed stores 0 and resolves to this value, so
+/// changing it re-prices those vaults on the next upgrade. Treat it as frozen for
+/// the live deployment; per-vault tuning is what `share_offset` is for.
+///
+/// **And `min_first_deposit` must move with them.** The ghost co-holder's claim
+/// is `EXTRA_SHARES / (supply + EXTRA_SHARES)`, so it is only negligible while
+/// supply stays far above the offsets. `min_first_deposit` is what guarantees
+/// that for a new vault — it is floored at `MIN_SUPPLY_MULTIPLE * EXTRA_SHARES`.
+/// Retuning this constant without it lets the co-holder own most of a new vault
+/// and absorb its early holders' appreciation; `first_depositor_keeps_their_
+/// appreciation` fails if that ever drifts apart.
 pub const EXTRA_SHARES: u128 = 1_000_000;
 
-/// Companion virtual-asset offset; see `EXTRA_SHARES`. Both offsets must be
-/// non-zero for the inflation defense to hold, and equal to each other so that
-/// minting stays 1:1 into an empty vault.
+/// Bounds on a per-vault offset, enforced at `initialize`.
+///
+/// The lower bound keeps the burn manoeuvre loss-making — but only just: the
+/// margin narrows sharply as the offset falls, and `MIN_SHARE_OFFSET` is where it
+/// is still negative across the swept region rather than comfortably so. Pinned
+/// by `burn_manoeuvre_is_loss_making_at_every_permitted_offset`. The upper bound keeps
+/// the resulting `min_first_deposit` from pricing a vault out of existence and
+/// keeps `u64` headroom. Offsets must be a power of ten so the relationship to
+/// the mint's decimals stays legible.
+pub const MIN_SHARE_OFFSET: u128 = 1_000;
+pub const MAX_SHARE_OFFSET: u128 = 1_000_000;
+
+/// Companion virtual-asset offset; see `EXTRA_SHARES`.
+///
+/// **No longer read by the program.** Both pricing functions now add a single
+/// per-vault `offset` to the share and asset terms, so "the two offsets must be
+/// equal" is structural rather than a rule to maintain. This constant survives
+/// only as the asset-side name in test expectations, which are correct *because*
+/// it equals `EXTRA_SHARES` — pinned below so that coincidence cannot drift into
+/// a set of tests that silently assert nothing.
 pub const VIRTUAL_ASSETS: u128 = 1_000_000;
+
+const _: () = assert!(
+    VIRTUAL_ASSETS == EXTRA_SHARES,
+    "test expectations use VIRTUAL_ASSETS as the asset-side offset; it must equal \
+     EXTRA_SHARES or those expectations stop matching the program"
+);
+
+/// How far the opening share supply must exceed the vault's offset.
+///
+/// The offset behaves like a co-holder that can never be burned or redeemed, so
+/// it holds a permanent claim of `offset / (supply + offset)`. At 100x that is
+/// under 1%, so an early holder keeps >99% of any appreciation. Raising this
+/// multiplies the minimum deposit one-for-one while barely changing the burn
+/// margin, so 100 is the point where a high-value mint stays launchable.
+pub const MIN_SUPPLY_MULTIPLE: u128 = 100;
 
 #[account]
 #[derive(Default, InitSpace)]
@@ -80,10 +120,32 @@ pub struct VaultState {
     pub pda_bump: [u8; 1],
     pub vault_version: [u8; 1], // Version number for vault PDAs (allows multiple vaults per deposit mint)
     pub paused: bool,
+    /// This vault's virtual-share offset, in base units.
+    ///
+    /// Per-vault rather than global because the right value depends on what a
+    /// base unit of the deposit mint is *worth*. The offset must dominate a
+    /// 1-unit retained sliver (so it is an absolute count), while
+    /// `MIN_SUPPLY_MULTIPLE * offset` is the minimum first deposit — whose cost
+    /// is that count times the base-unit price. One global constant cannot serve
+    /// both a 6-decimal dollar stablecoin and an 8-decimal asset worth ~$100k.
+    ///
+    /// **Zero means "not set" and maps to [`EXTRA_SHARES`].** Vaults created
+    /// before this field existed have zeroed padding, so they read 0 — both live
+    /// mainnet vaults are in that state. Never read this field directly: on-chain
+    /// use `VaultState::share_offset()`, and off-chain use
+    /// `resolved_share_offset()` from the generated Rust client, which mirrors it.
+    /// A raw 0 collapses the pricing to pure pro-rata, which agrees with the
+    /// program only while the vault sits exactly at par.
+    pub share_offset: u64,
     /// Reserved. New fields must be carved **out of** this array so `LEN` stays
-    /// 455, the size of the live mainnet vault accounts. Enforced by a
-    /// compile-time assertion in `programs/august-vault/src/state/vault.rs`.
-    pub padding: [u64; 32],
+    /// 455, the size of the live mainnet vault accounts — enforced by the `const`
+    /// assertion below the struct.
+    ///
+    /// **Declare them AFTER `share_offset`, never before it.** Inserting a field
+    /// earlier shifts `share_offset` off byte 199, and every vault storing a
+    /// non-default offset would then silently read 0 and fall back to the default.
+    /// `share_offset_stays_at_its_byte_offset` fails if that happens.
+    pub padding: [u64; 31],
 }
 
 /// **Compile-time layout guard.** Two live mainnet vaults are 455-byte accounts.
@@ -111,6 +173,7 @@ impl VaultState {
         withdrawal_fee: u32,
         pda_bump: [u8; 1],
         vault_version: [u8; 1],
+        share_offset: u64,
     ) {
         self.operator = operator;
         self.admin = admin;
@@ -124,6 +187,7 @@ impl VaultState {
         self.paused = false;
         self.pda_bump = pda_bump;
         self.vault_version = vault_version;
+        self.share_offset = share_offset;
     }
 
     /// Get the seed for the vault state PDA
@@ -134,6 +198,72 @@ impl VaultState {
             &self.vault_version,
             &self.pda_bump,
         ]
+    }
+
+    /// This vault's offset, resolving the legacy zero.
+    ///
+    /// Always use this rather than reading `share_offset` directly: a vault
+    /// created before the field existed stores 0, and 0 is not a usable offset —
+    /// it would disable the inflation and burn defences entirely.
+    pub fn share_offset(&self) -> u128 {
+        match self.share_offset {
+            0 => EXTRA_SHARES,
+            v => v as u128,
+        }
+    }
+
+    /// Smallest first deposit this vault may accept, given its offset.
+    ///
+    /// Both floors apply: the historical decimals floor, and
+    /// `MIN_SUPPLY_MULTIPLE * offset` so the offset co-holder's permanent claim
+    /// stays negligible. See [`MIN_SUPPLY_MULTIPLE`].
+    ///
+    /// **The offset floor is not optional.** The offset and this minimum must move
+    /// together: a large offset without a correspondingly large floor lets the
+    /// offset co-holder own most of a new vault and absorb the early holders'
+    /// appreciation — a real loss to them, not a rounding artifact. Every *new*
+    /// vault opens exactly at this floor, so it is what makes the co-holder's
+    /// permanent claim negligible. Pinned by
+    /// `first_depositor_keeps_their_appreciation`.
+    ///
+    /// Consequence worth knowing: at the default offset this floor is 10^8 base
+    /// units, so mints with few decimals are effectively excluded (10^8 units of
+    /// a 0-decimal token is not a realistic deposit). That is deliberate and
+    /// fails closed — the offset cannot be made negligible for such a mint, so a
+    /// vault on one would silently mistreat its depositors. A smaller
+    /// `share_offset` is the supported way to make such a mint launchable.
+    pub fn min_first_deposit_for(decimals: u8, offset: u128) -> u64 {
+        let by_decimals = match decimals {
+            0..=3 => 1,
+            d => 10_u64.saturating_pow(d.saturating_sub(3) as u32),
+        };
+        let by_offset =
+            u64::try_from(MIN_SUPPLY_MULTIPLE.saturating_mul(offset)).unwrap_or(u64::MAX);
+        by_decimals.max(by_offset)
+    }
+
+    /// Whether `offset` may be stored on a new vault.
+    ///
+    /// Powers of ten only, within [`MIN_SHARE_OFFSET`]..=[`MAX_SHARE_OFFSET`].
+    /// Restricting the shape keeps the relationship to the mint's decimals
+    /// legible and stops a caller choosing a value that quietly disables the
+    /// defences.
+    pub fn is_valid_share_offset(offset: u128) -> bool {
+        if !(MIN_SHARE_OFFSET..=MAX_SHARE_OFFSET).contains(&offset) {
+            return false;
+        }
+        // `checked_mul`, not `saturating_mul`: saturation would stick at
+        // `u128::MAX`, so `p == offset` would ACCEPT `u128::MAX` if the range
+        // check above were ever loosened. This way the predicate is correct on
+        // its own rather than only in combination with that check.
+        let mut p = 1_u128;
+        while p < offset {
+            match p.checked_mul(10) {
+                Some(next) => p = next,
+                None => return false,
+            }
+        }
+        p == offset
     }
 
     /// Sum of on-vault (`local_aum`) and externally-deployed (`deployed_aum`) assets.
@@ -147,9 +277,9 @@ impl VaultState {
 
     /// Shares minted for a deposit of `amount` underlying assets.
     ///
-    /// Formula: `floor(max(`
-    ///   `amount * (supply + EXTRA_SHARES) / (total_assets + VIRTUAL_ASSETS),`
-    ///   `amount * supply / total_assets))`.
+    /// Formula, where `offset` is this vault's [`VaultState::share_offset`]:
+    ///   `floor(max( amount * (supply + offset) / (total_assets + offset),`
+    ///   `           amount * supply / total_assets ))`.
     ///
     /// Above par the offset term is the larger and binds; below par
     /// (`total_assets < supply`, reachable after a reported loss) the pro-rata
@@ -159,11 +289,15 @@ impl VaultState {
     /// formula was implicitly bounded. As `total_assets` approaches 1 against a
     /// large supply the mint count approaches `amount * supply`, so in a
     /// deep-loss state deposits eventually exceed `u64` and revert with
-    /// `NumberOverflow` — deposits brick rather than misprice. Reaching that
-    /// needs two privileged actions (an admin widening `aum_decrease_limit`, then
-    /// the operator writing the AUM down to near zero), and a vault in that state
-    /// is already worthless, so this is a documented consequence rather than a
-    /// guarded case.
+    /// `NumberOverflow` — deposits brick rather than misprice.
+    ///
+    /// That state is reachable by the operator alone, within the AUM bounds, and
+    /// does not require admin action — see the internal security review for the
+    /// mechanism. A vault in it is already worthless to its holders, and only
+    /// `operator_deposit` can recapitalise it, so this is a documented
+    /// consequence of an operator who has already destroyed the vault's value
+    /// rather than a separately guarded
+    /// case.
     /// Errors with `SharePriceUndefined` when `total_assets == 0` while shares are
     /// outstanding — that state has no share price.
     ///
@@ -174,7 +308,12 @@ impl VaultState {
     /// `redeem(deposit(x)) <= x`, pinned by `shares_for_deposit_rounds_down` /
     /// `assets_for_redeem_rounds_down` below and by the property suite in
     /// `integration-tests/tests/property_arithmetic.rs`.
-    pub fn shares_for_deposit(supply: u64, total_assets: u64, amount: u64) -> Result<u64> {
+    pub fn shares_for_deposit(
+        supply: u64,
+        total_assets: u64,
+        amount: u64,
+        offset: u128,
+    ) -> Result<u64> {
         // A vault holding nothing while shares are outstanding has no meaningful
         // share price: pro-rata is a division by zero, and the offset formula
         // would mint a token amount against the ghost shares alone, handing the
@@ -188,10 +327,10 @@ impl VaultState {
         );
 
         let shares_eff = (supply as u128)
-            .checked_add(EXTRA_SHARES)
+            .checked_add(offset)
             .ok_or(ErrorCode::MathError)?;
         let assets_eff = (total_assets as u128)
-            .checked_add(VIRTUAL_ASSETS)
+            .checked_add(offset)
             .ok_or(ErrorCode::MathError)?;
         let with_offsets = (amount as u128)
             .checked_mul(shares_eff)
@@ -226,20 +365,36 @@ impl VaultState {
 
     /// Underlying assets redeemed for `shares` burned.
     ///
-    /// Formula: `floor(min(`
-    ///   `shares * (total_assets + VIRTUAL_ASSETS) / (supply + EXTRA_SHARES),`
-    ///   `shares * total_assets / supply))`.
+    /// Formula, where `offset` is this vault's [`VaultState::share_offset`]:
+    ///   `floor(min( shares * (total_assets + offset) / (supply + offset),`
+    ///   `           shares * total_assets / supply ))`.
     ///
     /// The mirror of the floor in `shares_for_deposit`: above par the offset term
     /// is the smaller and binds, below par the pro-rata cap does, so the first
     /// redeemer cannot take more than its share and leave later holders short.
     /// `u128` intermediates; rounded **down** (favours the vault).
-    pub fn assets_for_redeem(supply: u64, total_assets: u64, shares: u64) -> Result<u64> {
+    pub fn assets_for_redeem(
+        supply: u64,
+        total_assets: u64,
+        shares: u64,
+        offset: u128,
+    ) -> Result<u64> {
+        // Mirror of the guard in `shares_for_deposit`. A vault holding nothing
+        // against outstanding shares has no price in this direction either: the
+        // pro-rata cap collapses to zero, so `redeem` would revert with
+        // `ZeroAmount` ("Amount must be > 0") even though the caller passed a
+        // perfectly good share count. Say what is actually wrong instead. Both
+        // paths still revert, so no previously-failing redeem now succeeds.
+        require!(
+            total_assets > 0 || supply == 0,
+            ErrorCode::SharePriceUndefined
+        );
+
         let shares_eff = (supply as u128)
-            .checked_add(EXTRA_SHARES)
+            .checked_add(offset)
             .ok_or(ErrorCode::MathError)?;
         let assets_eff = (total_assets as u128)
-            .checked_add(VIRTUAL_ASSETS)
+            .checked_add(offset)
             .ok_or(ErrorCode::MathError)?;
         let with_offsets = (shares as u128)
             .checked_mul(assets_eff)
@@ -279,25 +434,18 @@ impl VaultState {
         u64::try_from(capped).map_err(|_| ErrorCode::NumberOverflow.into())
     }
 
-    /// Minimum amount of the deposit token required for the *first* deposit,
-    /// expressed in the mint's native units.
-    ///
-    /// Why: depositing a single unit as the very first depositor enables a
-    /// classic share-inflation attack. The minimum forces the first deposit to
-    /// be large enough that the virtual-share offset cannot be diluted by a
-    /// follow-up donation. For mints with ≥4 decimals the floor is `10^(d-3)`
-    /// (≈ 0.001 of a whole token); for 0–3 decimals a single base unit is the
-    /// most we can require without rejecting all deposits.
-    pub fn min_first_deposit(decimals: u8) -> u64 {
-        match decimals {
-            0..=3 => 1,
-            d => 10_u64.saturating_pow(d.saturating_sub(3) as u32),
-        }
-    }
+    // NOTE: there is deliberately no `min_first_deposit(decimals)` convenience
+    // wrapper. One existed and immediately attracted a call site that held a
+    // vault and should have used that vault's own offset — precisely the bug
+    // per-vault offsets exist to prevent. Callers must name the offset they mean:
+    // a vault's `share_offset()`, or `EXTRA_SHARES` for the default explicitly.
 }
 
 #[cfg(test)]
 mod tests {
+    /// Decimals the sweep below sizes its stake against (the harness mint).
+    const DEFAULT_TEST_DECIMALS: u8 = 9;
+
     use super::*;
     use test_case::test_case;
 
@@ -315,7 +463,8 @@ mod tests {
         "share price 2x: about half the shares")]
     #[test_case(1_000_000, 3_000_000, 1, 0; "rounds down to zero on tiny deposit")]
     fn shares_for_deposit_cases(supply: u64, total_assets: u64, amount: u64, expected: u64) {
-        let got = VaultState::shares_for_deposit(supply, total_assets, amount).unwrap();
+        let got =
+            VaultState::shares_for_deposit(supply, total_assets, amount, EXTRA_SHARES).unwrap();
         assert_eq!(got, expected);
     }
 
@@ -331,7 +480,8 @@ mod tests {
     #[test_case(1, 1_000_000, 1, 1; "tiny supply: ghost shares absorb nearly everything")]
     #[test_case(1, 1_000_000_000_000, 1, 1_000_000; "tiny supply against a huge balance")]
     fn assets_for_redeem_cases(supply: u64, total_assets: u64, shares: u64, expected: u64) {
-        let got = VaultState::assets_for_redeem(supply, total_assets, shares).unwrap();
+        let got =
+            VaultState::assets_for_redeem(supply, total_assets, shares, EXTRA_SHARES).unwrap();
         assert_eq!(got, expected);
     }
 
@@ -350,7 +500,8 @@ mod tests {
         amount: u64,
         expected: u64,
     ) {
-        let got = VaultState::shares_for_deposit(supply, total_assets, amount).unwrap();
+        let got =
+            VaultState::shares_for_deposit(supply, total_assets, amount, EXTRA_SHARES).unwrap();
         assert_eq!(got, expected, "must mint pro-rata in a loss state");
         let pro_rata = ((amount as u128 * supply as u128) / total_assets as u128) as u64;
         assert!(got >= pro_rata, "{got} mints below pro-rata {pro_rata}");
@@ -367,19 +518,23 @@ mod tests {
         total_assets: u64,
         amount: u64,
     ) {
-        let minted = VaultState::shares_for_deposit(supply, total_assets, amount).unwrap();
+        let minted =
+            VaultState::shares_for_deposit(supply, total_assets, amount, EXTRA_SHARES).unwrap();
         let new_supply = supply + minted;
         let new_total = total_assets + amount;
 
-        let redeemable = VaultState::assets_for_redeem(new_supply, new_total, minted).unwrap();
+        let redeemable =
+            VaultState::assets_for_redeem(new_supply, new_total, minted, EXTRA_SHARES).unwrap();
         assert!(
             redeemable + 2 >= amount,
             "deposited {amount} but could only redeem {redeemable} straight back"
         );
 
         // And the incumbents' claim must not have grown at the depositor's expense.
-        let incumbent_before = VaultState::assets_for_redeem(supply, total_assets, supply).unwrap();
-        let incumbent_after = VaultState::assets_for_redeem(new_supply, new_total, supply).unwrap();
+        let incumbent_before =
+            VaultState::assets_for_redeem(supply, total_assets, supply, EXTRA_SHARES).unwrap();
+        let incumbent_after =
+            VaultState::assets_for_redeem(new_supply, new_total, supply, EXTRA_SHARES).unwrap();
         assert!(
             incumbent_after <= incumbent_before + 2,
             "incumbents' claim rose from {incumbent_before} to {incumbent_after}"
@@ -390,14 +545,14 @@ mod tests {
     /// mint against the ghost shares alone. The first-ever deposit is unaffected.
     #[test]
     fn deposit_into_a_zero_asset_vault_with_shares_is_rejected() {
-        let err = VaultState::shares_for_deposit(1_000_000, 0, 500_000).unwrap_err();
+        let err = VaultState::shares_for_deposit(1_000_000, 0, 500_000, EXTRA_SHARES).unwrap_err();
         assert_eq!(
             err_code(&err).unwrap(),
             ErrorCode::SharePriceUndefined as u32 + ANCHOR_USER_ERROR_OFFSET,
         );
         // supply == 0 is the first deposit and must still mint 1:1.
         assert_eq!(
-            VaultState::shares_for_deposit(0, 0, 500_000).unwrap(),
+            VaultState::shares_for_deposit(0, 0, 500_000, EXTRA_SHARES).unwrap(),
             500_000
         );
     }
@@ -421,7 +576,8 @@ mod tests {
         shares: u64,
         expected: u64,
     ) {
-        let got = VaultState::assets_for_redeem(supply, total_assets, shares).unwrap();
+        let got =
+            VaultState::assets_for_redeem(supply, total_assets, shares, EXTRA_SHARES).unwrap();
         assert_eq!(got, expected, "must equal pro-rata in a loss state");
         let pro_rata = ((shares as u128 * total_assets as u128) / supply as u128) as u64;
         assert!(got <= pro_rata, "{got} exceeds pro-rata {pro_rata}");
@@ -434,7 +590,8 @@ mod tests {
     #[test_case(1_000_000, 999_999; "1 unit of loss")]
     #[test_case(2_166_176_445, 1_082_000_000; "live-vault magnitude, ~50% loss")]
     fn redeeming_all_shares_never_exceeds_reserves(supply: u64, total_assets: u64) {
-        let out = VaultState::assets_for_redeem(supply, total_assets, supply).unwrap();
+        let out =
+            VaultState::assets_for_redeem(supply, total_assets, supply, EXTRA_SHARES).unwrap();
         assert!(
             out <= total_assets,
             "redeeming the entire supply requested {out} against reserves of {total_assets}"
@@ -448,7 +605,8 @@ mod tests {
     #[test_case(4, 1_000_000_000, 4, 4_003; "supply collapsed to 4")]
     #[test_case(1_000_000, 2_000_000, 500_000, 750_000; "price 2x")]
     fn offsets_still_bind_above_par(supply: u64, total_assets: u64, shares: u64, expected: u64) {
-        let got = VaultState::assets_for_redeem(supply, total_assets, shares).unwrap();
+        let got =
+            VaultState::assets_for_redeem(supply, total_assets, shares, EXTRA_SHARES).unwrap();
         assert_eq!(got, expected);
         let pro_rata = ((shares as u128 * total_assets as u128) / supply as u128) as u64;
         assert!(
@@ -471,7 +629,19 @@ mod tests {
     #[test_case(2, 5, 1; "non-divisible: 1 * (2+E) / (5+V)")]
     #[test_case(11, 13, 17; "non-divisible: 17 * (11+E) / (13+V)")]
     fn shares_for_deposit_rounds_down(supply: u64, total_assets: u64, amount: u64) {
-        let got = VaultState::shares_for_deposit(supply, total_assets, amount).unwrap() as u128;
+        // These assertions describe the OFFSET term only, which is the binding
+        // one at or above par. Below par `shares_for_deposit` returns the
+        // pro-rata floor instead, and a case added there would fail with a
+        // misleading "rounded up" rather than a wrong-branch message. Guard the
+        // precondition so the next maintainer gets told which it is.
+        assert!(
+            total_assets >= supply,
+            "this test pins the offset term, which only binds at or above par \
+             (supply={supply}, total_assets={total_assets}). Below par the \
+             pro-rata floor governs — assert against that instead."
+        );
+        let got = VaultState::shares_for_deposit(supply, total_assets, amount, EXTRA_SHARES)
+            .unwrap() as u128;
         let num = (amount as u128) * (supply as u128 + EXTRA_SHARES);
         let den = total_assets as u128 + VIRTUAL_ASSETS;
         assert!(
@@ -487,7 +657,8 @@ mod tests {
     #[test_case(5, 2, 1; "non-divisible: 1 * (2+V) / (5+E)")]
     #[test_case(13, 11, 17; "non-divisible: 17 * (11+V) / (13+E)")]
     fn assets_for_redeem_rounds_down(supply: u64, total_assets: u64, shares: u64) {
-        let got = VaultState::assets_for_redeem(supply, total_assets, shares).unwrap() as u128;
+        let got = VaultState::assets_for_redeem(supply, total_assets, shares, EXTRA_SHARES).unwrap()
+            as u128;
         // Two bounds apply, and the payout is the floor of whichever is tighter:
         // the offset formula, and pro-rata (which binds only below par). Asserting
         // the exact value is stronger than the old "within 1 LSB" check, and it
@@ -539,7 +710,7 @@ mod tests {
         // Both u128 products fit; only the final narrowing to u64 fails. (Here it
         // is the pro-rata branch that exceeds u64, at a supply of u64::MAX against
         // a single unit of assets.)
-        let err = VaultState::shares_for_deposit(u64::MAX, 1, 1_000_000).unwrap_err();
+        let err = VaultState::shares_for_deposit(u64::MAX, 1, 1_000_000, EXTRA_SHARES).unwrap_err();
         let code = err_code(&err).expect("AnchorError expected");
         assert_eq!(
             code,
@@ -551,7 +722,7 @@ mod tests {
     #[test]
     fn shares_for_deposit_u128_product_overflow_returns_math_error() {
         // `amount * (supply + EXTRA_SHARES)` exceeds u128 before any division.
-        let err = VaultState::shares_for_deposit(u64::MAX, 1, u64::MAX).unwrap_err();
+        let err = VaultState::shares_for_deposit(u64::MAX, 1, u64::MAX, EXTRA_SHARES).unwrap_err();
         let code = err_code(&err).expect("AnchorError expected");
         assert_eq!(
             code,
@@ -564,7 +735,7 @@ mod tests {
     fn assets_for_redeem_narrowing_overflow_returns_number_overflow() {
         // Symmetric to `shares_for_deposit`: the u128 product fits, the u64
         // narrowing does not.
-        let err = VaultState::assets_for_redeem(0, u64::MAX, 1_000_000).unwrap_err();
+        let err = VaultState::assets_for_redeem(0, u64::MAX, 1_000_000, EXTRA_SHARES).unwrap_err();
         let code = err_code(&err).expect("AnchorError expected");
         assert_eq!(
             code,
@@ -575,7 +746,7 @@ mod tests {
 
     #[test]
     fn assets_for_redeem_u128_product_overflow_returns_math_error() {
-        let err = VaultState::assets_for_redeem(0, u64::MAX, u64::MAX).unwrap_err();
+        let err = VaultState::assets_for_redeem(0, u64::MAX, u64::MAX, EXTRA_SHARES).unwrap_err();
         let code = err_code(&err).expect("AnchorError expected");
         assert_eq!(
             code,
@@ -645,7 +816,9 @@ mod tests {
     #[test_case(u64::MAX / 2, u64::MAX / 2, 1; "near-overflow boundary: single unit")]
     #[test_case(0, 0, u64::MAX / 4; "large fresh deposit")]
     fn round_trip_never_extracts_value(supply: u64, total_assets: u64, deposit: u64) {
-        let Ok(minted) = VaultState::shares_for_deposit(supply, total_assets, deposit) else {
+        let Ok(minted) =
+            VaultState::shares_for_deposit(supply, total_assets, deposit, EXTRA_SHARES)
+        else {
             return; // Overflow in shares math: not a useful seed for this property.
         };
         let (Some(new_supply), Some(new_total)) = (
@@ -654,7 +827,9 @@ mod tests {
         ) else {
             return; // Post-mint state overflows u64: skip rather than panic.
         };
-        let Ok(redeemed) = VaultState::assets_for_redeem(new_supply, new_total, minted) else {
+        let Ok(redeemed) =
+            VaultState::assets_for_redeem(new_supply, new_total, minted, EXTRA_SHARES)
+        else {
             return;
         };
         assert!(
@@ -689,19 +864,226 @@ mod tests {
 
     // ---- min_first_deposit ----
 
-    #[test_case(0, 1; "0 decimals")]
-    #[test_case(1, 1; "1 decimal")]
-    #[test_case(2, 1; "2 decimals")]
-    #[test_case(3, 1; "3 decimals (boundary: still 1 unit)")]
-    #[test_case(4, 10; "4 decimals (formula kicks in)")]
-    #[test_case(5, 100; "5 decimals")]
-    #[test_case(6, 1_000; "6 decimals (USDC-style)")]
-    #[test_case(7, 10_000; "7 decimals")]
-    #[test_case(8, 100_000; "8 decimals")]
-    #[test_case(9, 1_000_000; "9 decimals (SOL-style)")]
-    #[test_case(10, 10_000_000; "10 decimals")]
+    // The offset floor (MIN_SUPPLY_MULTIPLE * EXTRA_SHARES = 10^8) dominates
+    // until the decimals term overtakes it at 11 decimals.
+    #[test_case(0, 100_000_000; "0 decimals (offset floor)")]
+    #[test_case(6, 100_000_000; "6 decimals, USDC-style: 100 whole tokens")]
+    #[test_case(9, 100_000_000; "9 decimals, SOL-style: 0.1 whole token")]
+    #[test_case(11, 100_000_000; "11 decimals (the crossover)")]
+    #[test_case(12, 1_000_000_000; "12 decimals (decimals term takes over)")]
     #[test_case(18, 1_000_000_000_000_000; "18 decimals (USDC-EVM-style)")]
     fn min_first_deposit_matches_table(decimals: u8, expected: u64) {
-        assert_eq!(VaultState::min_first_deposit(decimals), expected);
+        assert_eq!(
+            VaultState::min_first_deposit_for(decimals, EXTRA_SHARES),
+            expected
+        );
+    }
+
+    /// The property the floor exists for, checked at **every permitted offset**:
+    /// after the minimum first deposit the non-burnable offset co-holder must own
+    /// a negligible slice, so an early holder keeps essentially all of the
+    /// vault's appreciation.
+    ///
+    /// This is what ties `MIN_SUPPLY_MULTIPLE` to the offset. Without the
+    /// offset-derived floor a first depositor could forfeit their entire gain.
+    #[test_case(6, MIN_SHARE_OFFSET; "6 decimals, min offset")]
+    #[test_case(6, MAX_SHARE_OFFSET; "6 decimals, max offset")]
+    #[test_case(8, 10_000; "8 decimals, BTC-style mid offset")]
+    #[test_case(9, MAX_SHARE_OFFSET; "9 decimals, max offset")]
+    #[test_case(18, MAX_SHARE_OFFSET; "18 decimals, max offset")]
+    fn first_depositor_keeps_their_appreciation(decimals: u8, offset: u128) {
+        let principal = VaultState::min_first_deposit_for(decimals, offset);
+        let shares = VaultState::shares_for_deposit(0, 0, principal, offset).unwrap();
+        assert_eq!(shares, principal, "the first deposit mints 1:1");
+
+        // The vault doubles, then the sole holder exits completely.
+        let reserve = principal.checked_mul(2).expect("test input fits");
+        let out = VaultState::assets_for_redeem(shares, reserve, shares, offset).unwrap();
+
+        let gain = principal; // 100% appreciation
+        let kept = out.saturating_sub(principal);
+        // A FIXED policy threshold, deliberately not derived from
+        // MIN_SUPPLY_MULTIPLE. At the floor the retained fraction is always
+        // `M / (M + 1)` by construction, so asserting against that expression is
+        // tautological for any M — it moves with whatever value is chosen. 99%
+        // encodes the policy instead: it holds at M = 100 (99.01%) and fails if
+        // the multiple is halved to 50 (98.04%), which is the drift that matters.
+        assert!(
+            (kept as u128) * 100 >= (gain as u128) * 99,
+            "sole holder kept {kept} of a {gain} gain at {decimals} decimals with \
+             offset {offset} — the offset co-holder absorbed it; the offset and \
+             MIN_SUPPLY_MULTIPLE must move together"
+        );
+    }
+
+    /// The point of making the offset per-vault: a high unit-value mint (8
+    /// decimals, ~$100k a token) is unlaunchable at the default offset, where
+    /// the opening deposit is a six-figure cheque. A smaller offset brings that
+    /// down by three orders of magnitude, and the supply still dominates the
+    /// offset by the same multiple, so the co-holder's claim is unchanged.
+    #[test]
+    fn a_smaller_offset_makes_a_high_value_mint_launchable() {
+        const BTC_DECIMALS: u8 = 8;
+        let at_default = VaultState::min_first_deposit_for(BTC_DECIMALS, EXTRA_SHARES);
+        let at_min = VaultState::min_first_deposit_for(BTC_DECIMALS, MIN_SHARE_OFFSET);
+        assert_eq!(at_default / at_min, 1_000, "three orders of magnitude");
+        assert!(at_min as u128 >= MIN_SUPPLY_MULTIPLE * MIN_SHARE_OFFSET);
+    }
+
+    /// The security property that justifies `MIN_SHARE_OFFSET`, checked at every
+    /// permitted offset rather than only the default.
+    ///
+    /// The integration sweep in `share_burn_pricing.rs` runs against harness
+    /// vaults, which all carry the default (== `MAX_SHARE_OFFSET`), so it says
+    /// nothing about the smaller offsets this change newly permits. The manoeuvre
+    /// is pure share math, so it replays exactly here: stake the offset's own
+    /// minimum first deposit, burn down to a sliver, let honest deposits land,
+    /// then exit.
+    ///
+    /// Note the margin is thin at the bottom of the band (well under 1%) and very
+    /// wide at the top. That asymmetry is the reason `MIN_SHARE_OFFSET` exists and
+    /// is why it must not be lowered without re-running this.
+    #[test]
+    fn burn_manoeuvre_is_loss_making_at_every_permitted_offset() {
+        for offset in [MIN_SHARE_OFFSET, 10_000, 100_000, MAX_SHARE_OFFSET] {
+            let stake = VaultState::min_first_deposit_for(DEFAULT_TEST_DECIMALS, offset);
+            let mut worst: i128 = i128::MIN;
+
+            for keep in [1u64, 2, 4, 16, 256, 1_000, 100_000] {
+                if keep >= stake {
+                    continue;
+                }
+                for tenths in [1u64, 2, 3, 5, 8] {
+                    let each = stake / 10 * tenths;
+                    if each == 0 {
+                        continue;
+                    }
+                    for depositors in [1usize, 2, 5, 25, 100] {
+                        // Attacker deposits `stake` 1:1, then burns down to `keep`.
+                        let (mut supply, mut total) = (keep, stake);
+                        for _ in 0..depositors {
+                            let minted =
+                                VaultState::shares_for_deposit(supply, total, each, offset)
+                                    .expect("honest deposit prices");
+                            if minted == 0 {
+                                continue;
+                            }
+                            supply += minted;
+                            total += each;
+                        }
+                        let out = VaultState::assets_for_redeem(supply, total, keep, offset)
+                            .expect("attacker exit prices");
+                        worst = worst.max(out as i128 - stake as i128);
+                    }
+                }
+            }
+
+            assert!(
+                worst < 0,
+                "offset {offset}: the burn manoeuvre returned {worst} on a stake of \
+                 {stake} — profitable, so this offset must not be permitted"
+            );
+        }
+    }
+
+    /// `share_offset` must stay at account byte 199 — the first word of the old
+    /// `padding`.
+    ///
+    /// `LEN == 455` constrains the total size, not the field order, and the
+    /// comment on `padding` tells the next author to "carve new fields out of this
+    /// array" — the natural reading of which is to declare them beside the other
+    /// scalars, i.e. *before* `share_offset`. That would shift this field into
+    /// what is now `padding[1]`, so every vault carrying a non-default offset
+    /// would silently read 0 there and fall back to the default. No error, no log,
+    /// correct deserialization, `LEN` still 455, build green.
+    ///
+    /// The live-vault fork fixtures cannot catch it: their padding is entirely
+    /// zero, so any shift within that region is invisible. This serializes a
+    /// sentinel and checks where it actually lands.
+    #[test]
+    fn share_offset_stays_at_its_byte_offset() {
+        use anchor_lang::AccountSerialize;
+
+        const SENTINEL: u64 = 0x00A1_B2C3_D4E5_F607;
+        let state = VaultState {
+            share_offset: SENTINEL,
+            ..Default::default()
+        };
+        let mut bytes = Vec::new();
+        state.try_serialize(&mut bytes).expect("serialize");
+
+        let at = bytes
+            .windows(8)
+            .position(|w| w == SENTINEL.to_le_bytes())
+            .expect("sentinel must appear in the serialized account");
+        assert_eq!(
+            at, 199,
+            "share_offset moved from byte 199 to {at}. Every vault with a \
+             non-default offset would now read 0 there and silently fall back to \
+             the default. Carve new fields from the END of `padding`, after \
+             `share_offset`, never before it."
+        );
+    }
+
+    /// Only powers of ten inside the permitted band may be stored on a vault.
+    #[test]
+    fn share_offset_validation_is_exact() {
+        for ok in [MIN_SHARE_OFFSET, 10_000, 100_000, MAX_SHARE_OFFSET] {
+            assert!(
+                VaultState::is_valid_share_offset(ok),
+                "{ok} should be valid"
+            );
+        }
+        for bad in [
+            0,
+            1,
+            MIN_SHARE_OFFSET - 1,
+            MIN_SHARE_OFFSET + 1,
+            5_000,
+            MAX_SHARE_OFFSET + 1,
+            MAX_SHARE_OFFSET * 10,
+            u128::MAX,
+        ] {
+            assert!(
+                !VaultState::is_valid_share_offset(bad),
+                "{bad} should be rejected"
+            );
+        }
+    }
+
+    /// A vault created before `share_offset` existed reads 0 from padding, which
+    /// must resolve to the default rather than disabling the defences.
+    #[test]
+    fn legacy_zero_offset_resolves_to_the_default() {
+        let legacy = VaultState::default();
+        assert_eq!(legacy.share_offset, 0, "legacy accounts store zero");
+        assert_eq!(legacy.share_offset(), EXTRA_SHARES);
+
+        let explicit = VaultState {
+            share_offset: MIN_SHARE_OFFSET as u64,
+            ..Default::default()
+        };
+        assert_eq!(explicit.share_offset(), MIN_SHARE_OFFSET);
+    }
+
+    /// The offset term must remain part of the floor.
+    ///
+    /// Note what this can and cannot catch: because `min_first_deposit_for`
+    /// returns `max(by_decimals, MIN_SUPPLY_MULTIPLE * offset)`, both sides of the
+    /// assertion move together, so it is insensitive to the *value* of
+    /// `MIN_SUPPLY_MULTIPLE`. What it does catch is the offset term being dropped
+    /// from the floor entirely. The value is pinned instead by
+    /// `first_depositor_keeps_their_appreciation`.
+    #[test]
+    fn min_first_deposit_dominates_the_offsets() {
+        for d in 0..=18u8 {
+            for offset in [MIN_SHARE_OFFSET, 10_000, MAX_SHARE_OFFSET] {
+                let min = VaultState::min_first_deposit_for(d, offset) as u128;
+                assert!(
+                    min >= MIN_SUPPLY_MULTIPLE * offset,
+                    "min_first_deposit_for({d}, {offset}) = {min} does not clear the offset"
+                );
+            }
+        }
     }
 }

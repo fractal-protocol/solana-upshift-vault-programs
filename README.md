@@ -34,7 +34,7 @@ so each deposit mint has a finite number of vault lifecycles.
 | `initialize_config`      | Upgrade authority | Create the singleton `ProgramConfig` (once)  |
 | `set_config_authority`   | Protocol authority | Rotate the vault-creation authority         |
 | `override_config_authority` | Upgrade authority | Reset the vault-creation authority (recovery) |
-| `initialize`             | Protocol authority | Create vault, share mint, set roles         |
+| `initialize`             | Protocol authority | Create vault, share mint, set roles, fix the share offset |
 | `deposit`                | User     | Deposit tokens, receive shares                       |
 | `deposit_checked`        | User     | As `deposit`, reverting below a caller-stated minimum share output |
 | `redeem`                 | User     | Burn shares, receive tokens (minus fee)              |
@@ -56,6 +56,11 @@ so each deposit mint has a finite number of vault lifecycles.
 ## Development
 
 ```bash
+# One-time per clone: install the repo's git hooks. The pre-commit hook refuses
+# a commit that leaves a source file untracked — CI cannot catch that, because
+# it only ever sees committed state.
+./scripts/install-hooks.sh
+
 # Build
 anchor build
 
@@ -78,9 +83,12 @@ anchor build
 cp deploy/deploy.config.example.json deploy/deploy.config.json
 # Edit with your keys
 
-# Deploy a NEW program + vault
-pnpm run deploy:devnet
-pnpm run deploy:mainnet
+# Deploy a NEW program + vault.
+# --rewrite-declare-id is required: this REWRITES declare_id! in lib.rs and the
+# mainnet entry in Anchor.toml so they name the freshly generated program.
+# Revert both files afterwards, or every later build targets that program.
+pnpm run deploy:devnet  -- --rewrite-declare-id
+pnpm run deploy:mainnet -- --rewrite-declare-id
 
 # Bootstrap the ProgramConfig of an ALREADY-DEPLOYED program.
 # Vault creation is gated on this and it does not exist until run.
@@ -99,9 +107,32 @@ and three Fordefi-signed transactions. For an externally held authority,
 `bootstrap-config.mjs --unsigned out.json --nonce-account <PUBKEY>` emits a
 transaction that does not expire mid-ceremony.
 
-There is no `initialize:*` script: vault creation now needs the `ProgramConfig`
-account, a signer equal to its authority, a separate `payer`, and a
-`vault_version`. Use `deploy/new-vault.mjs`, or the runbook for mainnet.
+**There is currently no script that adds a vault to an already-deployed
+program.** `deploy/new-vault.mjs` is not that tool — it generates a *fresh*
+program keypair, rewrites `declare_id!` in your working tree, rebuilds and
+deploys a **new program**, which on mainnet costs several SOL and leaves you with
+a second, unverified deployment. The removed `initialize:*` scripts did not work
+either (they predate `vault_version`, `program_config` and the separate `payer`).
+
+To create a vault on an existing program today, build the `initialize`
+instruction directly against the IDL, signed by the `ProgramConfig` authority,
+supplying:
+
+| argument / account | notes |
+|---|---|
+| `program_config` | the singleton PDA; the signer must equal its stored authority |
+| `payer` | funds the new accounts; may differ from the signer |
+| `vault_version` | `u8`; each `(deposit_mint, vault_version)` pair is **single-use** and cannot be reused once its vault is closed |
+| `share_offset` | **required and permanent.** A power of ten from `1000` to `1000000` inclusive; anything else is rejected with `InvalidShareOffset` (6020) |
+
+`share_offset` cannot be changed after creation, and it sets both the share
+pricing and the minimum first deposit (`100 x share_offset`, or the mint's
+`10^(decimals-3)` floor, whichever is larger). Choose it for what a **base unit**
+of the deposit mint is worth — a larger offset widens the margin against
+share-burn price manipulation, a smaller one keeps a high unit-value mint
+launchable. For a 6-decimal dollar stablecoin `1000000` gives a 100-token
+minimum; for an 8-decimal asset worth ~$100k that same offset would demand a
+six-figure opening deposit, where `1000` asks roughly a thousandth of that.
 
 ## Security
 
@@ -121,6 +152,14 @@ account, a signer equal to its authority, a separate `payer`, and a
   create another vault, and one with a config can never recover that config's
   authority. Existing vaults keep working; there is no on-chain remedy for
   either case.
+- **Share offset is per vault and permanent.** `initialize` fixes the virtual-
+  share offset for the vault's life. It must dominate a one-unit retained sliver,
+  so it is an absolute count; and `MIN_SUPPLY_MULTIPLE x offset` is the minimum
+  first deposit, whose *cost* is that count times what a base unit of the mint is
+  worth. Choose it per asset: a 6-decimal dollar stablecoin and an 8-decimal
+  asset worth ~$100k cannot share one value — at an offset sized for the former,
+  opening the latter would cost six figures. Larger offset = wider margin against
+  share-burn price manipulation; smaller = a reachable opening deposit.
 - **Token-2022**: Supported, but token extensions may require program upgrades
   for additional accounts. **Vaults must only be created on plain mints without
   transfer-altering extensions**; the supported mint types are agreed as part of

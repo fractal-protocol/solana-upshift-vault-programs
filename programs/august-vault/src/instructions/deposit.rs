@@ -22,8 +22,8 @@ pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
 /// Deposit, refusing to mint fewer than `min_shares_out` shares.
 ///
 /// Share count is
-/// `floor(max(amount * (supply + EXTRA_SHARES) / (total + VIRTUAL_ASSETS),`
-/// `amount * supply / total))`, so a depositor always forfeits the fractional
+/// `floor(max(amount * (supply + offset) / (total + offset),`
+/// `amount * supply / total))`, where `offset` is the vault's own `share_offset`, so a depositor always forfeits the fractional
 /// remainder — normally dust. The price can also move between quoting and
 /// execution, since share supply is read from the SPL mint and any holder may
 /// burn their own tokens (see `EXTRA_SHARES`). This lets a caller state the worst
@@ -39,7 +39,10 @@ pub fn handler_checked(ctx: Context<Deposit>, amount: u64, min_shares_out: u64) 
 
     // Enforce minimum deposit only on the very first deposit.
     if ctx.accounts.share_mint.supply == 0 {
-        let min_deposit = VaultState::min_first_deposit(ctx.accounts.deposit_mint.decimals);
+        let min_deposit = VaultState::min_first_deposit_for(
+            ctx.accounts.deposit_mint.decimals,
+            ctx.accounts.vault_state.share_offset(),
+        );
         require!(amount >= min_deposit, ErrorCode::InsufficientAmount);
     }
 
@@ -47,7 +50,12 @@ pub fn handler_checked(ctx: Context<Deposit>, amount: u64, min_shares_out: u64) 
 
     let supply = ctx.accounts.share_mint.supply;
     let total_assets = ctx.accounts.vault_state.total_assets()?;
-    let shares = VaultState::shares_for_deposit(supply, total_assets, amount)?;
+    let shares = VaultState::shares_for_deposit(
+        supply,
+        total_assets,
+        amount,
+        ctx.accounts.vault_state.share_offset(),
+    )?;
 
     // Slippage first: a deposit that rounds to zero shares also violates any
     // non-zero `min_shares_out`, and `SlippageExceeded` tells the caller which

@@ -145,13 +145,13 @@ impl Initialize {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
  pub struct InitializeInstructionData {
             discriminator: [u8; 8],
-                              }
+                                    }
 
 impl InitializeInstructionData {
   pub fn new() -> Self {
     Self {
                         discriminator: [175, 175, 109, 31, 13, 152, 155, 237],
-                                                                          }
+                                                                                        }
   }
 
     pub(crate) fn try_to_vec(&self) -> Result<Vec<u8>, std::io::Error> {
@@ -172,6 +172,7 @@ impl Default for InitializeInstructionData {
                 pub operator: Pubkey,
                 pub fee_recipient: Pubkey,
                 pub vault_version: u8,
+                pub share_offset: u64,
       }
 
 impl InitializeInstructionArgs {
@@ -211,6 +212,7 @@ pub struct InitializeBuilder {
                 operator: Option<Pubkey>,
                 fee_recipient: Option<Pubkey>,
                 vault_version: Option<u8>,
+                share_offset: Option<u64>,
         __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
@@ -322,6 +324,11 @@ impl InitializeBuilder {
         self.vault_version = Some(vault_version);
         self
       }
+                #[inline(always)]
+      pub fn share_offset(&mut self, share_offset: u64) -> &mut Self {
+        self.share_offset = Some(share_offset);
+        self
+      }
         /// Add an additional account to the instruction.
   #[inline(always)]
   pub fn add_remaining_account(&mut self, account: solana_instruction::AccountMeta) -> &mut Self {
@@ -353,6 +360,7 @@ impl InitializeBuilder {
                                                                   operator: self.operator.clone().expect("operator is not set"),
                                                                   fee_recipient: self.fee_recipient.clone().expect("fee_recipient is not set"),
                                                                   vault_version: self.vault_version.clone().expect("vault_version is not set"),
+                                                                  share_offset: self.share_offset.clone().expect("share_offset is not set"),
                                     };
     
     accounts.instruction_with_remaining_accounts(args, &self.__remaining_accounts)
@@ -656,6 +664,7 @@ impl<'a, 'b> InitializeCpiBuilder<'a, 'b> {
                                 operator: None,
                                 fee_recipient: None,
                                 vault_version: None,
+                                share_offset: None,
                     __remaining_accounts: Vec::new(),
     });
     Self { instruction }
@@ -761,6 +770,11 @@ impl<'a, 'b> InitializeCpiBuilder<'a, 'b> {
         self.instruction.vault_version = Some(vault_version);
         self
       }
+                #[inline(always)]
+      pub fn share_offset(&mut self, share_offset: u64) -> &mut Self {
+        self.instruction.share_offset = Some(share_offset);
+        self
+      }
         /// Add an additional account to the instruction.
   #[inline(always)]
   pub fn add_remaining_account(&mut self, account: &'b solana_account_info::AccountInfo<'a>, is_writable: bool, is_signer: bool) -> &mut Self {
@@ -788,6 +802,7 @@ impl<'a, 'b> InitializeCpiBuilder<'a, 'b> {
                                                                   operator: self.instruction.operator.clone().expect("operator is not set"),
                                                                   fee_recipient: self.instruction.fee_recipient.clone().expect("fee_recipient is not set"),
                                                                   vault_version: self.instruction.vault_version.clone().expect("vault_version is not set"),
+                                                                  share_offset: self.instruction.share_offset.clone().expect("share_offset is not set"),
                                     };
         let instruction = InitializeCpi {
         __program: self.instruction.__program,
@@ -834,6 +849,7 @@ struct InitializeCpiBuilderInstruction<'a, 'b> {
                 operator: Option<Pubkey>,
                 fee_recipient: Option<Pubkey>,
                 vault_version: Option<u8>,
+                share_offset: Option<u64>,
         /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
   __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
 }

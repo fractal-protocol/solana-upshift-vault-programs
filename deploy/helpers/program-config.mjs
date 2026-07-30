@@ -106,6 +106,11 @@ export async function ensureProgramConfig({
   program,
   signer,
   desiredAuthority,
+  // Optional key that pays the account rent and the fee. `initialize_config`
+  // declares `payer` as a Signer separate from `upgrade_authority`, so an ops
+  // key can carry the cost and the authority need not hold SOL. Defaults to
+  // `signer` when omitted.
+  payer = null,
   log = console.log,
 }) {
   const connection = program.provider.connection;
@@ -167,19 +172,34 @@ export async function ensureProgramConfig({
 
   log(`ℹ️  Bootstrapping program config at ${configPda.toBase58()}`);
   log(`   Vault-creation authority will be: ${authority.toBase58()}`);
-  const tx = await program.methods
+  const feePayer = payer ?? signer;
+  if (payer && !payer.publicKey.equals(signer.publicKey)) {
+    log(`ℹ️  Rent and fees paid by ${payer.publicKey.toBase58()}`);
+  }
+  // Build the transaction rather than calling `.rpc()`, so the TRANSACTION fee
+  // payer can be set explicitly. Setting the instruction's `payer` account only
+  // decides who funds the account rent; `.rpc()` sends through the provider,
+  // and Anchor assigns `tx.feePayer = tx.feePayer ?? provider.wallet.publicKey`
+  // — the upgrade authority. With an ops payer supplied and an authority holding
+  // no SOL, rent would come from the right key while the fee still did not.
+  const built = await program.methods
     .initializeConfig(authority)
     .accounts({
       upgradeAuthority: signer.publicKey,
-      payer: signer.publicKey,
+      payer: feePayer.publicKey,
       // Passed explicitly rather than left to Anchor's PDA resolution: the IDL
       // bakes the build-time `declare_id!` into this account's seed, so
       // resolution would target the committed program's ProgramData even when
       // the caller has retargeted `idl.address` to another cluster's program.
       programData: programDataPda(programId),
     })
-    .signers([signer])
-    .rpc();
+    .transaction();
+  built.feePayer = feePayer.publicKey;
+
+  // The provider's wallet is `signer`, so it signs automatically. A distinct
+  // fee payer must be supplied as an extra signer.
+  const extraSigners = feePayer.publicKey.equals(signer.publicKey) ? [] : [feePayer];
+  const tx = await program.provider.sendAndConfirm(built, extraSigners);
   log(`✅ Program config created. Transaction: ${tx}`);
   log(
     `⚠️  ${authority.toBase58()} is now the ONLY key that can create vaults on ` +

@@ -9,7 +9,9 @@
 //! transfer hooks) is intentionally out of scope here.
 
 use august_vault::{errors::ErrorCode, state::vault::VaultState};
-use integration_tests::harness::{assert_anchor_err, VaultCtx, DEPOSIT_DECIMALS};
+use integration_tests::harness::{
+    assert_anchor_err, VaultCtx, DEPOSIT_DECIMALS, HARNESS_SHARE_OFFSET,
+};
 
 const DEPOSIT_AMOUNT: u64 = 10 * 10u64.pow(DEPOSIT_DECIMALS as u32);
 
@@ -31,8 +33,9 @@ fn deposit_and_redeem_round_trip_under_token_2022() {
 
     let supply = ctx.share_mint_supply();
     let total_assets = ctx.vault_state_data().total_assets().unwrap();
-    let expected_payout = VaultState::assets_for_redeem(supply, total_assets, shares_minted)
-        .expect("redeem math fits u64");
+    let expected_payout =
+        VaultState::assets_for_redeem(supply, total_assets, shares_minted, HARNESS_SHARE_OFFSET)
+            .expect("redeem math fits u64");
 
     let user_before = ctx.token_account_amount(&ctx.user_deposit_ata);
     ctx.redeem(shares_minted)

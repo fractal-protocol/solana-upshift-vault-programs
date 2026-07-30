@@ -18,7 +18,9 @@
 //! so it replays on every later run.
 
 use august_vault::errors::ErrorCode;
-use august_vault::state::vault::{VaultState, EXTRA_SHARES, VIRTUAL_ASSETS};
+use august_vault::state::vault::{
+    VaultState, EXTRA_SHARES, MAX_SHARE_OFFSET, MIN_SHARE_OFFSET, VIRTUAL_ASSETS,
+};
 use integration_tests::harness::vault_error_code;
 use proptest::prelude::*;
 
@@ -32,6 +34,49 @@ fn anchor_code(e: &anchor_lang::error::Error) -> Option<u32> {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(2048))]
 
+    /// Every permitted offset, not just the default. The offset became a runtime
+    /// parameter and now appears in both numerator and denominator, which moves the
+    /// rounding behaviour and the crossover between the offset term and the
+    /// pro-rata bound — so the exact-floor property has to hold at all of them.
+    #[test]
+    fn shares_for_deposit_is_exact_floor_at_every_offset(
+        supply in any::<u64>(),
+        total_assets in any::<u64>(),
+        amount in any::<u64>(),
+        offset in prop_oneof![
+            Just(MIN_SHARE_OFFSET),
+            Just(10_000u128),
+            Just(100_000u128),
+            Just(MAX_SHARE_OFFSET),
+        ],
+    ) {
+        let result = VaultState::shares_for_deposit(supply, total_assets, amount, offset);
+
+        if total_assets == 0 && supply > 0 {
+            prop_assert!(result.is_err(), "no assets against a live supply has no price");
+            return Ok(());
+        }
+        let Some(num) = (amount as u128).checked_mul(supply as u128 + offset) else {
+            prop_assert!(result.is_err(), "unrepresentable product must error");
+            return Ok(());
+        };
+        let offset_floor = num / (total_assets as u128 + offset);
+        let pro_rata = if total_assets == 0 {
+            Some(0)
+        } else {
+            (amount as u128).checked_mul(supply as u128).map(|n| n / total_assets as u128)
+        };
+        let Some(p) = pro_rata else {
+            prop_assert!(result.is_err());
+            return Ok(());
+        };
+        let expected = offset_floor.max(p);
+        match result {
+            Ok(got) => prop_assert_eq!(got as u128, expected),
+            Err(_) => prop_assert!(expected > u64::MAX as u128),
+        }
+    }
+
     /// `shares_for_deposit` is exactly
     /// `floor(max(amount * (supply + EXTRA_SHARES) / (total + VIRTUAL_ASSETS),`
     /// `amount * supply / total))` whenever the result fits in u64. A refactor
@@ -43,7 +88,7 @@ proptest! {
         amount in any::<u64>(),
     ) {
         let den = total_assets as u128 + VIRTUAL_ASSETS;
-        let result = VaultState::shares_for_deposit(supply, total_assets, amount);
+        let result = VaultState::shares_for_deposit(supply, total_assets, amount, EXTRA_SHARES);
 
         // No assets against outstanding shares has no defined price, and the
         // program refuses rather than mispricing.
@@ -136,7 +181,24 @@ proptest! {
         shares in any::<u64>(),
     ) {
         let den = supply as u128 + EXTRA_SHARES;
-        let result = VaultState::assets_for_redeem(supply, total_assets, shares);
+        let result = VaultState::assets_for_redeem(supply, total_assets, shares, EXTRA_SHARES);
+
+        // Mirror of the deposit property: no assets against a live supply has
+        // no price in this direction either, and the program refuses rather
+        // than reverting later with a misleading ZeroAmount.
+        if total_assets == 0 && supply > 0 {
+            let e = match result {
+                Ok(v) => return Err(TestCaseError::fail(
+                    format!("returned Ok({v}) for a vault with no assets but live shares")
+                )),
+                Err(e) => e,
+            };
+            prop_assert_eq!(
+                anchor_code(&e),
+                Some(vault_error_code(ErrorCode::SharePriceUndefined))
+            );
+            return Ok(());
+        }
 
         // See the companion property: the exact product can exceed u128.
         match (shares as u128).checked_mul(total_assets as u128 + VIRTUAL_ASSETS) {
@@ -186,7 +248,7 @@ proptest! {
         total_assets in any::<u64>(),
         deposit in any::<u64>(),
     ) {
-        let Ok(minted) = VaultState::shares_for_deposit(supply, total_assets, deposit) else {
+        let Ok(minted) = VaultState::shares_for_deposit(supply, total_assets, deposit, EXTRA_SHARES) else {
             return Ok(()); // narrowing overflow: not a round-trippable state
         };
         let (Some(new_supply), Some(new_total)) =
@@ -194,7 +256,7 @@ proptest! {
         else {
             return Ok(()); // post-mint state itself overflows u64
         };
-        let Ok(redeemed) = VaultState::assets_for_redeem(new_supply, new_total, minted) else {
+        let Ok(redeemed) = VaultState::assets_for_redeem(new_supply, new_total, minted, EXTRA_SHARES) else {
             return Ok(());
         };
         prop_assert!(
@@ -208,7 +270,7 @@ proptest! {
     #[test]
     fn first_deposit_mints_one_to_one(amount in any::<u64>()) {
         prop_assert_eq!(
-            VaultState::shares_for_deposit(0, 0, amount).unwrap(),
+            VaultState::shares_for_deposit(0, 0, amount, EXTRA_SHARES).unwrap(),
             amount
         );
     }
@@ -223,8 +285,8 @@ proptest! {
     ) {
         let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
         if let (Ok(s_lo), Ok(s_hi)) = (
-            VaultState::shares_for_deposit(supply, total_assets, lo),
-            VaultState::shares_for_deposit(supply, total_assets, hi),
+            VaultState::shares_for_deposit(supply, total_assets, lo, EXTRA_SHARES),
+            VaultState::shares_for_deposit(supply, total_assets, hi, EXTRA_SHARES),
         ) {
             prop_assert!(s_lo <= s_hi, "monotonicity violated: {} > {}", s_lo, s_hi);
         }
@@ -240,8 +302,8 @@ proptest! {
     ) {
         let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
         if let (Ok(r_lo), Ok(r_hi)) = (
-            VaultState::assets_for_redeem(supply, total_assets, lo),
-            VaultState::assets_for_redeem(supply, total_assets, hi),
+            VaultState::assets_for_redeem(supply, total_assets, lo, EXTRA_SHARES),
+            VaultState::assets_for_redeem(supply, total_assets, hi, EXTRA_SHARES),
         ) {
             prop_assert!(r_lo <= r_hi, "monotonicity violated: {} > {}", r_lo, r_hi);
         }
@@ -251,10 +313,10 @@ proptest! {
     /// so no decimals value can disable the inflation-attack defense.
     #[test]
     fn min_first_deposit_is_monotone_and_nonzero(d in 0u8..=200) {
-        let cur = VaultState::min_first_deposit(d);
+        let cur = VaultState::min_first_deposit_for(d, EXTRA_SHARES);
         prop_assert!(cur >= 1);
         if d > 0 {
-            prop_assert!(VaultState::min_first_deposit(d - 1) <= cur);
+            prop_assert!(VaultState::min_first_deposit_for(d - 1, EXTRA_SHARES) <= cur);
         }
     }
 }

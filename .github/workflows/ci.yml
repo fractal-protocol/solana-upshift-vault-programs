@@ -54,6 +54,26 @@ jobs:
             - name: Rustfmt (integration-tests workspace)
               run: cargo fmt --manifest-path integration-tests/Cargo.toml --all --check
 
+    # NOTE: this job cannot detect an author's untracked file. GitHub Actions
+    # checks out committed state, so `git ls-files --others` is always empty
+    # here — that check belongs in a pre-commit hook (scripts/install-hooks.sh),
+    # which is where it now lives.
+    #
+    # What CI *can* prove is that the committed tree is internally consistent:
+    # every relative import resolves to a file git actually has. That catches a
+    # helper written but never staged, which is how it would surface for anyone
+    # cloning the repo.
+    references:
+        name: References resolve
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 20
+            - name: Assert imports and documented script paths resolve
+              run: node scripts/check-references.mjs
+
     clippy:
         name: Clippy
         runs-on: ubuntu-latest
@@ -311,7 +331,7 @@ jobs:
         name: CI Pass
         if: always()
         runs-on: ubuntu-latest
-        needs: [changes, fmt, clippy, security, client-check, test, reproducible-build]
+        needs: [changes, references, fmt, clippy, security, client-check, test, reproducible-build]
         steps:
             - name: Check results
               run: |
