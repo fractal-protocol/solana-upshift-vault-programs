@@ -36,8 +36,12 @@ pub struct InitializeConfig<'info> {
     /// program, so a caller cannot present the `ProgramData` of some unrelated
     /// program they happen to control.
     ///
-    /// Declared before `program_config` so the authorization check runs before
-    /// the account is created — Anchor applies constraints in declaration order.
+    /// Note that declaration order does **not** make this check run before
+    /// `program_config` is created: Anchor emits every `init` field's creation
+    /// CPI ahead of all non-init access checks. An upgrade-authority mismatch is
+    /// still always caught — the whole transaction reverts — but a caller who
+    /// cannot fund the config's rent sees the System Program's error rather than
+    /// `NotProtocolAuthority`.
     #[account(
         seeds = [crate::ID.as_ref()],
         bump,

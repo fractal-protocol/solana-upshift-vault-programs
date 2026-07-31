@@ -22,7 +22,11 @@ use august_vault::errors::ErrorCode;
 use integration_tests::harness::{
     assert_anchor_err, assert_anchor_framework_err, BareCtx, VaultCtx,
 };
-use solana_sdk::{pubkey::Pubkey, signature::Keypair, signature::Signer};
+use litesvm::types::FailedTransactionMetadata;
+use solana_sdk::{
+    instruction::InstructionError, pubkey::Pubkey, signature::Keypair, signature::Signer,
+    transaction::TransactionError,
+};
 
 /// Versions used by namespace tests. Deliberately not 0, which the harness
 /// vault already occupies.
@@ -168,30 +172,71 @@ fn initialize_fails_closed_when_config_is_missing() {
     assert_anchor_framework_err(&err, 3012);
 }
 
-/// The rejection must be about authorization, not about whether the caller can
-/// afford the rent. The gate is declared ahead of the three `init` accounts for
-/// exactly this reason; declared after them, a broke caller fails with a System
-/// Program "insufficient lamports" error instead and the negative tests below
-/// would only pass because the harness funds their impostors generously.
+/// An unauthorized caller creates nothing whatever their balance — but *which*
+/// error they see depends on it, and that is a property of Anchor's codegen
+/// rather than of this account list.
+///
+/// The previous version of this test funded the impostor's rent from a separate
+/// solvent payer, so the System Program never had the chance to fail and the
+/// test could not detect the behaviour it claimed to pin. Both balances are
+/// covered here.
+///
+/// `anchor_syn::codegen::accounts::try_accounts::generate_constraints` emits
+/// every `init` field's creation CPI ahead of *all* non-init access checks, so
+/// the authority `constraint` on `signer` runs after `vault_state` is created.
+/// With a solvent payer that creation succeeds and the constraint rejects with
+/// `NotProtocolAuthority`; with the impostor paying their own way and unable to
+/// afford the rent, the System Program rejects first. The security property —
+/// no vault, no namespace consumed — holds either way.
+///
+/// If a future Anchor release evaluates access checks before `init`, the second
+/// assertion fails and the comment on `Initialize::program_config` should be
+/// revisited.
 #[test]
-fn initialize_rejects_unauthorized_signer_regardless_of_balance() {
+fn unauthorized_signer_creates_nothing_whatever_their_balance() {
     let mut ctx = VaultCtx::fresh();
     let mint = ctx.create_extra_deposit_mint();
-    // Far too poor to fund even one of the three accounts (~0.0076 SOL total).
-    let broke_impostor = ctx.new_funded_keypair(1_000_000);
-    let payer = ctx.payer.insecure_clone();
 
+    // Solvent impostor with a separate solvent payer: the rent is funded, so
+    // the authority constraint is reached and is what rejects.
+    let rich_impostor = ctx.new_funded_keypair(100_000_000);
+    let payer = ctx.payer.insecure_clone();
     let err = ctx
-        .try_initialize_vault_paid_by(&broke_impostor, &payer, mint, SPARE_VERSIONS[0])
+        .try_initialize_vault_paid_by(&rich_impostor, &payer, mint, SPARE_VERSIONS[0])
         .expect_err("unauthorized");
     assert_anchor_err(&err, ErrorCode::NotProtocolAuthority);
+    assert_vault_pdas_absent(&ctx, mint, SPARE_VERSIONS[0]);
 
-    // And nothing was created on the way to that rejection.
-    for pda in ctx.vault_pdas(mint, SPARE_VERSIONS[0]) {
+    // Impostor paying their own rent, far too poor to fund even one of the
+    // three accounts (~0.0076 SOL total). Still rejected, still creates
+    // nothing, but the System Program gets there first.
+    let broke_impostor = ctx.new_funded_keypair(1_000_000);
+    let err = ctx
+        .try_initialize_vault_paid_by(&broke_impostor, &broke_impostor, mint, SPARE_VERSIONS[1])
+        .expect_err("unauthorized and unable to fund rent");
+    assert_system_program_insufficient_lamports(&err);
+    assert_vault_pdas_absent(&ctx, mint, SPARE_VERSIONS[1]);
+}
+
+/// A rejected `initialize` must leave all three PDAs untouched.
+fn assert_vault_pdas_absent(ctx: &VaultCtx, deposit_mint: Pubkey, vault_version: u8) {
+    for pda in ctx.vault_pdas(deposit_mint, vault_version) {
         assert!(
             ctx.svm.get_account(&pda).is_none_or(|a| a.lamports == 0),
-            "rejected initialize created {pda} before checking authorization"
+            "rejected initialize created {pda}"
         );
+    }
+}
+
+/// `SystemError::ResultWithNegativeLamports` — surfaced as `Custom(1)` from the
+/// `init` CPI, i.e. not one of this program's error codes.
+fn assert_system_program_insufficient_lamports(err: &FailedTransactionMetadata) {
+    match &err.err {
+        TransactionError::InstructionError(_, InstructionError::Custom(code)) => assert_eq!(
+            *code, 1,
+            "expected the System Program's insufficient-lamports error, got custom code {code}"
+        ),
+        other => panic!("expected an insufficient-lamports failure, got {other:?}"),
     }
 }
 

@@ -39,13 +39,24 @@ pub struct Initialize<'info> {
     /// Gates vault creation: it is restricted to the authority recorded in
     /// `ProgramConfig`, rather than being open to any paying signer.
     ///
-    /// **Declared first on purpose.** Anchor applies each field's constraints in
-    /// declaration order, so putting the config and the authority check ahead of
-    /// the three `init` accounts makes an unauthorized call fail with
-    /// `NotProtocolAuthority` before any account is created. Declared after
-    /// them, a caller too poor to fund the rent would instead fail with a System
-    /// Program "insufficient lamports" error, so the rejection reason would
-    /// depend on the caller's balance rather than on authorization.
+    /// **Declared first so a missing config fails closed early.** Anchor
+    /// deserializes fields in declaration order, so if this account does not
+    /// exist the instruction aborts with `AccountNotInitialized` before any
+    /// account is created. That much *is* order-sensitive.
+    ///
+    /// The authority comparison below is **not**. It is a `constraint` on a
+    /// non-`init` field, and `anchor_syn::codegen::accounts::try_accounts::
+    /// generate_constraints` emits every `init` field's creation CPI ahead of
+    /// *all* non-init access checks, regardless of declaration order — and
+    /// within a single field `linearize` orders `Init` before `Raw`, so moving
+    /// the constraint onto an `init` account would not help either. An
+    /// unauthorized caller who is also their own `payer` and cannot fund the
+    /// rent therefore fails with a System Program "insufficient lamports" error
+    /// rather than `NotProtocolAuthority`.
+    ///
+    /// Authorization is still enforced in every case — only the error surfaced
+    /// depends on the caller's balance. Pinned by
+    /// `unauthorized_signer_creates_nothing_whatever_their_balance`.
     ///
     /// **Namespace note**: `vault_version` is a `u8` seed byte, so each deposit
     /// mint has 256 namespaces and each is single-use. `close_vault` cannot
