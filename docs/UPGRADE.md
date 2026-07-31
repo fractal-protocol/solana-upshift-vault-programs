@@ -8,7 +8,8 @@ The live mainnet program is **already** running a reproducible build
 (`fca11d73…`, the release recorded in `verified-hashes.txt` before this one — see
 [VERIFY.md](../VERIFY.md)). This runbook therefore moves it from one verified
 build to the next: the `ProgramConfig` gate on vault creation, the share-price
-offset retune, and `deposit_checked`.
+offset retune, and the two slippage-bounded instructions `deposit_checked` and
+`redeem_checked`.
 
 > **This changes live mainnet bytecode over real user funds.** Do not deviate
 > from this runbook. **Three** transactions must be signed by the program's
@@ -27,11 +28,11 @@ offset retune, and `deposit_checked`.
 
 - **Expected reproducible hash** (mainnet build, committed source): the
   `exec_sha256` / `raw_sha256` / `size` in [`verified-hashes.txt`](../verified-hashes.txt)
-  (currently `f9f43ca4…`, 598,592 B), built with `solana-verify` 0.5.1 in
+  (currently `7ce47734…`, 600,200 B), built with `solana-verify` 0.5.1 in
   `solanafoundation/solana-verifiable-build@sha256:695f890e…` (Solana 2.3.0).
-- **ProgramData must be extended first:** the new `.so` (598,592 B) is larger
+- **ProgramData must be extended first:** the new `.so` (600,200 B) is larger
   than the current allocation, so `solana program extend` is required or the
-  upgrade fails. Deficit = `598,592 + 45 (loader header) − 507,781 = 90,856` bytes
+  upgrade fails. Deficit = `600,200 + 45 (loader header) − 507,781 = 92,464` bytes
   (re-derive if the sizes change).
 - **Bootstrap the program config after upgrading:** vault creation is gated on a
   `ProgramConfig` authority that does not exist yet. Until `initialize_config` is
@@ -123,7 +124,7 @@ Also confirm the GitHub **build attestation** exists for the asset
 
 > `declare_id!` is baked into the bytecode, so the **devnet** artifact must
 > declare the devnet program ID. Build a devnet-targeted `.so` (this hashes
-> differently from mainnet's `f9f43ca4…` — expected; the dry-run validates
+> differently from mainnet's `7ce47734…` — expected; the dry-run validates
 > mechanics + state compatibility, not the mainnet bytes):
 
 ```bash
@@ -203,8 +204,8 @@ sha256sum pre-upgrade-august_vault.so
 # Re-derive first — this value is release-specific:
 #   solana program show up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt -u m   # current allocation
 #   additional_bytes = <new .so size> + 45 - <current ProgramData account size>
-# For the hashes in verified-hashes.txt: 598,592 + 45 - 507,781 = 90,856.
-solana program extend up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt 90856 \
+# For the hashes in verified-hashes.txt: 600,200 + 45 - 507,781 = 92,464.
+solana program extend up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt 92464 \
   -u mainnet-beta -k <ops-payer.json>
 
 # Upload the verified .so into a buffer.
@@ -242,7 +243,7 @@ remedy. If immutability is ever wanted, Step 4 must happen first. Pinned by
 
 ```bash
 solana-verify get-program-hash -u mainnet-beta up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt
-#   Now equals verified-hashes.txt exec_sha256 (f9f43ca4…)
+#   Now equals verified-hashes.txt exec_sha256 (7ce47734…)
 ```
 
 If you paused, **unpause first** — `deposit` and `redeem` are pause-gated, so

@@ -794,6 +794,37 @@ impl VaultCtx {
         self.send_as(&depositor.keypair, ix)
     }
 
+    /// `redeem_checked` signed by an arbitrary depositor, with a slippage bound
+    /// on the **net** payout (after the withdrawal fee).
+    pub fn redeem_checked_as(
+        &mut self,
+        depositor: &Depositor,
+        shares: u64,
+        min_assets_out: u64,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts: ix_accounts::Redeem {
+                vault_state: self.vault_state,
+                vault_deposit_ata: self.vault_token_pda,
+                sender_token_account: depositor.deposit_ata,
+                sender_share_account: depositor.share_ata,
+                fee_recipient_account: self.fee_recipient_deposit_ata,
+                share_mint: self.share_mint,
+                deposit_mint: self.deposit_mint,
+                signer: depositor.keypair.pubkey(),
+                token_program: self.token_program.id(),
+            }
+            .to_account_metas(None),
+            data: ix_data::RedeemChecked {
+                shares,
+                min_assets_out,
+            }
+            .data(),
+        };
+        self.send_as(&depositor.keypair, ix)
+    }
+
     /// Burn share tokens **directly through the token program**, bypassing the
     /// vault entirely.
     ///

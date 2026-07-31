@@ -38,6 +38,12 @@
  *   node deploy/bootstrap-config.mjs --program-id <ID> --authority <PUBKEY> \
  *     [--url <RPC>]
  *
+ * Re-running the sign-and-send form once the config exists is a no-op that
+ * exits 0: with --authority omitted the signer's own pubkey is the value
+ * asserted against, so the check still fails loudly if something else is
+ * stored. Only a bare read with neither --authority nor --keypair has nothing
+ * to compare against, and that is the one case that errors.
+ *
  * NOTE: --url defaults to DEVNET. Always pass it explicitly for mainnet.
  *
  * `--authority` is the key that will be allowed to create vaults; when
@@ -153,11 +159,24 @@ async function main() {
     const cfg = await new Program(idl, readOnly).account.programConfig.fetch(configPda);
     console.log(`\nStored vault-creation authority: ${cfg.authority.toBase58()}`);
 
-    // Verification must be able to FAIL, or it is not verification. Without an
-    // expected value there is nothing to compare against, and printing a pubkey
-    // and exiting 0 would let a mis-bootstrapped config read as success — the
-    // one thing the post-ceremony read-back in docs/UPGRADE.md exists to catch.
-    if (!args.authority) {
+    // Verification must be able to FAIL, or it is not verification. But the
+    // expected value does not have to come from `--authority`: the documented
+    // sign-and-send invocation is `--program-id <ID> --keypair <auth.json>`
+    // with `--authority` omitted, which means "install the signer itself", so
+    // on a re-run the signer's own pubkey IS the expected value. Deriving it
+    // keeps the assertion sharp while making a second run of the documented
+    // command idempotent — matching `ensureProgramConfig`, which callers such
+    // as `new-vault.mjs` already invoke for the same program.
+    //
+    // Only a bare read with nothing supplied has genuinely nothing to compare
+    // against, and that still fails rather than printing a pubkey and exiting 0.
+    const expected = args.authority
+      ? new PublicKey(args.authority)
+      : args.keypair
+        ? loadKeypair(args.keypair).publicKey
+        : null;
+
+    if (expected === null) {
       throw new Error(
         `the config already exists, so pass --authority <PUBKEY> to assert which ` +
         `key you expect to be stored. Re-run with ` +
@@ -165,15 +184,19 @@ async function main() {
         `the intended one.`
       );
     }
-    if (!cfg.authority.equals(new PublicKey(args.authority))) {
+    if (!cfg.authority.equals(expected)) {
       throw new Error(
         `MISMATCH: the stored authority is ${cfg.authority.toBase58()}, not the ` +
-        `${args.authority} you passed. Vault creation is gated behind the stored ` +
-        `key. Rotate with set_config_authority (needs a signature from the stored ` +
-        `key), or reset with override_config_authority (needs the upgrade authority).`
+        `${expected.toBase58()} you ${args.authority ? 'passed' : 'signed with'}. ` +
+        `Vault creation is gated behind the stored key. Rotate with ` +
+        `set_config_authority (needs a signature from the stored key), or reset ` +
+        `with override_config_authority (needs the upgrade authority).`
       );
     }
-    console.log(`✅ Matches the expected authority.`);
+    console.log(
+      `✅ Matches the expected authority. Nothing to do — the config is ` +
+      `create-once, so this is a no-op.`
+    );
     return;
   }
 

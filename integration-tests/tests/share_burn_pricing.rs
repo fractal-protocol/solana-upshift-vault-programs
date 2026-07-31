@@ -20,6 +20,7 @@
 //! Exact figures are recorded in the internal security review rather than here.
 
 use august_vault::errors::ErrorCode;
+use august_vault::state::vault::FEE_RATE_DENOMINATOR_VALUE;
 use integration_tests::harness::{assert_anchor_err, VaultCtx, DEPOSIT_DECIMALS};
 
 /// 1 whole token at the harness mint's 9 decimals.
@@ -275,6 +276,138 @@ fn deposit_checked_with_zero_bound_matches_deposit() {
         ctx.token_account_amount(&d.share_ata)
     };
     assert_eq!(plain, checked, "the two paths must mint identically");
+}
+
+// ---- redeem_checked: the same bound on the way out ----
+
+/// The redemption-side twin of `deposit_checked_rejects_a_rate_moved_by_a_burn`.
+///
+/// A holder quotes an exit and the operator lowers the reported AUM before the
+/// transaction lands. Without a bound the shares burn at the new, lower price
+/// and the holder simply receives less than quoted, with no way to say "revert
+/// instead" — `set_withdrawal_fee`'s own doc comment notes the design already
+/// assumes the operator moves the price.
+#[test]
+fn redeem_checked_rejects_a_payout_moved_by_an_aum_drop() {
+    let mut ctx = VaultCtx::fresh();
+    let holder = ctx.new_depositor(ONE_TOKEN);
+    ctx.deposit_as(&holder, ONE_TOKEN).expect("seed deposit");
+    ctx.operator_withdraw(ONE_TOKEN).expect("deploy capital");
+
+    // Quote the exit at the current price...
+    let shares = ONE_TOKEN / 2;
+    let quoted = august_vault::state::vault::VaultState::assets_for_redeem(
+        ctx.share_mint_supply(),
+        ctx.vault_state_data().total_assets().unwrap(),
+        shares,
+    )
+    .unwrap();
+
+    // ...then the operator reports a loss, and the price moves underneath it.
+    ctx.set_aum_limits(10_000, 10_000)
+        .expect("widen the window");
+    ctx.operator_update_aum(ONE_TOKEN / 2)
+        .expect("report a 50% loss");
+    ctx.operator_deposit(ONE_TOKEN / 2)
+        .expect("return the remaining capital so liquidity is not the binding constraint");
+
+    let err = ctx
+        .redeem_checked_as(&holder, shares, quoted)
+        .expect_err("a payout below the stated minimum must revert");
+    assert_anchor_err(&err, ErrorCode::SlippageExceeded);
+    assert_eq!(
+        ctx.token_account_amount(&holder.share_ata),
+        ONE_TOKEN,
+        "a reverted redemption must leave the holder's shares untouched"
+    );
+}
+
+#[test]
+fn redeem_checked_accepts_a_satisfied_bound() {
+    let mut ctx = VaultCtx::fresh();
+    let holder = ctx.new_depositor(ONE_TOKEN);
+    ctx.deposit_as(&holder, ONE_TOKEN).expect("seed deposit");
+
+    // At par the exit is 1:1, so exactly `shares` assets come back.
+    let shares = ONE_TOKEN / 2;
+    ctx.redeem_checked_as(&holder, shares, shares)
+        .expect("an exactly-met bound must be accepted");
+    assert_eq!(ctx.token_account_amount(&holder.deposit_ata), shares);
+}
+
+/// Fixes the comparison as `>=` rather than `>`, and rules out any tolerance
+/// slack — the paired accept case above sits at exactly equal.
+#[test]
+fn redeem_checked_rejects_one_unit_above_the_payout() {
+    let mut ctx = VaultCtx::fresh();
+    let holder = ctx.new_depositor(ONE_TOKEN);
+    ctx.deposit_as(&holder, ONE_TOKEN).expect("seed deposit");
+
+    let shares = ONE_TOKEN / 2;
+    let err = ctx
+        .redeem_checked_as(&holder, shares, shares + 1)
+        .expect_err("a bound one unit above the payout must revert");
+    assert_anchor_err(&err, ErrorCode::SlippageExceeded);
+    assert_eq!(
+        ctx.token_account_amount(&holder.share_ata),
+        ONE_TOKEN,
+        "a reverted redemption must leave the holder's shares untouched"
+    );
+}
+
+/// The bound is on what the caller **receives**, not on the gross redemption
+/// value. Bounding the gross figure would let a fee increase between quote and
+/// execution take the difference while the bound still passed — and the fee is
+/// admin-settable at any time.
+#[test]
+fn redeem_checked_bound_is_net_of_the_withdrawal_fee() {
+    let mut ctx = VaultCtx::fresh();
+    let holder = ctx.new_depositor(ONE_TOKEN);
+    ctx.deposit_as(&holder, ONE_TOKEN).expect("seed deposit");
+
+    // 1% of the gross redemption goes to the fee recipient.
+    let fee_bps = FEE_RATE_DENOMINATOR_VALUE / 100;
+    ctx.set_withdrawal_fee(fee_bps).expect("set a 1% fee");
+
+    let shares = ONE_TOKEN / 2;
+    let gross = shares; // at par
+    let fee = gross / 100;
+    let net = gross - fee;
+
+    // A bound at the gross figure must fail: that is not what arrives.
+    let err = ctx
+        .redeem_checked_as(&holder, shares, gross)
+        .expect_err("the gross figure is not what the caller receives");
+    assert_anchor_err(&err, ErrorCode::SlippageExceeded);
+
+    // A bound at the net figure must pass, exactly.
+    ctx.redeem_checked_as(&holder, shares, net)
+        .expect("the net payout must satisfy a bound set at the net payout");
+    assert_eq!(ctx.token_account_amount(&holder.deposit_ata), net);
+}
+
+/// `min_assets_out = 0` must behave exactly like `redeem`, so the additive
+/// instruction is a strict superset rather than a subtly different path.
+#[test]
+fn redeem_checked_with_zero_bound_matches_redeem() {
+    let exit = |checked: bool| {
+        let mut ctx = VaultCtx::fresh();
+        let holder = ctx.new_depositor(ONE_TOKEN);
+        ctx.deposit_as(&holder, ONE_TOKEN).expect("seed deposit");
+        let shares = ONE_TOKEN / 3;
+        if checked {
+            ctx.redeem_checked_as(&holder, shares, 0)
+                .expect("redeem_checked with no bound");
+        } else {
+            ctx.redeem_as(&holder, shares).expect("redeem");
+        }
+        ctx.token_account_amount(&holder.deposit_ata)
+    };
+    assert_eq!(
+        exit(false),
+        exit(true),
+        "the two paths must pay out identically"
+    );
 }
 
 /// An external burn must never make the vault's own accounting inconsistent: it

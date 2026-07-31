@@ -144,10 +144,28 @@ pub mod august_vault {
     /// Redeem funds from the Vault
     /// Burn shared
     /// Get tokens out
+    ///
+    /// No slippage bound — prefer `redeem_checked` in new integrations.
+    ///
     /// ### Parameters
     /// - `shares` - The amount of shares to burn
     pub fn redeem(ctx: Context<Redeem>, shares: u64) -> Result<()> {
         return instructions::redeem::handler(ctx, shares);
+    }
+
+    /// Redeem funds from the Vault, refusing to pay out less than
+    /// `min_assets_out`.
+    ///
+    /// Same accounts and semantics as `redeem`, plus a caller-stated worst
+    /// acceptable payout, measured **net of the withdrawal fee** — what the
+    /// caller actually receives. Additive rather than a change to `redeem`, so
+    /// existing integrations keep working; pass 0 for identical behaviour.
+    ///
+    /// ### Parameters
+    /// - `shares` - The amount of shares to burn
+    /// - `min_assets_out` - Revert with `SlippageExceeded` below this payout
+    pub fn redeem_checked(ctx: Context<Redeem>, shares: u64, min_assets_out: u64) -> Result<()> {
+        return instructions::redeem::handler_checked(ctx, shares, min_assets_out);
     }
     /// Operator withdraw funds from the Vault
     ///

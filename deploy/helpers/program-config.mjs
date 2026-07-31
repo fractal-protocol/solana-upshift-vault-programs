@@ -59,8 +59,14 @@ export async function fetchUpgradeAuthorityState(connection, programId) {
   if (info.data.length < 45 || info.data.readUInt32LE(0) !== 3) {
     return { ok: false, reason: 'malformed' };
   }
-  // Only an explicit Option::None tag means genuinely immutable.
-  if (info.data[12] !== 1) return { ok: false, reason: 'immutable' };
+  // Only an explicit `Option::None` tag (0) means genuinely immutable. Any
+  // other tag is not a valid bincode `Option`, so it is a parse failure, not a
+  // revoked authority — treating it as immutable would tell an operator their
+  // program can never create vaults again on the strength of a corrupt or
+  // unrecognised byte.
+  const tag = info.data[12];
+  if (tag === 0) return { ok: false, reason: 'immutable' };
+  if (tag !== 1) return { ok: false, reason: 'malformed' };
   return { ok: true, authority: new PublicKey(info.data.subarray(13, 45)) };
 }
 

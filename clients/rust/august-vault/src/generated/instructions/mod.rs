@@ -19,6 +19,7 @@
   pub(crate) mod r#override_config_authority;
   pub(crate) mod r#pause;
   pub(crate) mod r#redeem;
+  pub(crate) mod r#redeem_checked;
   pub(crate) mod r#set_aum_limits;
   pub(crate) mod r#set_config_authority;
   pub(crate) mod r#set_fee_recipient;
@@ -41,6 +42,7 @@
   pub use self::r#override_config_authority::*;
   pub use self::r#pause::*;
   pub use self::r#redeem::*;
+  pub use self::r#redeem_checked::*;
   pub use self::r#set_aum_limits::*;
   pub use self::r#set_config_authority::*;
   pub use self::r#set_fee_recipient::*;

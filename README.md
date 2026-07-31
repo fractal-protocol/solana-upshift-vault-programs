@@ -38,6 +38,7 @@ so each deposit mint has a finite number of vault lifecycles.
 | `deposit`                | User     | Deposit tokens, receive shares                       |
 | `deposit_checked`        | User     | As `deposit`, reverting below a caller-stated minimum share output |
 | `redeem`                 | User     | Burn shares, receive tokens (minus fee)              |
+| `redeem_checked`         | User     | As `redeem`, reverting below a caller-stated minimum payout (net of fee) |
 | `operator_withdraw`      | Operator | Withdraw tokens for external deployment              |
 | `operator_deposit`       | Operator | Return tokens to vault                               |
 | `operator_update_aum`    | Operator | Update externally deployed AUM (per-vault bps limit) |

@@ -34,8 +34,23 @@ const logInfo = (msg) => log(`ℹ️  ${msg}`, 'cyan');
 // mainnet-configured machine sent a mainnet transaction while the operator
 // believed otherwise.
 const args = process.argv.slice(2).reduce((acc, arg, i, arr) => {
-  if (arg === '--program-id') acc.programId = arr[i + 1];
-  if (arg === '--network') acc.network = arr[i + 1];
+  // Reject a flag with no value rather than recording `undefined`. A trailing
+  // `--network` (truncated paste, empty shell variable, npm script appending
+  // the flag last) would otherwise leave `args.network` falsy, and the
+  // cross-check below short-circuits on the falsy operand — silently restoring
+  // the accept-and-ignore behaviour this parser exists to prevent, right before
+  // a live transaction. Same for `--program-id`, whose default is the LIVE
+  // MAINNET program.
+  const value = (name) => {
+    const v = arr[i + 1];
+    if (v === undefined || v.startsWith('-')) {
+      logError(`${name} requires a value`);
+      process.exit(1);
+    }
+    return v;
+  };
+  if (arg === '--program-id') acc.programId = value(arg);
+  if (arg === '--network') acc.network = value(arg);
   return acc;
 }, { programId: 'up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt' });
 const programId = new PublicKey(args.programId);
@@ -96,7 +111,20 @@ async function main() {
   // with AccountNotInitialized after paying a fee. Matches
   // `create_metadata.rs` and the derivation in `new-vault.mjs`.
   const depositMint = new PublicKey(config.vaultConfig.depositMint);
+  // Validate before it reaches `Buffer.from([...])`, which coerces silently:
+  // `Buffer.from(['v1'])` is `<Buffer 00>` and `Buffer.from([300])` is
+  // `<Buffer 2c>`, so a bad config value derives a DIFFERENT live vault's PDAs
+  // while the log below prints the value the operator wrote. Unlike
+  // `new-vault.mjs` there is no `u8` instruction argument downstream to throw
+  // on it, so this is the only place it can be caught.
   const vaultVersion = config.vaultConfig.vaultVersion ?? 0;
+  if (!Number.isInteger(vaultVersion) || vaultVersion < 0 || vaultVersion > 255) {
+    logError(
+      `vaultConfig.vaultVersion must be an integer in 0..=255, got ` +
+      `${JSON.stringify(config.vaultConfig.vaultVersion)}.`
+    );
+    process.exit(1);
+  }
 
   const [vaultState] = PublicKey.findProgramAddressSync(
     [Buffer.from('VAULT_STATE'), depositMint.toBuffer(), Buffer.from([vaultVersion])],

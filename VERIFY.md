@@ -43,7 +43,7 @@ asserts the same three):
 
 ```
 # program       exec_sha256                                                       raw_sha256                                                        size
-august_vault    f9f43ca48589f82a8690e802c1d75cd016b01bff5404bd3f8b5a18d6348c79a8  5159566ba012f1f96e10bee6991b57db67e2d800c2475e01d15cbb6571b14747  598592
+august_vault    7ce477344cebee5acadd27971e3213a1f04eac584e7795c93e95034cf5df3365  44b77719f88aa4c43d21893a42c0c886b0000a2501897ac424b0a3993742cb50  600200
 ```
 
 ## Compare against the on-chain program
@@ -62,14 +62,24 @@ reproducibly-built binary. Its on-chain executable hash is
 fca11d73ae5ba0635ee76964945c52ddcf78a167eb4c60317ae63df4a4e7cc1d   (505,216 B)
 ```
 
-which is the build recorded in `verified-hashes.txt` **before** the current
-release — i.e. the program as it stood prior to the `ProgramConfig` gate and the
-share-price offset retune. The hash above is what `get-program-hash` returns
-today; the hash in the block above (`f9f43ca4…`) is the *pending* release and
-will only match on-chain once [the upgrade runbook](docs/UPGRADE.md) has been
-executed. Both values being present is expected while an upgrade is in flight —
-compare against the one matching the deployed release, not simply the newest
-line in `verified-hashes.txt`.
+i.e. the program as it stood prior to the `ProgramConfig` gate and the
+share-price offset retune. That is what `get-program-hash` returns today.
+
+**`verified-hashes.txt` does not contain it.** That file holds exactly one
+record — the hash of the current source tree — because the `reproducible-build`
+CI job rebuilds from source and asserts every line in it matches, so a second,
+older record would fail the build by construction. While an upgrade is in
+flight the two therefore disagree on purpose:
+
+| Hash | Where it is recorded | What it describes |
+|---|---|---|
+| `fca11d73…` (505,216 B) | the block above, in this file | what is deployed on mainnet right now |
+| `7ce47734…` (600,200 B) | `verified-hashes.txt` | this source tree — matches on-chain only after [the upgrade runbook](docs/UPGRADE.md) has been executed |
+
+So verifying the **deployed** program means comparing `get-program-hash` against
+the block above, not against `verified-hashes.txt`. Verifying **this source
+tree** is what the CI job does. After the upgrade ships, replace the block above
+with the newly deployed hash so the two agree again.
 
 ## On-chain verification
 
