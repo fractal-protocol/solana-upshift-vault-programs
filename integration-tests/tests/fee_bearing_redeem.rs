@@ -32,9 +32,13 @@ fn successful_redeem_transfers_exact_fee_and_assets() {
     let state = ctx.vault_state_data();
     let supply = ctx.share_mint_supply();
     let total_assets = state.total_assets().unwrap();
-    let assets =
-        VaultState::assets_for_redeem(supply, total_assets, shares_to_burn, HARNESS_SHARE_OFFSET)
-            .unwrap();
+    let assets = VaultState::assets_for_redeem_with_offset(
+        supply,
+        total_assets,
+        shares_to_burn,
+        HARNESS_SHARE_OFFSET,
+    )
+    .unwrap();
     let expected_fee = expected_withdrawal_fee(assets, FEE_RATE_E6);
     let expected_user_out = assets - expected_fee;
     assert!(expected_fee > 0, "test must exercise a non-zero fee path");

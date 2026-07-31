@@ -33,9 +33,13 @@ fn deposit_and_redeem_round_trip_under_token_2022() {
 
     let supply = ctx.share_mint_supply();
     let total_assets = ctx.vault_state_data().total_assets().unwrap();
-    let expected_payout =
-        VaultState::assets_for_redeem(supply, total_assets, shares_minted, HARNESS_SHARE_OFFSET)
-            .expect("redeem math fits u64");
+    let expected_payout = VaultState::assets_for_redeem_with_offset(
+        supply,
+        total_assets,
+        shares_minted,
+        HARNESS_SHARE_OFFSET,
+    )
+    .expect("redeem math fits u64");
 
     let user_before = ctx.token_account_amount(&ctx.user_deposit_ata);
     ctx.redeem(shares_minted)

@@ -50,7 +50,7 @@ proptest! {
             Just(MAX_SHARE_OFFSET),
         ],
     ) {
-        let result = VaultState::shares_for_deposit(supply, total_assets, amount, offset);
+        let result = VaultState::shares_for_deposit_with_offset(supply, total_assets, amount, offset);
 
         if total_assets == 0 && supply > 0 {
             prop_assert!(result.is_err(), "no assets against a live supply has no price");
@@ -88,7 +88,7 @@ proptest! {
         amount in any::<u64>(),
     ) {
         let den = total_assets as u128 + VIRTUAL_ASSETS;
-        let result = VaultState::shares_for_deposit(supply, total_assets, amount, EXTRA_SHARES);
+        let result = VaultState::shares_for_deposit_with_offset(supply, total_assets, amount, EXTRA_SHARES);
 
         // No assets against outstanding shares has no defined price, and the
         // program refuses rather than mispricing.
@@ -181,7 +181,7 @@ proptest! {
         shares in any::<u64>(),
     ) {
         let den = supply as u128 + EXTRA_SHARES;
-        let result = VaultState::assets_for_redeem(supply, total_assets, shares, EXTRA_SHARES);
+        let result = VaultState::assets_for_redeem_with_offset(supply, total_assets, shares, EXTRA_SHARES);
 
         // Mirror of the deposit property: no assets against a live supply has
         // no price in this direction either, and the program refuses rather
@@ -248,7 +248,7 @@ proptest! {
         total_assets in any::<u64>(),
         deposit in any::<u64>(),
     ) {
-        let Ok(minted) = VaultState::shares_for_deposit(supply, total_assets, deposit, EXTRA_SHARES) else {
+        let Ok(minted) = VaultState::shares_for_deposit_with_offset(supply, total_assets, deposit, EXTRA_SHARES) else {
             return Ok(()); // narrowing overflow: not a round-trippable state
         };
         let (Some(new_supply), Some(new_total)) =
@@ -256,7 +256,7 @@ proptest! {
         else {
             return Ok(()); // post-mint state itself overflows u64
         };
-        let Ok(redeemed) = VaultState::assets_for_redeem(new_supply, new_total, minted, EXTRA_SHARES) else {
+        let Ok(redeemed) = VaultState::assets_for_redeem_with_offset(new_supply, new_total, minted, EXTRA_SHARES) else {
             return Ok(());
         };
         prop_assert!(
@@ -270,7 +270,7 @@ proptest! {
     #[test]
     fn first_deposit_mints_one_to_one(amount in any::<u64>()) {
         prop_assert_eq!(
-            VaultState::shares_for_deposit(0, 0, amount, EXTRA_SHARES).unwrap(),
+            VaultState::shares_for_deposit_with_offset(0, 0, amount, EXTRA_SHARES).unwrap(),
             amount
         );
     }
@@ -285,8 +285,8 @@ proptest! {
     ) {
         let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
         if let (Ok(s_lo), Ok(s_hi)) = (
-            VaultState::shares_for_deposit(supply, total_assets, lo, EXTRA_SHARES),
-            VaultState::shares_for_deposit(supply, total_assets, hi, EXTRA_SHARES),
+            VaultState::shares_for_deposit_with_offset(supply, total_assets, lo, EXTRA_SHARES),
+            VaultState::shares_for_deposit_with_offset(supply, total_assets, hi, EXTRA_SHARES),
         ) {
             prop_assert!(s_lo <= s_hi, "monotonicity violated: {} > {}", s_lo, s_hi);
         }
@@ -302,8 +302,8 @@ proptest! {
     ) {
         let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
         if let (Ok(r_lo), Ok(r_hi)) = (
-            VaultState::assets_for_redeem(supply, total_assets, lo, EXTRA_SHARES),
-            VaultState::assets_for_redeem(supply, total_assets, hi, EXTRA_SHARES),
+            VaultState::assets_for_redeem_with_offset(supply, total_assets, lo, EXTRA_SHARES),
+            VaultState::assets_for_redeem_with_offset(supply, total_assets, hi, EXTRA_SHARES),
         ) {
             prop_assert!(r_lo <= r_hi, "monotonicity violated: {} > {}", r_lo, r_hi);
         }

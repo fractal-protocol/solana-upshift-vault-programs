@@ -7,7 +7,7 @@
 // governed by version 2.0 of the Apache License.
 
 import * as anchor from "@coral-xyz/anchor";
-import { DEFAULT_SHARE_OFFSET } from "./helper/config";
+import { DEFAULT_SHARE_OFFSET, MIN_FIRST_DEPOSIT } from "./helper/config";
 import { Program } from "@coral-xyz/anchor";
 import { AugustVault } from "../target/types/august_vault";
 import { PublicKey, Keypair, LAMPORTS_PER_SOL } from "@solana/web3.js";
@@ -137,7 +137,7 @@ describe("version-security", () => {
                 depositMint,
                 userDepositAta,
                 deployer,
-                100_000_000 // 100 tokens
+                10_000_000_000 // 10,000 tokens
             );
 
             // Create fee recipient ATA
@@ -214,7 +214,7 @@ describe("version-security", () => {
                 deployer.publicKey
             );
 
-            const depositAmount = 10_000_000; // 10 tokens
+            const depositAmount = MIN_FIRST_DEPOSIT; // the opening floor at the default offset
             await vaultProgram.methods
                 .deposit(new BN(depositAmount))
                 .accounts({
@@ -243,7 +243,7 @@ describe("version-security", () => {
                 deployer.publicKey
             );
 
-            const depositAmount = 20_000_000; // 20 tokens
+            const depositAmount = 2 * MIN_FIRST_DEPOSIT;
             await vaultProgram.methods
                 .deposit(new BN(depositAmount))
                 .accounts({
@@ -268,8 +268,8 @@ describe("version-security", () => {
             const v1Vault = await vaultProgram.account.vaultState.fetch(v1StatePda);
 
             // Independent AUM
-            assert.equal(v0Vault.localAum.toNumber(), 10_000_000);
-            assert.equal(v1Vault.localAum.toNumber(), 20_000_000);
+            assert.equal(v0Vault.localAum.toNumber(), MIN_FIRST_DEPOSIT);
+            assert.equal(v1Vault.localAum.toNumber(), 2 * MIN_FIRST_DEPOSIT);
 
             // Same deposit mint
             assert.deepEqual(v0Vault.depositMint, depositMint);
@@ -481,7 +481,7 @@ describe("version-security", () => {
                 depositMint,
                 userDepositAta,
                 deployer,
-                100_000_000
+                10_000_000_000
             );
 
             // Create fee recipient ATA
@@ -524,7 +524,7 @@ describe("version-security", () => {
 
             // Deposit to version 0 vault
             await vaultProgram.methods
-                .deposit(new BN(10_000_000))
+                .deposit(new BN(MIN_FIRST_DEPOSIT))
                 .accounts({
                     vaultState: v0StatePda,
                     vaultTokenAta: v0TokenAta,
@@ -1004,7 +1004,7 @@ describe("version-security", () => {
                     depositMint,
                     userDepositAta,
                     deployer,
-                    10_000_000
+                    10_000_000_000
                 );
 
                 // Create fee recipient ATA
@@ -1053,7 +1053,7 @@ describe("version-security", () => {
                     deployer.publicKey
                 );
 
-                const depositAmount = 1_000_000;
+                const depositAmount = MIN_FIRST_DEPOSIT;
                 await vaultProgram.methods
                     .deposit(new BN(depositAmount))
                     .accounts({

@@ -164,7 +164,7 @@ fn deposit_checked_rejects_a_rate_moved_by_a_burn() {
 
     // Quote the rate a depositor would see before the burn.
     let amount = ONE_TOKEN * 4 / 10;
-    let quoted = august_vault::state::vault::VaultState::shares_for_deposit(
+    let quoted = august_vault::state::vault::VaultState::shares_for_deposit_with_offset(
         ctx.share_mint_supply(),
         ctx.vault_state_data().total_assets().unwrap(),
         amount,
@@ -242,7 +242,7 @@ fn zero_share_deposit_reports_slippage_when_a_bound_was_set() {
         .expect("report a gain, taking the price to 2.0");
 
     let d = ctx.new_depositor(ONE_TOKEN);
-    let minted = august_vault::state::vault::VaultState::shares_for_deposit(
+    let minted = august_vault::state::vault::VaultState::shares_for_deposit_with_offset(
         ctx.share_mint_supply(),
         ctx.vault_state_data().total_assets().unwrap(),
         1,
@@ -311,10 +311,11 @@ fn redeem_checked_rejects_a_payout_moved_by_an_aum_drop() {
 
     // Quote the exit at the current price...
     let shares = ONE_TOKEN / 2;
-    let quoted = august_vault::state::vault::VaultState::assets_for_redeem(
+    let quoted = august_vault::state::vault::VaultState::assets_for_redeem_with_offset(
         ctx.share_mint_supply(),
         ctx.vault_state_data().total_assets().unwrap(),
         shares,
+        HARNESS_SHARE_OFFSET,
     )
     .unwrap();
 

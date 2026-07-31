@@ -64,73 +64,73 @@ pub enum ErrorCode {
     InvalidShareOffset,
 }
 
-/// Compile-time pin of the ABI described above, placed next to the enum it guards.
+/// Compile-time pin of the ABI described above, placed next to the enum it
+/// guards, generated from **one** list so the two properties it needs cannot
+/// come apart:
 ///
-/// This is an **exhaustive match**, not a list of assertions, and that is the
-/// point: a non-exhaustive match is a hard compile error, so appending a variant
-/// breaks the build until it is pinned here. A value-only assertion block cannot
-/// do that — it silently keeps passing for the variants it happens to list, which
-/// is exactly how the previous runtime canary drifted and stopped covering the
-/// most recently added code.
+/// * **Completeness** — the generated match is exhaustive, so appending a
+///   variant to `ErrorCode` without adding it here is a build error.
+/// * **Correctness** — each entry also generates `assert!(variant as u32 ==
+///   ordinal)`, so reordering two existing variants fails the build even though
+///   the match stays exhaustive.
+///
+/// Writing those as two hand-maintained lists (the previous form) left the
+/// second one optional: appending a variant broke the match, the author added an
+/// arm with a copy-pasted ordinal, and nothing forced a matching assertion — so
+/// the pin compiled clean while claiming the wrong code. One list, one place to
+/// edit, both guarantees. That is also how the runtime canary in
+/// `state/vault.rs` drifted: it consumes [`ABI_PINS`] now rather than repeating
+/// the table.
 ///
 /// Anchor adds `ANCHOR_USER_ERROR_OFFSET` (6000) to these ordinals on-chain.
-#[allow(dead_code)]
-const fn abi_ordinal(e: ErrorCode) -> u32 {
-    match e {
-        ErrorCode::NotOperator => 0,
-        ErrorCode::ZeroAmount => 1,
-        ErrorCode::InsufficientAmount => 2,
-        ErrorCode::AumIncreaseTooBig => 3,
-        ErrorCode::AumDecreaseTooBig => 4,
-        ErrorCode::WithdrawalFeeTooHigh => 5,
-        ErrorCode::AumLimitTooHigh => 6,
-        ErrorCode::NotAdmin => 7,
-        ErrorCode::VaultPaused => 8,
-        ErrorCode::InvalidNominatedAdmin => 9,
-        ErrorCode::NominationExpired => 10,
-        ErrorCode::MathError => 11,
-        ErrorCode::NumberOverflow => 12,
-        ErrorCode::NotEnoughLiquidity => 13,
-        ErrorCode::UnauthorizedAdmin => 14,
-        ErrorCode::VaultNotEmpty => 15,
-        ErrorCode::NotProtocolAuthority => 16,
-        ErrorCode::InvalidAuthority => 17,
-        ErrorCode::SlippageExceeded => 18,
-        ErrorCode::SharePriceUndefined => 19,
-        ErrorCode::InvalidShareOffset => 20,
-    }
+macro_rules! pin_error_abi {
+    ($($variant:ident => $ordinal:literal),+ $(,)?) => {
+        #[allow(dead_code)]
+        const fn abi_ordinal(e: ErrorCode) -> u32 {
+            // Exhaustive: this is what makes an unpinned new variant a build
+            // failure rather than a silently unpinned error code.
+            match e {
+                $(ErrorCode::$variant => $ordinal,)+
+            }
+        }
+
+        const _: () = {
+            $(assert!(ErrorCode::$variant as u32 == $ordinal);)+
+        };
+
+        /// Every pinned variant with its on-chain code, for the runtime canary.
+        /// Derived from the same list as the compile-time pin, so it cannot omit
+        /// a variant the pin covers.
+        #[allow(dead_code)]
+        pub const ABI_PINS: &[(ErrorCode, u32)] = &[
+            $((ErrorCode::$variant, $ordinal + ANCHOR_USER_ERROR_OFFSET),)+
+        ];
+    };
 }
 
-const _: () = {
-    // Two independent halves, and both are needed:
-    //   * the exhaustive match above forces COMPLETENESS — appending a variant
-    //     without pinning it is a non-exhaustive-match build error;
-    //   * these asserts force CORRECTNESS — each pinned ordinal is compared to
-    //     the variant's real discriminant, so reordering two existing variants
-    //     fails here even though the match stays exhaustive.
-    // A value-only block (the previous form) had neither property, which is how
-    // it silently stopped covering the most recently added variant.
-    assert!(ErrorCode::NotOperator as u32 == abi_ordinal(ErrorCode::NotOperator));
-    assert!(ErrorCode::ZeroAmount as u32 == abi_ordinal(ErrorCode::ZeroAmount));
-    assert!(ErrorCode::InsufficientAmount as u32 == abi_ordinal(ErrorCode::InsufficientAmount));
-    assert!(ErrorCode::AumIncreaseTooBig as u32 == abi_ordinal(ErrorCode::AumIncreaseTooBig));
-    assert!(ErrorCode::AumDecreaseTooBig as u32 == abi_ordinal(ErrorCode::AumDecreaseTooBig));
-    assert!(ErrorCode::WithdrawalFeeTooHigh as u32 == abi_ordinal(ErrorCode::WithdrawalFeeTooHigh));
-    assert!(ErrorCode::AumLimitTooHigh as u32 == abi_ordinal(ErrorCode::AumLimitTooHigh));
-    assert!(ErrorCode::NotAdmin as u32 == abi_ordinal(ErrorCode::NotAdmin));
-    assert!(ErrorCode::VaultPaused as u32 == abi_ordinal(ErrorCode::VaultPaused));
-    assert!(
-        ErrorCode::InvalidNominatedAdmin as u32 == abi_ordinal(ErrorCode::InvalidNominatedAdmin)
-    );
-    assert!(ErrorCode::NominationExpired as u32 == abi_ordinal(ErrorCode::NominationExpired));
-    assert!(ErrorCode::MathError as u32 == abi_ordinal(ErrorCode::MathError));
-    assert!(ErrorCode::NumberOverflow as u32 == abi_ordinal(ErrorCode::NumberOverflow));
-    assert!(ErrorCode::NotEnoughLiquidity as u32 == abi_ordinal(ErrorCode::NotEnoughLiquidity));
-    assert!(ErrorCode::UnauthorizedAdmin as u32 == abi_ordinal(ErrorCode::UnauthorizedAdmin));
-    assert!(ErrorCode::VaultNotEmpty as u32 == abi_ordinal(ErrorCode::VaultNotEmpty));
-    assert!(ErrorCode::NotProtocolAuthority as u32 == abi_ordinal(ErrorCode::NotProtocolAuthority));
-    assert!(ErrorCode::InvalidAuthority as u32 == abi_ordinal(ErrorCode::InvalidAuthority));
-    assert!(ErrorCode::SlippageExceeded as u32 == abi_ordinal(ErrorCode::SlippageExceeded));
-    assert!(ErrorCode::SharePriceUndefined as u32 == abi_ordinal(ErrorCode::SharePriceUndefined));
-    assert!(ErrorCode::InvalidShareOffset as u32 == abi_ordinal(ErrorCode::InvalidShareOffset));
-};
+/// Anchor reserves the first 6000 codes; user variants start here.
+pub const ANCHOR_USER_ERROR_OFFSET: u32 = 6000;
+
+pin_error_abi! {
+    NotOperator => 0,
+    ZeroAmount => 1,
+    InsufficientAmount => 2,
+    AumIncreaseTooBig => 3,
+    AumDecreaseTooBig => 4,
+    WithdrawalFeeTooHigh => 5,
+    AumLimitTooHigh => 6,
+    NotAdmin => 7,
+    VaultPaused => 8,
+    InvalidNominatedAdmin => 9,
+    NominationExpired => 10,
+    MathError => 11,
+    NumberOverflow => 12,
+    NotEnoughLiquidity => 13,
+    UnauthorizedAdmin => 14,
+    VaultNotEmpty => 15,
+    NotProtocolAuthority => 16,
+    InvalidAuthority => 17,
+    SlippageExceeded => 18,
+    SharePriceUndefined => 19,
+    InvalidShareOffset => 20,
+}

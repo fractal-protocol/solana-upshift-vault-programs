@@ -81,7 +81,7 @@ fn deposit_rounding_to_zero_shares_is_rejected_with_no_side_effects() {
     let supply = ctx.share_mint_supply();
     let total = ctx.vault_state_data().total_assets().unwrap();
     assert_eq!(
-        VaultState::shares_for_deposit(supply, total, 1, HARNESS_SHARE_OFFSET).unwrap(),
+        VaultState::shares_for_deposit_with_offset(supply, total, 1, HARNESS_SHARE_OFFSET).unwrap(),
         0,
         "fixture must actually sit in the truncation regime"
     );
@@ -119,7 +119,8 @@ fn deposit_overflowing_local_aum_fails_with_number_overflow() {
     let supply = ctx.share_mint_supply();
     let total = ctx.vault_state_data().total_assets().unwrap();
     let shares =
-        VaultState::shares_for_deposit(supply, total, AMOUNT, HARNESS_SHARE_OFFSET).unwrap();
+        VaultState::shares_for_deposit_with_offset(supply, total, AMOUNT, HARNESS_SHARE_OFFSET)
+            .unwrap();
     assert!(shares > 0, "fixture must pass the zero-share check");
 
     let before = ctx.snapshot();

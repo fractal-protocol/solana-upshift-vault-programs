@@ -117,12 +117,23 @@ for (const doc of DOCS) {
 // Nothing but a comment tied the copies to the Rust source, and drift in the
 // permissive direction reintroduces the exact bug the validation exists to stop
 // (2-5 SOL spent, then InvalidShareOffset at the final step).
+// Every hand-copied constant belongs here, not just the ones that were easiest
+// to regex. `MIN_SUPPLY_MULTIPLE` and the generated client's `EXTRA_SHARES` are
+// the load-bearing ones: the first decides the minimum first deposit quoted to
+// an operator moments before they spend several SOL, and the second is what
+// off-chain quotes price against — a client that disagrees with the program
+// fails slippage on every attempt.
 const RUST_SOURCE = 'programs/august-vault/src/state/vault.rs';
+const CLIENT = 'clients/rust/august-vault/src/lib.rs';
 const MIRRORS = [
   { file: 'deploy/new-vault.mjs',  konst: 'MIN_SHARE_OFFSET',    js: /const MIN_SHARE_OFFSET = ([\d_]+)/ },
   { file: 'deploy/new-vault.mjs',  konst: 'MAX_SHARE_OFFSET',    js: /const MAX_SHARE_OFFSET = ([\d_]+)/ },
   { file: 'deploy/new-vault.mjs',  konst: 'EXTRA_SHARES',        js: /const DEFAULT_SHARE_OFFSET = ([\d_]+)/ },
+  { file: 'deploy/new-vault.mjs',  konst: 'MIN_SUPPLY_MULTIPLE', js: /const MIN_SUPPLY_MULTIPLE = ([\d_]+)/ },
   { file: 'tests/helper/config.ts', konst: 'EXTRA_SHARES',       js: /DEFAULT_SHARE_OFFSET = new anchor\.BN\(([\d_]+)\)/ },
+  { file: 'scripts/init-devnet-vault.mjs', konst: 'EXTRA_SHARES', js: /const SHARE_OFFSET = ([\d_]+)/ },
+  { file: CLIENT,                  konst: 'EXTRA_SHARES',        js: /pub const EXTRA_SHARES: u128 = ([\d_]+)/ },
+  { file: CLIENT,                  konst: 'MIN_SUPPLY_MULTIPLE', js: /pub const MIN_SUPPLY_MULTIPLE: u128 = ([\d_]+)/ },
 ];
 
 if (tracked.has(RUST_SOURCE)) {

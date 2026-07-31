@@ -28,11 +28,11 @@ offset retune, and the two slippage-bounded instructions `deposit_checked` and
 
 - **Expected reproducible hash** (mainnet build, committed source): the
   `exec_sha256` / `raw_sha256` / `size` in [`verified-hashes.txt`](../verified-hashes.txt)
-  (currently `c0d3d527…`, 602,888 B), built with `solana-verify` 0.5.1 in
+  (currently `cb1352a5…`, 605,160 B), built with `solana-verify` 0.5.1 in
   `solanafoundation/solana-verifiable-build@sha256:695f890e…` (Solana 2.3.0).
-- **ProgramData must be extended first:** the new `.so` (602,888 B) is larger
+- **ProgramData must be extended first:** the new `.so` (605,160 B) is larger
   than the current allocation, so `solana program extend` is required or the
-  upgrade fails. Deficit = `602,888 + 45 (loader header) − 507,781 = 95,152` bytes
+  upgrade fails. Deficit = `605,160 + 45 (loader header) − 507,781 = 97,424` bytes
   (re-derive if the sizes change).
 - **Bootstrap the program config after upgrading:** vault creation is gated on a
   `ProgramConfig` authority that does not exist yet. Until `initialize_config` is
@@ -129,7 +129,7 @@ Also confirm the GitHub **build attestation** exists for the asset
 
 > `declare_id!` is baked into the bytecode, so the **devnet** artifact must
 > declare the devnet program ID. Build a devnet-targeted `.so` (this hashes
-> differently from mainnet's `c0d3d527…` — expected; the dry-run validates
+> differently from mainnet's `cb1352a5…` — expected; the dry-run validates
 > mechanics + state compatibility, not the mainnet bytes):
 
 ```bash
@@ -215,8 +215,8 @@ sha256sum pre-upgrade-august_vault.so
 # 507,736 vs the account's 507,781). So with `program show` the +45 cancels and
 # you subtract directly. Using `Data Length` in the `+ 45 - size` form instead
 # over-extends by exactly 45 bytes.
-# For the hashes in verified-hashes.txt: 602,888 - 507,736 = 95,152.
-solana program extend up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt 95152 \
+# For the hashes in verified-hashes.txt: 605,160 + 45 - 507,781 = 97,424.
+solana program extend up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt 97424 \
   -u mainnet-beta -k <ops-payer.json>
 
 # Upload the verified .so into a buffer.
@@ -254,7 +254,7 @@ remedy. If immutability is ever wanted, Step 4 must happen first. Pinned by
 
 ```bash
 solana-verify get-program-hash -u mainnet-beta up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt
-#   Now equals verified-hashes.txt exec_sha256 (c0d3d527…)
+#   Now equals verified-hashes.txt exec_sha256 (cb1352a5…)
 ```
 
 If you paused, **unpause first** — `deposit` and `redeem` are pause-gated, so

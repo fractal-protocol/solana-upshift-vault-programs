@@ -11,13 +11,16 @@ import * as token from "@solana/spl-token"
 import * as assert from "assert";
 import {VaultContext} from "./helper/context";
 import {PublicKey} from "@solana/web3.js";
+import { MIN_FIRST_DEPOSIT } from "./helper/config";
 import BN from "bn.js";
 import {expect} from "chai";
 
 describe("august-vault-operator", () => {
     anchor.setProvider(anchor.AnchorProvider.env());
     let vaultContext: VaultContext
-    let amount = 1 * 10 ** 6  // Must be >= min_deposit (1_000_000 for 9 decimals)
+    // Must clear the opening floor, which is now MIN_SUPPLY_MULTIPLE * share_offset
+    // (10^8) rather than the 9-decimal mint's 10^6 — see MIN_FIRST_DEPOSIT.
+    let amount = MIN_FIRST_DEPOSIT
     let deployCapital = 80 * amount / 100;
 
     before(async () => {

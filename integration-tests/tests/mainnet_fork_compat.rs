@@ -119,6 +119,35 @@ fn read_vault_state(svm: &LiteSVM, addr: &Pubkey) -> VaultState {
         .expect("current code must deserialize the real on-chain VaultState")
 }
 
+/// The live vaults predate `share_offset`, so its bytes are old padding and must
+/// read as zero — which `share_offset()` resolves to the default.
+///
+/// This is the field the upgrade's pricing depends on and it was the one field
+/// the byte→field assertions omitted. The unit test
+/// `share_offset_stays_at_its_byte_offset` only proves the position in a
+/// synthetic `Default` serialization; nothing established it on real bytes, so a
+/// field inserted ahead of it would shift it into occupied padding and re-price
+/// both live vaults with whatever those bytes happen to hold, silently.
+///
+/// If a refreshed fixture is ever taken from a vault created *after* this
+/// release it will store a real offset and this assertion will fail. That is the
+/// intended signal: `ref_shares` / `ref_assets` hardcode the default offset, so
+/// they would need the stored value threaded through before the fixture can be
+/// used.
+fn assert_live_vault_offset_is_legacy_zero(vs: &VaultState) {
+    assert_eq!(
+        vs.share_offset, 0,
+        "live vaults predate share_offset, so its bytes must read as zero \
+         (byte→field check at account byte 199)"
+    );
+    assert_eq!(
+        vs.share_offset(),
+        EXTRA_SHARES,
+        "a stored zero must resolve to the default offset — this is what prices \
+         both live vaults after the upgrade"
+    );
+}
+
 /// Independent reference for the deposit share formula:
 /// `floor(amount * (supply + EXTRA_SHARES) / (total_assets + VIRTUAL_ASSETS))`.
 ///
@@ -232,6 +261,7 @@ fn usdc_vault_real_state_read_and_deposit() {
         vs.deployed_aum, USDC_DEPLOYED_AUM,
         "snapshot deployed_aum (byte→field check)"
     );
+    assert_live_vault_offset_is_legacy_zero(&vs);
 
     // Snapshot-agnostic invariants (hold for any healthy vault state).
     assert_eq!(
@@ -453,6 +483,7 @@ fn jito_vault_real_state_read() {
         vs.deployed_aum, JITO_DEPLOYED_AUM,
         "snapshot deployed_aum (byte→field check)"
     );
+    assert_live_vault_offset_is_legacy_zero(&vs);
     assert_eq!(
         vs.total_assets().unwrap(),
         vs.local_aum + vs.deployed_aum,

@@ -24,3 +24,21 @@ export const token_mint_mainnet = {
  * Must be a power of ten within the program's permitted band.
  */
 export const DEFAULT_SHARE_OFFSET = new anchor.BN(1_000_000);
+
+/**
+ * Mirror of the program's `MIN_SUPPLY_MULTIPLE`.
+ *
+ * Cross-checked against the Rust source by `scripts/check-references.mjs`.
+ */
+export const MIN_SUPPLY_MULTIPLE = 100;
+
+/**
+ * Smallest first deposit a test vault will accept, at the default offset.
+ *
+ * The program floors the *opening share supply* at
+ * `MIN_SUPPLY_MULTIPLE * share_offset`, and on the 9-decimal test mints that
+ * dominates the decimals floor of `10^6`. Every suite's first deposit must be at
+ * least this, so derive it here rather than repeating `1 * 10 ** 6` — that
+ * literal predates the offset retune and now reverts with `InsufficientAmount`.
+ */
+export const MIN_FIRST_DEPOSIT = MIN_SUPPLY_MULTIPLE * DEFAULT_SHARE_OFFSET.toNumber();

@@ -10,6 +10,7 @@ import * as anchor from "@coral-xyz/anchor";
 import * as token from "@solana/spl-token"
 import * as assert from "assert";
 import {VaultContext} from "./helper/context";
+import { DEFAULT_SHARE_OFFSET, MIN_FIRST_DEPOSIT, MIN_SUPPLY_MULTIPLE } from "./helper/config";
 import BN from "bn.js";
 import {expect} from "chai";
 
@@ -28,13 +29,32 @@ describe("august-vault-redeem-cei-pattern", () => {
     anchor.setProvider(anchor.AnchorProvider.env());
     let vaultContext: VaultContext;
 
-    // Use larger amount to have more precision in tests
-    const depositAmount = 10 * 10 ** 6;  // 10 tokens (with 9 decimals base)
-    const operatorWithdrawAmount = 9 * 10 ** 6;  // Withdraw 90% to reduce local_aum
+    // Derived in `before`, because this suite shares a vault with the earlier
+    // ones and what they leave behind changes what it takes to open it again.
+    let depositAmount: number;
+    let operatorWithdrawAmount: number;
 
     before(async () => {
         vaultContext = new VaultContext;
         await vaultContext.init();
+
+        // The program floors the OPENING SHARE SUPPLY at
+        // `MIN_SUPPLY_MULTIPLE * share_offset`, checked on the shares minted
+        // rather than the amount deposited. Those coincide only for a vault
+        // holding nothing: with assets `A` still recorded at zero supply — which
+        // is where the preceding suites leave this shared vault — a deposit of
+        // `X` mints `X * offset / (A + offset)`, so clearing the floor takes
+        // `X >= MIN_SUPPLY_MULTIPLE * (A + offset)`. Derive it from the live
+        // state rather than hardcoding, so this suite does not silently depend
+        // on how much residue the suites before it happened to leave.
+        const state = await vaultContext.vaultProgram.account.vaultState.fetch(
+            vaultContext.vaultStatePda
+        );
+        const totalAssets = state.localAum.toNumber() + state.deployedAum.toNumber();
+        const offset = DEFAULT_SHARE_OFFSET.toNumber();
+        const requiredToOpen = MIN_SUPPLY_MULTIPLE * (totalAssets + offset);
+        depositAmount = Math.max(10 * MIN_FIRST_DEPOSIT, requiredToOpen);
+        operatorWithdrawAmount = Math.floor(depositAmount * 9 / 10);  // reduce local_aum
 
         // Mint tokens to depositor
         await token.mintTo(

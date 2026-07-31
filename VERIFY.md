@@ -43,7 +43,7 @@ asserts the same three):
 
 ```
 # program       exec_sha256                                                       raw_sha256                                                        size
-august_vault    c0d3d52783170c14ad500f6ad69da916c2fdf3fa9433f798e684c3fc28e312ca  196fd95da5ffd2cc40f626e69c8bda1e338c6af4ef2119dd1d88e7c76aaa13a0  602888
+august_vault    cb1352a5dc4ab9513c10c1083534837bb4c666ed8ad9c3919f02f752bff52df9  7d9c0a4a16b31c2f10cbdcda60bf9fd88254c06df916f86e8e88479e6acd2481  605160
 ```
 
 ## Compare against the on-chain program
@@ -74,7 +74,7 @@ flight the two therefore disagree on purpose:
 | Hash | Where it is recorded | What it describes |
 |---|---|---|
 | `fca11d73…` (505,216 B) | the block above, in this file | what is deployed on mainnet right now |
-| `7ce47734…` (600,200 B) | `verified-hashes.txt` | this source tree — matches on-chain only after [the upgrade runbook](docs/UPGRADE.md) has been executed |
+| `cb1352a5…` (605,160 B) | `verified-hashes.txt` | this source tree — matches on-chain only after [the upgrade runbook](docs/UPGRADE.md) has been executed |
 
 So verifying the **deployed** program means comparing `get-program-hash` against
 the block above, not against `verified-hashes.txt`. Verifying **this source

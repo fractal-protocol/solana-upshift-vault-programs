@@ -7,7 +7,7 @@
 // governed by version 2.0 of the Apache License.
 
 import * as anchor from "@coral-xyz/anchor";
-import { DEFAULT_SHARE_OFFSET } from "./helper/config";
+import { DEFAULT_SHARE_OFFSET, MIN_FIRST_DEPOSIT } from "./helper/config";
 import { Program } from "@coral-xyz/anchor";
 import { AugustVault } from "../target/types/august_vault";
 import { PublicKey, LAMPORTS_PER_SOL, Connection, Keypair } from "@solana/web3.js";
@@ -311,7 +311,9 @@ describe("multi-vault", () => {
         });
 
         it("Can deposit to Vault 1 (USDC)", async () => {
-            const depositAmount = 1_000_000; // 1 USDC (6 decimals)
+            // The opening floor is MIN_SUPPLY_MULTIPLE * share_offset (10^8),
+            // which on a 6-decimal mint is 100 USDC.
+            const depositAmount = MIN_FIRST_DEPOSIT;
 
             await vaultProgram.methods
                 .deposit(new anchor.BN(depositAmount))
@@ -333,7 +335,7 @@ describe("multi-vault", () => {
         });
 
         it("Can deposit to Vault 2 (USDT) - independent from Vault 1", async () => {
-            const depositAmount = 2_000_000; // 2 USDT (6 decimals)
+            const depositAmount = 2 * MIN_FIRST_DEPOSIT; // 200 USDT (6 decimals)
 
             await vaultProgram.methods
                 .deposit(new anchor.BN(depositAmount))
@@ -354,9 +356,9 @@ describe("multi-vault", () => {
             const vault2 = await vaultProgram.account.vaultState.fetch(vault2StatePda);
 
             // Vault 1 AUM unchanged
-            assert.equal(vault1.localAum.toNumber(), 1_000_000);
+            assert.equal(vault1.localAum.toNumber(), MIN_FIRST_DEPOSIT);
             // Vault 2 has its own AUM
-            assert.equal(vault2.localAum.toNumber(), 2_000_000);
+            assert.equal(vault2.localAum.toNumber(), 2 * MIN_FIRST_DEPOSIT);
         });
 
         it("Can deposit to Vault 3 (WSOL) - different decimals", async () => {
@@ -397,8 +399,8 @@ describe("multi-vault", () => {
             assert.deepEqual(vault3.shareMint, vault3ShareMint);
 
             // Each vault has independent AUM
-            assert.equal(vault1.localAum.toNumber(), 1_000_000);
-            assert.equal(vault2.localAum.toNumber(), 2_000_000);
+            assert.equal(vault1.localAum.toNumber(), MIN_FIRST_DEPOSIT);
+            assert.equal(vault2.localAum.toNumber(), 2 * MIN_FIRST_DEPOSIT);
             assert.equal(vault3.localAum.toNumber(), 1_000_000_000);
         });
 

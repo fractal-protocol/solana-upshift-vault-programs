@@ -30,6 +30,11 @@ import { redactEndpoint } from './helpers/redact.mjs';
 const MIN_SHARE_OFFSET = 1_000;
 const MAX_SHARE_OFFSET = 1_000_000;
 const DEFAULT_SHARE_OFFSET = 1_000_000;
+/// Mirror of `MIN_SUPPLY_MULTIPLE`. Named rather than inlined into the message
+/// below so `scripts/check-references.mjs` can cross-check it: it is what the
+/// pre-flight quotes as the minimum first deposit, right before an operator
+/// commits several SOL.
+const MIN_SUPPLY_MULTIPLE = 100;
 function isValidShareOffset(v) {
   if (!Number.isInteger(v) || v < MIN_SHARE_OFFSET || v > MAX_SHARE_OFFSET) return false;
   let p = 1;
@@ -379,7 +384,7 @@ async function deployProgram(config, deployer, programId) {
     `Share offset: ${config.vaultConfig.shareOffset.toLocaleString()}` +
     `${config.vaultConfig.shareOffset === DEFAULT_SHARE_OFFSET ? ' (default)' : ''}` +
     ` -> minimum first deposit ${(
-      100 * config.vaultConfig.shareOffset
+      MIN_SUPPLY_MULTIPLE * config.vaultConfig.shareOffset
     ).toLocaleString()} base units (or the mint's decimals floor, whichever is larger)`
   );
     logWarning('This may take several minutes and cost 2-5 SOL');
