@@ -292,8 +292,8 @@ impl VaultState {
     ///
     /// A vault in that residual state therefore needs a proportionally larger
     /// deposit to reopen, and says so with `InsufficientAmount` rather than
-    /// `ZeroAmount`. `operator_withdraw` can drain the residual to restore the
-    /// empty state if reopening at 1:1 is preferred.
+    /// `ZeroAmount`. `operator_withdraw` alone does NOT restore a 1:1 reopen —
+    /// it leaves `total_assets` unchanged; the residual tests show what does.
     pub fn min_opening_supply(&self) -> u64 {
         u64::try_from(MIN_SUPPLY_MULTIPLE.saturating_mul(self.share_offset())).unwrap_or(u64::MAX)
     }

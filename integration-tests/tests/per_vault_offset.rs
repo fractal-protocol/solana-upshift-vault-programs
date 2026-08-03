@@ -337,3 +337,126 @@ fn residual_assets_at_zero_supply_do_not_break_the_opening_floor() {
         "the vault must open at or above min_opening_supply"
     );
 }
+
+/// Build the residual state the way it actually arises: deposit, then burn the
+/// entire supply through SPL Token, bypassing the vault. Supply reaches 0 while
+/// the reserve and `local_aum` are untouched.
+fn residual_vault_at_zero_supply() -> VaultCtx {
+    let mut ctx = VaultCtx::fresh();
+    let seed = harness_min_first_deposit();
+    let holder = ctx.new_depositor(seed);
+    ctx.deposit_as(&holder, seed).expect("seed deposit");
+
+    let held = ctx.token_account_amount(&holder.share_ata);
+    ctx.burn_shares_as(&holder, held);
+    assert_eq!(
+        ctx.share_mint_supply(),
+        0,
+        "the whole supply must be burned"
+    );
+    assert_eq!(
+        ctx.vault_state_data().total_assets().unwrap(),
+        seed,
+        "burning shares must not touch recorded assets"
+    );
+    ctx
+}
+
+/// `operator_withdraw` does **not** clear the residual — raised by Certora on
+/// review, and it corrects a claim this file's comments used to make.
+///
+/// The handler does `local_aum -= amount; deployed_aum += amount`, so
+/// `total_assets` is preserved: the tokens leave the reserve but the *accounting*
+/// is only relocated between the two buckets. `shares_for_deposit` keys its 1:1
+/// branch on `total_assets == 0`, so a withdraw alone leaves the vault exactly as
+/// hard to reopen as before.
+///
+/// Reporting the assets away is separately gated: `operator_update_aum` requires
+/// `new_aum * 10_000 >= (10_000 - aum_decrease_limit) * deployed_aum`, so
+/// `new_aum = 0` against a non-zero `deployed_aum` passes only when
+/// `aum_decrease_limit` is exactly `BPS_DENOMINATOR`. At the 20 bps default it is
+/// refused.
+#[test]
+fn operator_withdraw_alone_does_not_clear_the_residual() {
+    let mut ctx = residual_vault_at_zero_supply();
+    let before = ctx.vault_state_data().total_assets().unwrap();
+
+    let local = ctx.vault_state_data().local_aum;
+    assert!(local > 0, "precondition: the residual sits in local_aum");
+    ctx.operator_withdraw(local)
+        .expect("operator withdraws all");
+
+    let state = ctx.vault_state_data();
+    assert_eq!(
+        state.total_assets().unwrap(),
+        before,
+        "operator_withdraw must leave total_assets unchanged — it relocates \
+         local_aum into deployed_aum, it does not reduce the total"
+    );
+    assert_eq!(state.local_aum, 0, "local_aum drained");
+    assert_eq!(state.deployed_aum, before, "…into deployed_aum");
+    assert_eq!(ctx.share_mint_supply(), 0, "still no shares");
+
+    // So the vault is no easier to reopen than before the withdraw.
+    let advertised = state.min_first_deposit(DEPOSIT_DECIMALS);
+    let d = ctx.new_depositor(advertised);
+    let err = ctx
+        .deposit_as(&d, advertised)
+        .expect_err("a withdraw does not restore the 1:1 opening");
+    assert_anchor_err(&err, ErrorCode::InsufficientAmount);
+
+    // And writing the assets off is refused at the default limits.
+    assert!(
+        ctx.vault_state_data().aum_decrease_limit < 10_000,
+        "precondition: the default decrease limit is not already 100%"
+    );
+    let err = ctx
+        .operator_update_aum(0)
+        .expect_err("a 100% AUM decrease must be refused at the default limits");
+    assert_anchor_err(&err, ErrorCode::AumDecreaseTooBig);
+}
+
+/// The procedure that *does* restore a 1:1 reopen, per Certora's correction:
+/// widen `aum_decrease_limit` to 100%, withdraw, then report `deployed_aum = 0`.
+///
+/// Note what the third step is: an **write-off**, not a transfer back. The tokens
+/// are in the operator's account and the vault stops accounting for them. At zero
+/// supply no shareholder holds a claim on that residual, so nothing is taken from
+/// a user — but it is unowned on-chain value moved off-book, which makes this a
+/// deliberate governance action rather than routine cleanup. Two roles are
+/// required (admin for the limit, operator for the withdraw and the report).
+#[test]
+fn clearing_the_residual_takes_a_widened_limit_and_an_aum_write_off() {
+    let mut ctx = residual_vault_at_zero_supply();
+    let residual = ctx.vault_state_data().total_assets().unwrap();
+
+    // 1. Admin permits a full reduction.
+    ctx.set_aum_limits(20, 10_000)
+        .expect("admin may widen the decrease limit to 100%");
+    // 2. Operator moves the reserve out; total_assets still unchanged.
+    ctx.operator_withdraw(ctx.vault_state_data().local_aum)
+        .expect("operator withdraws the reserve");
+    assert_eq!(ctx.vault_state_data().total_assets().unwrap(), residual);
+    // 3. Operator writes the residual off.
+    ctx.operator_update_aum(0)
+        .expect("a full decrease is permitted once the limit allows it");
+
+    let state = ctx.vault_state_data();
+    assert_eq!(
+        state.total_assets().unwrap(),
+        0,
+        "all three steps together must clear the residual"
+    );
+    assert_eq!(ctx.share_mint_supply(), 0);
+
+    // Now — and only now — the advertised minimum reopens the vault 1:1.
+    let advertised = state.min_first_deposit(DEPOSIT_DECIMALS);
+    let d = ctx.new_depositor(advertised);
+    ctx.deposit_as(&d, advertised)
+        .expect("an empty vault opens at the advertised minimum");
+    assert_eq!(
+        ctx.token_account_amount(&d.share_ata),
+        advertised,
+        "a genuinely empty vault mints 1:1"
+    );
+}
