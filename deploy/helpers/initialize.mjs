@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // Copyright (C) 2026 Fractal Network Ltd
 //
 // Use of this software is governed by the Business Source License
@@ -5,8 +6,6 @@
 //
 // As of 10 March 2036 (the "Change Date"), use of this software will be
 // governed by version 2.0 of the Apache License.
-
-#!/usr/bin/env node
 
 /**
  * Initialize an already-deployed vault
@@ -38,8 +37,7 @@ const logInfo = (msg) => log(`ℹ️  ${msg}`, 'cyan');
 const programId = process.argv[2] || '6fLGeBBKZrLVhvnbdeu9v8xo5HTrBCxHebi2247cBprD';
 
 async function main() {
-  log('
-🚀 Vault Initialization', 'green');
+  log('\n🚀 Vault Initialization', 'green');
   log(`Program ID: ${programId}
 `, 'cyan');
 
@@ -122,8 +120,7 @@ async function main() {
     log(`Share Mint: ${shareMint.toBase58()}`, 'cyan');
 
     // Create metadata
-    logInfo('
-Creating share token metadata...');
+    logInfo('\nCreating share token metadata...');
     
     const TOKEN_METADATA_PROGRAM_ID = new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
     const [metadataAccount] = PublicKey.findProgramAddressSync(
@@ -158,8 +155,7 @@ Creating share token metadata...');
     log(`Transaction: ${metadataTx}
 `, 'cyan');
 
-    log('✅ Vault fully initialized and ready to use! 🎉
-', 'green');
+    log('✅ Vault fully initialized and ready to use! 🎉\n', 'green');
     
     const explorerBase = 'https://explorer.solana.com';
     const cluster = config.network === 'mainnet' ? '' : `?cluster=${config.network}`;
@@ -172,8 +168,7 @@ Creating share token metadata...');
   } catch (error) {
     logError(`Failed: ${error.message}`);
     if (error.logs) {
-      console.log('
-Program logs:');
+      console.log('\nProgram logs:');
       error.logs.forEach(log => console.log(log));
     }
     process.exit(1);

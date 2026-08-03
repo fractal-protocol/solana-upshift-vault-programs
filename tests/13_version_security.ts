@@ -14,6 +14,7 @@ import * as token from "@solana/spl-token";
 import * as assert from "assert";
 import { sha256 } from "js-sha256";
 import BN from "bn.js";
+import { protocolAuthority, ensureProgramConfig } from "./helper/program-config";
 
 /**
  * Version Security Test Suite
@@ -60,6 +61,9 @@ describe("version-security", () => {
     }
 
     before(async () => {
+        // Vault creation is gated on the ProgramConfig authority; whichever
+        // suite runs first bootstraps it for the shared validator.
+        await ensureProgramConfig(vaultProgram);
         // Airdrop to all accounts
         const airdropPromises = [deployer, operator, admin].map(async (kp) => {
             const sig = await connection.requestAirdrop(kp.publicKey, 100 * LAMPORTS_PER_SOL);
@@ -160,10 +164,10 @@ describe("version-security", () => {
                     shareMint: v0ShareMint,
                     vaultTokenAta: v0TokenAta,
                     depositMint: depositMint,
-                    signer: deployer.publicKey,
+                    signer: protocolAuthority.publicKey,
                     tokenProgram: token.TOKEN_PROGRAM_ID,
                 })
-                .signers([deployer])
+                .signers([protocolAuthority])
                 .rpc();
 
             const vault = await vaultProgram.account.vaultState.fetch(v0StatePda);
@@ -178,10 +182,10 @@ describe("version-security", () => {
                     shareMint: v1ShareMint,
                     vaultTokenAta: v1TokenAta,
                     depositMint: depositMint,
-                    signer: deployer.publicKey,
+                    signer: protocolAuthority.publicKey,
                     tokenProgram: token.TOKEN_PROGRAM_ID,
                 })
-                .signers([deployer])
+                .signers([protocolAuthority])
                 .rpc();
 
             const vault = await vaultProgram.account.vaultState.fetch(v1StatePda);
@@ -503,10 +507,10 @@ describe("version-security", () => {
                     shareMint: v0ShareMint,
                     vaultTokenAta: v0TokenAta,
                     depositMint: depositMint,
-                    signer: deployer.publicKey,
+                    signer: protocolAuthority.publicKey,
                     tokenProgram: token.TOKEN_PROGRAM_ID,
                 })
-                .signers([deployer])
+                .signers([protocolAuthority])
                 .rpc();
 
             // Create user share ATA for version 0
@@ -815,10 +819,10 @@ describe("version-security", () => {
                     shareMint: v0ShareMint,
                     vaultTokenAta: v0TokenAta,
                     depositMint: depositMint,
-                    signer: deployer.publicKey,
+                    signer: protocolAuthority.publicKey,
                     tokenProgram: token.TOKEN_PROGRAM_ID,
                 })
-                .signers([deployer])
+                .signers([protocolAuthority])
                 .rpc();
         });
 
@@ -920,10 +924,10 @@ describe("version-security", () => {
                         shareMint: v0ShareMint,
                         vaultTokenAta: v0TokenAta,
                         depositMint: depositMint,
-                        signer: deployer.publicKey,
+                        signer: protocolAuthority.publicKey,
                         tokenProgram: token.TOKEN_PROGRAM_ID,
                     })
-                    .signers([deployer])
+                    .signers([protocolAuthority])
                     .rpc();
 
                 const vault = await vaultProgram.account.vaultState.fetch(v0StatePda);
@@ -1019,10 +1023,10 @@ describe("version-security", () => {
                         shareMint: v255ShareMint,
                         vaultTokenAta: v255TokenAta,
                         depositMint: depositMint,
-                        signer: deployer.publicKey,
+                        signer: protocolAuthority.publicKey,
                         tokenProgram: token.TOKEN_PROGRAM_ID,
                     })
-                    .signers([deployer])
+                    .signers([protocolAuthority])
                     .rpc();
 
                 const vault = await vaultProgram.account.vaultState.fetch(v255StatePda);
@@ -1140,10 +1144,10 @@ describe("version-security", () => {
                         shareMint: v5ShareMint,
                         vaultTokenAta: v5TokenAta,
                         depositMint: depositMint,
-                        signer: deployer.publicKey,
+                        signer: protocolAuthority.publicKey,
                         tokenProgram: token.TOKEN_PROGRAM_ID,
                     })
-                    .signers([deployer])
+                    .signers([protocolAuthority])
                     .rpc();
             });
 

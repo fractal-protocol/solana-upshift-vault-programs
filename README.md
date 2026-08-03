@@ -13,17 +13,28 @@ A share-based vault on Solana built with Anchor. Users deposit an SPL token and 
 
 ## Roles
 
-| Role         | Capabilities                                                        |
-|--------------|---------------------------------------------------------------------|
-| **User**     | Deposit tokens, redeem shares                                       |
-| **Operator** | Withdraw/deposit funds, report deployed AUM                         |
-| **Admin**    | Update fees, operator, admin (two-step), fee recipient, pause/unpause |
+| Role                   | Capabilities                                                        |
+|------------------------|---------------------------------------------------------------------|
+| **User**               | Deposit tokens, redeem shares                                       |
+| **Operator**           | Withdraw/deposit funds, report deployed AUM                         |
+| **Admin**              | Update fees, operator, admin (two-step), fee recipient, pause/unpause |
+| **Protocol authority** | Create vaults. Program-wide (not per-vault), stored in `ProgramConfig`. Rotatable by itself, resettable by the upgrade authority. |
+| **Upgrade authority**  | Upgrade the program; create `ProgramConfig`; reset the protocol authority |
+
+Vault creation is **permissioned**. `ProgramConfig` is a singleton PDA naming the
+one key allowed to call `initialize`; it is created once by the program's upgrade
+authority. Until it exists, `initialize` fails closed. Note that a
+`(deposit_mint, vault_version)` pair cannot be reused once its vault is closed,
+so each deposit mint has a finite number of vault lifecycles.
 
 ## Instructions
 
 | Instruction              | Access   | Description                                          |
 |--------------------------|----------|------------------------------------------------------|
-| `initialize`             | Deployer | Create vault, share mint, set roles                  |
+| `initialize_config`      | Upgrade authority | Create the singleton `ProgramConfig` (once)  |
+| `set_config_authority`   | Protocol authority | Rotate the vault-creation authority         |
+| `override_config_authority` | Upgrade authority | Reset the vault-creation authority (recovery) |
+| `initialize`             | Protocol authority | Create vault, share mint, set roles         |
 | `deposit`                | User     | Deposit tokens, receive shares                       |
 | `redeem`                 | User     | Burn shares, receive tokens (minus fee)              |
 | `operator_withdraw`      | Operator | Withdraw tokens for external deployment              |

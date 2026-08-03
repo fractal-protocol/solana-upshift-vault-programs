@@ -11,6 +11,7 @@ import {Program} from "@coral-xyz/anchor";
 import {AugustVault} from "../../target/types/august_vault";
 import {PublicKey, LAMPORTS_PER_SOL, Connection, Keypair, SystemProgram} from "@solana/web3.js";
 import {sha256} from "js-sha256"
+import {protocolAuthority, ensureProgramConfig} from "./program-config";
 import * as token from "@solana/spl-token"
 import {getOrCreateAssociatedTokenAccount} from "@solana/spl-token";
 
@@ -171,6 +172,8 @@ export class VaultContext {
     }
 
     async init_vault() {
+        // Vault creation is gated on the ProgramConfig authority.
+        await ensureProgramConfig(this.vaultProgram);
         const vaultVersion = 0;
         await this.vaultProgram.methods.initialize(this.admin.publicKey, this.operator.publicKey, this.feeRecipient.publicKey, vaultVersion)
             .accounts({
@@ -178,10 +181,10 @@ export class VaultContext {
                 shareMint: this.shareMint,
                 vaultTokenAta: this.vaultUsdgAta,
                 depositMint: this.usdgTokenMint,
-                signer: this.deployer.publicKey,
+                signer: protocolAuthority.publicKey,
                 tokenProgram: token.TOKEN_PROGRAM_ID
             })
-            .signers([this.deployer])
+            .signers([protocolAuthority])
             .rpc()
     }
 }

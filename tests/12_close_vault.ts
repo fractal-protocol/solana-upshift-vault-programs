@@ -14,6 +14,7 @@ import * as token from "@solana/spl-token";
 import * as assert from "assert";
 import { sha256 } from "js-sha256";
 import BN from "bn.js";
+import { protocolAuthority, ensureProgramConfig } from "./helper/program-config";
 
 describe("august-vault-close-vault", () => {
     anchor.setProvider(anchor.AnchorProvider.env());
@@ -36,6 +37,9 @@ describe("august-vault-close-vault", () => {
     let currentVaultVersion: number = 0;
 
     before(async () => {
+        // Vault creation is gated on the ProgramConfig authority; whichever
+        // suite runs first bootstraps it for the shared validator.
+        await ensureProgramConfig(vaultProgram);
         // Airdrop to all accounts
         const airdropPromises = [deployer, operator, admin, nonAdmin].map(async (kp) => {
             const sig = await connection.requestAirdrop(kp.publicKey, 10 * LAMPORTS_PER_SOL);
@@ -87,10 +91,10 @@ describe("august-vault-close-vault", () => {
                 shareMint: shareMint,
                 vaultTokenAta: vaultTokenAta,
                 depositMint: depositMint,
-                signer: deployer.publicKey,
+                signer: protocolAuthority.publicKey,
                 tokenProgram: token.TOKEN_PROGRAM_ID,
             })
-            .signers([deployer])
+            .signers([protocolAuthority])
             .rpc();
     }
 
@@ -321,10 +325,10 @@ describe("august-vault-close-vault", () => {
                     shareMint: newShareMint,
                     vaultTokenAta: newVaultTokenAta,
                     depositMint: depositMint,
-                    signer: deployer.publicKey,
+                    signer: protocolAuthority.publicKey,
                     tokenProgram: token.TOKEN_PROGRAM_ID,
                 })
-                .signers([deployer])
+                .signers([protocolAuthority])
                 .rpc();
 
             // Verify new vault exists

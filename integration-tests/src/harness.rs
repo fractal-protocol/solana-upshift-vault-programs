@@ -6,13 +6,20 @@ use august_vault::{
     accounts as ix_accounts,
     errors::ErrorCode,
     instruction as ix_data,
+    state::config::PROGRAM_CONFIG_SEED,
     state::nominated_admin::NOMINATED_ADMIN_PDA_SEED,
     state::vault::{
         FEE_RATE_DENOMINATOR_VALUE, SHARE_MINT_SEED, VAULT_STATE_SEED, VAULT_TOKEN_SEED,
     },
 };
 use litesvm::{types::FailedTransactionMetadata, LiteSVM};
+// `solana_sdk::bpf_loader_upgradeable` is deprecated in favour of the
+// `solana-loader-v3-interface` crate. We keep it rather than add a dependency
+// for two constants used only by the ProgramData test fixture below.
+#[allow(deprecated)]
+use solana_sdk::bpf_loader_upgradeable::{self, UpgradeableLoaderState};
 use solana_sdk::{
+    account::Account as SolanaAccount,
     instruction::{Instruction, InstructionError},
     program_pack::Pack,
     pubkey::Pubkey,
@@ -60,6 +67,10 @@ pub struct VaultCtx {
     /// the program ID passed to instruction CPIs.
     pub(crate) token_program: TokenProgramKind,
     pub payer: Keypair,
+    /// The `ProgramConfig` authority — the only key allowed to call
+    /// `initialize`. Tests that need an unauthorized creator should use
+    /// [`Self::new_funded_keypair`] instead.
+    pub protocol_authority: Keypair,
     pub admin: Keypair,
     pub operator: Keypair,
     pub fee_recipient: Keypair,
@@ -96,6 +107,13 @@ impl VaultCtx {
         .expect("load august_vault.so — run `anchor build` first");
 
         let payer = airdrop_keypair(&mut svm, 100_000_000_000);
+        // Vault creation is gated on the ProgramConfig authority, and the config
+        // itself can only be bootstrapped by the program's upgrade authority.
+        // LiteSVM loads programs under the non-upgradeable loader, so there is
+        // no real ProgramData account — we install one naming this keypair.
+        let protocol_authority = airdrop_keypair(&mut svm, 10_000_000_000);
+        install_program_data(&mut svm, &protocol_authority.pubkey());
+        initialize_program_config(&mut svm, &protocol_authority);
         let admin = airdrop_keypair(&mut svm, 1_000_000_000);
         let operator = airdrop_keypair(&mut svm, 1_000_000_000);
         let fee_recipient = airdrop_keypair(&mut svm, 1_000_000_000);
@@ -112,34 +130,28 @@ impl VaultCtx {
         );
         let deposit_mint = deposit_mint_kp.pubkey();
 
-        let (vault_state, _) = derive_vault_state(&deposit_mint);
-        let (share_mint, _) = derive_share_mint(&deposit_mint);
-        let (vault_token_pda, _) = derive_vault_token_pda(&deposit_mint);
+        let (vault_state, _) = derive_vault_state(&deposit_mint, VAULT_VERSION);
+        let (share_mint, _) = derive_share_mint(&deposit_mint, VAULT_VERSION);
+        let (vault_token_pda, _) = derive_vault_token_pda(&deposit_mint, VAULT_VERSION);
 
-        // Initialize the vault. Anyone can call this in the current program — see
-        // CLAUDE.md §2.5; we exploit that here just to set up the test fixture.
-        let init_ix = Instruction {
-            program_id: august_vault::ID,
-            accounts: ix_accounts::Initialize {
-                vault_state,
-                share_mint,
-                vault_token_ata: vault_token_pda,
-                deposit_mint,
-                signer: payer.pubkey(),
-                system_program: solana_sdk::system_program::ID,
-                token_program: token_program.id(),
-                rent: solana_sdk::sysvar::rent::ID,
-            }
-            .to_account_metas(None),
-            data: ix_data::Initialize {
-                admin: admin.pubkey(),
-                operator: operator.pubkey(),
-                fee_recipient: fee_recipient.pubkey(),
-                vault_version: VAULT_VERSION,
-            }
-            .data(),
-        };
-        send_tx(&mut svm, &payer, &[init_ix], &[&payer]).expect("initialize vault");
+        // Initialize the vault as the protocol authority.
+        let init_ix = initialize_ix(
+            deposit_mint,
+            VAULT_VERSION,
+            &protocol_authority.pubkey(),
+            &protocol_authority.pubkey(),
+            admin.pubkey(),
+            operator.pubkey(),
+            fee_recipient.pubkey(),
+            token_program,
+        );
+        send_tx(
+            &mut svm,
+            &protocol_authority,
+            &[init_ix],
+            &[&protocol_authority],
+        )
+        .expect("initialize vault");
 
         let user_deposit_ata = create_ata(
             &mut svm,
@@ -169,6 +181,7 @@ impl VaultCtx {
             svm,
             token_program,
             payer,
+            protocol_authority,
             admin,
             operator,
             fee_recipient,
@@ -661,6 +674,131 @@ impl VaultCtx {
         airdrop_keypair(&mut self.svm, lamports)
     }
 
+    /// The singleton program-config PDA.
+    pub fn program_config_pda(&self) -> Pubkey {
+        program_config_pda()
+    }
+
+    /// Deserialized program config.
+    pub fn program_config(&self) -> august_vault::state::config::ProgramConfig {
+        use anchor_lang::AccountDeserialize;
+        let acct = self
+            .svm
+            .get_account(&program_config_pda())
+            .expect("program config exists");
+        august_vault::state::config::ProgramConfig::try_deserialize(&mut acct.data.as_slice())
+            .expect("valid program config")
+    }
+
+    /// Create an additional deposit mint, so namespace tests can initialize
+    /// vaults without colliding with the harness's own vault.
+    pub fn create_extra_deposit_mint(&mut self) -> Pubkey {
+        let payer = self.payer.insecure_clone();
+        let mint_kp = Keypair::new();
+        create_mint(
+            &mut self.svm,
+            &payer,
+            &mint_kp,
+            &payer.pubkey(),
+            DEPOSIT_DECIMALS,
+            self.token_program,
+        );
+        mint_kp.pubkey()
+    }
+
+    /// Attempt `initialize` for an arbitrary `(deposit_mint, vault_version)`
+    /// signed by `signer`, who also pays. Returns the transaction result so
+    /// negative tests can assert on the failure.
+    pub fn try_initialize_vault(
+        &mut self,
+        signer: &Keypair,
+        deposit_mint: Pubkey,
+        vault_version: u8,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let payer = signer.insecure_clone();
+        self.try_initialize_vault_paid_by(signer, &payer, deposit_mint, vault_version)
+    }
+
+    /// As above, with the rent payer separate from the authorizing signer — the
+    /// shape a cold or MPC-held protocol authority would use.
+    pub fn try_initialize_vault_paid_by(
+        &mut self,
+        signer: &Keypair,
+        payer: &Keypair,
+        deposit_mint: Pubkey,
+        vault_version: u8,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let ix = initialize_ix(
+            deposit_mint,
+            vault_version,
+            &signer.pubkey(),
+            &payer.pubkey(),
+            self.admin.pubkey(),
+            self.operator.pubkey(),
+            self.fee_recipient.pubkey(),
+            self.token_program,
+        );
+        // `payer` pays the fee so an intentionally-broke `signer` still reaches
+        // the program instead of failing pre-flight.
+        send_tx(&mut self.svm, payer, &[ix], &[signer, payer]).map(|_| ())
+    }
+
+    /// `override_config_authority` signed by an arbitrary keypair, which must be
+    /// the upgrade authority named by the installed `ProgramData`.
+    pub fn override_config_authority_as(
+        &mut self,
+        signer: &Keypair,
+        new_authority: Pubkey,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts: ix_accounts::OverrideConfigAuthority {
+                program_config: program_config_pda(),
+                upgrade_authority: signer.pubkey(),
+                program_data: program_data_pda(),
+            }
+            .to_account_metas(None),
+            data: ix_data::OverrideConfigAuthority { new_authority }.data(),
+        };
+        self.send_as(signer, ix)
+    }
+
+    /// `set_config_authority` signed by an arbitrary keypair.
+    pub fn set_config_authority_as(
+        &mut self,
+        signer: &Keypair,
+        new_authority: Pubkey,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts: ix_accounts::SetConfigAuthority {
+                program_config: program_config_pda(),
+                authority: signer.pubkey(),
+            }
+            .to_account_metas(None),
+            data: ix_data::SetConfigAuthority { new_authority }.data(),
+        };
+        self.send_as(signer, ix)
+    }
+
+    /// Attempt `initialize_config` signed by `signer`. The harness already
+    /// bootstrapped the config, so this exists for negative tests (wrong
+    /// upgrade authority, double-initialization).
+    pub fn try_initialize_config_as(
+        &mut self,
+        signer: &Keypair,
+        authority: Pubkey,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let ix = initialize_config_ix(&signer.pubkey(), authority);
+        self.send_as(signer, ix)
+    }
+
+    /// Rewrite the installed `ProgramData` fixture to name a different upgrade
+    /// authority, mirroring an upgrade-authority rotation on a real cluster.
+    pub fn set_program_data_upgrade_authority(&mut self, authority: &Pubkey) {
+        install_program_data(&mut self.svm, authority);
+    }
+
     /// Create an ATA for `owner` on the vault's deposit mint, returning its
     /// address. Impostor operator tests need this so the ATA-derivation
     /// constraint resolves and the access-control check is what fires.
@@ -718,6 +856,28 @@ impl VaultCtx {
         SplAccount::unpack(&acct.data[..SplAccount::LEN])
             .expect("valid token account")
             .amount
+    }
+
+    /// The share mint's current mint authority, `None` once `close_vault` has
+    /// revoked it.
+    pub fn share_mint_authority(&self) -> Option<Pubkey> {
+        let acct = self
+            .svm
+            .get_account(&self.share_mint)
+            .expect("share mint exists");
+        SplMint::unpack(&acct.data[..SplMint::LEN])
+            .expect("valid mint")
+            .mint_authority
+            .into()
+    }
+
+    /// The three PDAs a `(deposit_mint, vault_version)` pair occupies.
+    pub fn vault_pdas(&self, deposit_mint: Pubkey, vault_version: u8) -> [Pubkey; 3] {
+        [
+            derive_vault_state(&deposit_mint, vault_version).0,
+            derive_share_mint(&deposit_mint, vault_version).0,
+            derive_vault_token_pda(&deposit_mint, vault_version).0,
+        ]
     }
 
     pub fn share_mint_supply(&self) -> u64 {
@@ -796,6 +956,127 @@ impl VaultCtx {
     }
 }
 
+/// A fresh SVM with the program loaded and a `ProgramData` fixture installed,
+/// but **no program config and no vault**.
+///
+/// [`VaultCtx::fresh`] bootstraps the config as part of setup, which would mask
+/// the authorization check on `initialize_config` behind an "account already in
+/// use" failure. Tests that exercise the bootstrap itself start from here.
+pub struct BareCtx {
+    pub svm: LiteSVM,
+    /// The key named as upgrade authority by the installed `ProgramData`.
+    pub upgrade_authority: Keypair,
+}
+
+impl BareCtx {
+    pub fn new() -> Self {
+        let mut svm = LiteSVM::new();
+        svm.add_program(
+            august_vault::ID,
+            include_bytes!("../../target/deploy/august_vault.so"),
+        )
+        .expect("load august_vault.so — run `anchor build` first");
+        let upgrade_authority = airdrop_keypair(&mut svm, 10_000_000_000);
+        install_program_data(&mut svm, &upgrade_authority.pubkey());
+        Self {
+            svm,
+            upgrade_authority,
+        }
+    }
+
+    pub fn new_funded_keypair(&mut self, lamports: u64) -> Keypair {
+        airdrop_keypair(&mut self.svm, lamports)
+    }
+
+    /// `initialize_config` signed by `signer`, who also pays.
+    pub fn try_initialize_config_as(
+        &mut self,
+        signer: &Keypair,
+        authority: Pubkey,
+    ) -> Result<(), FailedTransactionMetadata> {
+        self.try_initialize_config_with_program_data(signer, authority, program_data_pda())
+    }
+
+    /// As above, but with an arbitrary account passed as `program_data` — so a
+    /// test can try to present some other program's `ProgramData`.
+    pub fn try_initialize_config_with_program_data(
+        &mut self,
+        signer: &Keypair,
+        authority: Pubkey,
+        program_data: Pubkey,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts: ix_accounts::InitializeConfig {
+                program_config: program_config_pda(),
+                upgrade_authority: signer.pubkey(),
+                payer: signer.pubkey(),
+                program_data,
+                system_program: solana_sdk::system_program::ID,
+            }
+            .to_account_metas(None),
+            data: ix_data::InitializeConfig { authority }.data(),
+        };
+        send_tx(&mut self.svm, signer, &[ix], &[signer]).map(|_| ())
+    }
+
+    /// Install a `ProgramData` fixture at an arbitrary address, for spoofing
+    /// tests.
+    pub fn install_foreign_program_data(&mut self, address: Pubkey, upgrade_authority: &Pubkey) {
+        install_program_data_at(&mut self.svm, address, upgrade_authority);
+    }
+
+    /// Drop the program's upgrade authority, modelling an immutable program.
+    pub fn make_program_immutable(&mut self) {
+        write_program_data(&mut self.svm, program_data_pda(), None);
+    }
+
+    /// Attempt `initialize` on a program whose config has never been created,
+    /// with a fully funded signer so the only possible objection is the missing
+    /// config. Pins the "fails closed until bootstrapped" property.
+    pub fn try_initialize_vault_without_config(&mut self) -> Result<(), FailedTransactionMetadata> {
+        let payer = airdrop_keypair(&mut self.svm, 100_000_000_000);
+        let mint_kp = Keypair::new();
+        create_mint(
+            &mut self.svm,
+            &payer,
+            &mint_kp,
+            &payer.pubkey(),
+            DEPOSIT_DECIMALS,
+            TokenProgramKind::Spl,
+        );
+        let ix = initialize_ix(
+            mint_kp.pubkey(),
+            VAULT_VERSION,
+            &payer.pubkey(),
+            &payer.pubkey(),
+            payer.pubkey(),
+            payer.pubkey(),
+            payer.pubkey(),
+            TokenProgramKind::Spl,
+        );
+        send_tx(&mut self.svm, &payer, &[ix], &[&payer]).map(|_| ())
+    }
+
+    pub fn program_config(&self) -> Option<august_vault::state::config::ProgramConfig> {
+        use anchor_lang::AccountDeserialize;
+        let acct = self.svm.get_account(&program_config_pda())?;
+        if acct.data.is_empty() {
+            return None;
+        }
+        Some(
+            august_vault::state::config::ProgramConfig::try_deserialize(&mut acct.data.as_slice())
+                .expect("valid program config"),
+        )
+    }
+}
+
+impl Default for BareCtx {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// A snapshot of every state slot the CEI invariant covers. The CEI property
 /// says: when a failure-mode `require!` fires, every slot here is unchanged.
 ///
@@ -843,26 +1124,44 @@ pub fn expected_withdrawal_fee(assets: u64, fee_rate: u32) -> u64 {
     numerator.div_ceil(FEE_RATE_DENOMINATOR_VALUE as u128) as u64
 }
 
+/// Assert a raw Anchor **framework** error code (the 2000/3000 ranges), for
+/// failures that are not program `ErrorCode` variants — e.g. 3012
+/// `AccountNotInitialized` or 2006 `ConstraintSeeds`.
+pub fn assert_anchor_framework_err(err: &FailedTransactionMetadata, expected_code: u32) {
+    assert_custom_code(
+        err,
+        expected_code,
+        &format!("framework code {expected_code}"),
+    );
+}
+
 /// Assert that a failed transaction's underlying error is the given
 /// `ErrorCode` variant. Reads the raw `InstructionError::Custom(code)` from
 /// the transaction-level error so we never depend on log-message wording.
 /// See [`vault_error_code`] for the variant-order caveat this inherits.
 pub fn assert_anchor_err(err: &FailedTransactionMetadata, expected: ErrorCode) {
     let expected_code = vault_error_code(expected);
+    assert_custom_code(err, expected_code, &format!("{expected:?}"));
+}
+
+/// Shared by [`assert_anchor_err`] and [`assert_anchor_framework_err`]:
+/// pull `InstructionError::Custom(code)` off the transaction-level error and
+/// compare it, so neither depends on log-message wording.
+fn assert_custom_code(err: &FailedTransactionMetadata, expected_code: u32, label: &str) {
     match &err.err {
         TransactionError::InstructionError(_, InstructionError::Custom(code)) => {
             assert_eq!(
                 *code,
                 expected_code,
-                "expected {:?} (code {}), got code {}; logs:\n{}",
-                expected,
+                "expected {} (code {}), got code {}; logs:\n{}",
+                label,
                 expected_code,
                 code,
                 err.meta.logs.join("\n"),
             );
         }
         other => panic!(
-            "expected Custom instruction error, got {other:?}; logs:\n{}",
+            "expected Custom instruction error for {label}, got {other:?}; logs:\n{}",
             err.meta.logs.join("\n")
         ),
     }
@@ -975,25 +1274,136 @@ fn send_tx(
     svm.send_transaction(tx)
 }
 
+// ---- program config bootstrap ----
+
+/// The singleton program-config PDA.
+pub fn program_config_pda() -> Pubkey {
+    Pubkey::find_program_address(&[PROGRAM_CONFIG_SEED], &august_vault::ID).0
+}
+
+/// The loader-derived `ProgramData` address for this program.
+fn program_data_pda() -> Pubkey {
+    Pubkey::find_program_address(&[august_vault::ID.as_ref()], &bpf_loader_upgradeable::ID).0
+}
+
+/// Install a `ProgramData` account naming `upgrade_authority`.
+///
+/// LiteSVM's `add_program` installs programs under the non-upgradeable loader,
+/// so no real `ProgramData` exists and `initialize_config` (which authenticates
+/// against it) could not otherwise be exercised. The bytes are the bincode form
+/// of `UpgradeableLoaderState::ProgramData`: a 4-byte enum index (3), an 8-byte
+/// slot, then `Option<Pubkey>` as a 1-byte `Some` tag plus the 32-byte key.
+fn install_program_data(svm: &mut LiteSVM, upgrade_authority: &Pubkey) {
+    install_program_data_at(svm, program_data_pda(), upgrade_authority);
+}
+
+fn install_program_data_at(svm: &mut LiteSVM, address: Pubkey, upgrade_authority: &Pubkey) {
+    write_program_data(svm, address, Some(upgrade_authority));
+}
+
+/// `upgrade_authority = None` models an **immutable** program (deployed or set
+/// with `--final`), which is a materially different state from "some other key
+/// holds it": `Some(signer)` can never equal `None`, so no one at all can pass
+/// the `initialize_config` check.
+fn write_program_data(svm: &mut LiteSVM, address: Pubkey, upgrade_authority: Option<&Pubkey>) {
+    const PROGRAM_DATA_VARIANT: u32 = 3;
+    let mut data = vec![0u8; UpgradeableLoaderState::size_of_programdata_metadata()];
+    data[0..4].copy_from_slice(&PROGRAM_DATA_VARIANT.to_le_bytes());
+    // data[4..12] is the deployment slot; 0 is fine, nothing reads it.
+    if let Some(authority) = upgrade_authority {
+        data[12] = 1; // Option::Some
+        data[13..45].copy_from_slice(authority.as_ref());
+    } // else leave the Option tag at 0 (None) and the key bytes zeroed
+
+    let acct = SolanaAccount {
+        lamports: Rent::default().minimum_balance(data.len()),
+        data,
+        owner: bpf_loader_upgradeable::ID,
+        executable: false,
+        rent_epoch: 0,
+    };
+    svm.set_account(address, acct)
+        .unwrap_or_else(|e| panic!("set_account failed for ProgramData: {e:?}"));
+}
+
+fn initialize_config_ix(upgrade_authority: &Pubkey, authority: Pubkey) -> Instruction {
+    Instruction {
+        program_id: august_vault::ID,
+        accounts: ix_accounts::InitializeConfig {
+            program_config: program_config_pda(),
+            upgrade_authority: *upgrade_authority,
+            payer: *upgrade_authority,
+            program_data: program_data_pda(),
+            system_program: solana_sdk::system_program::ID,
+        }
+        .to_account_metas(None),
+        data: ix_data::InitializeConfig { authority }.data(),
+    }
+}
+
+/// Bootstrap the config with `authority` as both the upgrade authority (per the
+/// installed `ProgramData`) and the resulting vault-creation authority.
+fn initialize_program_config(svm: &mut LiteSVM, authority: &Keypair) {
+    let ix = initialize_config_ix(&authority.pubkey(), authority.pubkey());
+    send_tx(svm, authority, &[ix], &[authority]).expect("initialize program config");
+}
+
+/// Build an `initialize` instruction for an arbitrary `(deposit_mint, version)`.
+#[allow(clippy::too_many_arguments)]
+fn initialize_ix(
+    deposit_mint: Pubkey,
+    vault_version: u8,
+    signer: &Pubkey,
+    payer: &Pubkey,
+    admin: Pubkey,
+    operator: Pubkey,
+    fee_recipient: Pubkey,
+    token_program: TokenProgramKind,
+) -> Instruction {
+    Instruction {
+        program_id: august_vault::ID,
+        accounts: ix_accounts::Initialize {
+            program_config: program_config_pda(),
+            signer: *signer,
+            payer: *payer,
+            deposit_mint,
+            vault_state: derive_vault_state(&deposit_mint, vault_version).0,
+            share_mint: derive_share_mint(&deposit_mint, vault_version).0,
+            vault_token_ata: derive_vault_token_pda(&deposit_mint, vault_version).0,
+            system_program: solana_sdk::system_program::ID,
+            token_program: token_program.id(),
+            rent: solana_sdk::sysvar::rent::ID,
+        }
+        .to_account_metas(None),
+        data: ix_data::Initialize {
+            admin,
+            operator,
+            fee_recipient,
+            vault_version,
+        }
+        .data(),
+    }
+}
+
 // ---- PDA derivations (use program-side seed constants to prevent drift) ----
 
-fn derive_vault_state(deposit_mint: &Pubkey) -> (Pubkey, u8) {
+fn derive_vault_state(deposit_mint: &Pubkey, vault_version: u8) -> (Pubkey, u8) {
     Pubkey::find_program_address(
-        &[VAULT_STATE_SEED, deposit_mint.as_ref(), &[VAULT_VERSION]],
+        &[VAULT_STATE_SEED, deposit_mint.as_ref(), &[vault_version]],
         &august_vault::ID,
     )
 }
 
-fn derive_share_mint(deposit_mint: &Pubkey) -> (Pubkey, u8) {
+fn derive_share_mint(deposit_mint: &Pubkey, vault_version: u8) -> (Pubkey, u8) {
     Pubkey::find_program_address(
-        &[SHARE_MINT_SEED, deposit_mint.as_ref(), &[VAULT_VERSION]],
+        &[SHARE_MINT_SEED, deposit_mint.as_ref(), &[vault_version]],
         &august_vault::ID,
     )
 }
 
-fn derive_vault_token_pda(deposit_mint: &Pubkey) -> (Pubkey, u8) {
+fn derive_vault_token_pda(deposit_mint: &Pubkey, vault_version: u8) -> (Pubkey, u8) {
     Pubkey::find_program_address(
-        &[VAULT_TOKEN_SEED, deposit_mint.as_ref(), &[VAULT_VERSION]],
+        &[VAULT_TOKEN_SEED, deposit_mint.as_ref(), &[vault_version]],
         &august_vault::ID,
     )
 }

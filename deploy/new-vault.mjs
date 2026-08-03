@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // Copyright (C) 2026 Fractal Network Ltd
 //
 // Use of this software is governed by the Business Source License
@@ -5,8 +6,6 @@
 //
 // As of 10 March 2036 (the "Change Date"), use of this software will be
 // governed by version 2.0 of the Apache License.
-
-#!/usr/bin/env node
 
 /**
  * Complete Vault Deployment Script
@@ -31,6 +30,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { execSync } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { ensureProgramConfig } from './helpers/program-config.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(__dirname, '..');
@@ -298,8 +298,26 @@ async function deployProgram(config, deployer, programId) {
 // Initialize vault
 async function initializeVault(program, config, deployer) {
   logStep(5, 'Initializing vault');
-  
+
   try {
+    // `initialize` is gated on the ProgramConfig authority, which must exist
+    // before any vault can be created. Idempotent: a no-op after the first
+    // deployment against this program.
+    const configAuthority = await ensureProgramConfig({
+      program,
+      signer: deployer,
+      desiredAuthority: deployer.publicKey,
+      log: (msg) => log(msg, 'cyan'),
+    });
+
+    if (!configAuthority.equals(deployer.publicKey)) {
+      throw new Error(
+        `Vault creation is restricted to ${configAuthority.toBase58()}, but this ` +
+        `script signs as ${deployer.publicKey.toBase58()}. Either run it with the ` +
+        `configured authority, or rotate it with set_config_authority.`
+      );
+    }
+
     const depositMint = new PublicKey(config.vaultConfig.depositMint);
     const admin = new PublicKey(config.vaultConfig.admin);
     const operator = new PublicKey(config.vaultConfig.operator);
@@ -365,8 +383,7 @@ async function initializeVault(program, config, deployer) {
   } catch (error) {
     logError(`Vault initialization failed: ${error.message}`);
     if (error.logs) {
-      console.log('
-Program logs:');
+      console.log('\nProgram logs:');
       error.logs.forEach(log => console.log(log));
     }
     return null;
@@ -432,8 +449,7 @@ async function createMetadata(program, config, deployer, shareMint) {
   } catch (error) {
     logError(`Metadata creation failed: ${error.message}`);
     if (error.logs) {
-      console.log('
-Program logs:');
+      console.log('\nProgram logs:');
       error.logs.forEach(log => console.log(log));
     }
     return null;
@@ -507,51 +523,42 @@ function printSummary(record) {
     ? 'https://explorer.solana.com' 
     : `https://explorer.solana.com?cluster=${record.deployment.network}`;
   
-  console.log('
-' + '='.repeat(70));
+  console.log('\n' + '='.repeat(70));
   log(`${c.bold}${c.green}Vault Deployment Completed${c.reset}`, 'green');
   console.log('='.repeat(70));
   
-  log('
-PROGRAM:', 'green');
+  log('\nPROGRAM:', 'green');
   log(`   ID: ${record.program.programId}`, 'cyan');
   log(`   Explorer: ${explorerBase}/address/${record.program.programId}`, 'cyan');
   
-  log('
-VAULT:', 'green');
+  log('\nVAULT:', 'green');
   log(`   State: ${record.vault.vaultState}`, 'cyan');
   log(`   Explorer: ${explorerBase}/address/${record.vault.vaultState}`, 'cyan');
   
-  log('
-SHARE TOKEN:', 'green');
+  log('\nSHARE TOKEN:', 'green');
   log(`   Name: ${record.vault.name}`, 'cyan');
   log(`   Symbol: ${record.vault.symbol}`, 'cyan');
   log(`   Decimals: ${record.vault.decimals}`, 'cyan');
   log(`   Mint: ${record.vault.shareMint}`, 'cyan');
   log(`   Explorer: ${explorerBase}/address/${record.vault.shareMint}`, 'cyan');
   
-  log('
-DEPOSIT TOKEN:', 'green');
+  log('\nDEPOSIT TOKEN:', 'green');
   log(`   Mint: ${record.vault.depositMint}`, 'cyan');
   log(`   Decimals: ${record.vault.depositMintDecimals || 'N/A'}`, 'cyan');
   
-  log('
-ROLES:', 'green');
+  log('\nROLES:', 'green');
   log(`   Admin: ${record.roles.admin}`, 'cyan');
   log(`   Operator: ${record.roles.operator}`, 'cyan');
   log(`   Fee Recipient: ${record.roles.feeRecipient}`, 'cyan');
   
-  log('
-TRANSACTIONS:', 'green');
+  log('\nTRANSACTIONS:', 'green');
   log(`   Deploy: ${explorerBase}/tx/${record.program.deployTx}`, 'cyan');
   log(`   Initialize: ${explorerBase}/tx/${record.vault.initTx}`, 'cyan');
   log(`   Metadata: ${explorerBase}/tx/${record.vault.metadataTx}`, 'cyan');
   
-  console.log('
-' + '='.repeat(70));
+  console.log('\n' + '='.repeat(70));
   logSuccess('All steps completed successfully!');
-  console.log('='.repeat(70) + '
-');
+  console.log('='.repeat(70) + '\n');
 }
 
 // Get RPC endpoint
@@ -566,11 +573,9 @@ function getRpcEndpoint(config) {
 
 // Main execution
 async function main() {
-  console.log('
-' + '='.repeat(70));
+  console.log('\n' + '='.repeat(70));
   log(`${c.bold}${c.green}Create NewSolana Vault${c.reset}`, 'green');
-  console.log('='.repeat(70) + '
-');
+  console.log('='.repeat(70) + '\n');
 
   // Load config
   const config = loadConfig();

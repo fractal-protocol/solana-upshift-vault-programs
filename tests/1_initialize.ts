@@ -10,6 +10,7 @@ import * as anchor from "@coral-xyz/anchor";
 import * as assert from "assert";
 import {VaultContext} from "./helper/context";
 import * as token from "@solana/spl-token";
+import {protocolAuthority, ensureProgramConfig} from "./helper/program-config";
 
 describe("august-vault-initialize", () => {
     anchor.setProvider(anchor.AnchorProvider.env());
@@ -46,10 +47,10 @@ describe("august-vault-initialize", () => {
                     shareMint: vaultContext.shareMint,
                     vaultTokenAta: vaultContext.vaultUsdgAta,
                     depositMint: vaultContext.usdgTokenMint,
-                    signer: vaultContext.deployer.publicKey,
+                    signer: protocolAuthority.publicKey,
                     tokenProgram: token.TOKEN_PROGRAM_ID
                 })
-                .signers([vaultContext.deployer])
+                .signers([protocolAuthority])
                 .rpc(),
             /0x0/) // already initialized
     });
