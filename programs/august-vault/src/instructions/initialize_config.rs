@@ -21,6 +21,11 @@ use anchor_lang::prelude::*;
 /// Must be run immediately after the upgrade that adds it: until the config
 /// exists, `initialize` fails closed and no vault can be created.
 pub fn handler(ctx: Context<InitializeConfig>, authority: Pubkey) -> Result<()> {
+    // Same guard as both rotation instructions. Bootstrapping to the zero key
+    // would create a config nobody can authorize with, blocking every vault
+    // initialization until the upgrade authority runs an override — and
+    // permanently if the program were later made immutable.
+    require!(authority != Pubkey::default(), ErrorCode::InvalidAuthority);
     ctx.accounts
         .program_config
         .init(authority, [ctx.bumps.program_config]);

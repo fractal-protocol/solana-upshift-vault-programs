@@ -7,6 +7,7 @@
 // governed by version 2.0 of the Apache License.
 
 import * as anchor from "@coral-xyz/anchor";
+import { DEFAULT_SHARE_OFFSET } from "./config";
 import {Program} from "@coral-xyz/anchor";
 import {AugustVault} from "../../target/types/august_vault";
 import {PublicKey, LAMPORTS_PER_SOL, Connection, Keypair, SystemProgram} from "@solana/web3.js";
@@ -175,7 +176,7 @@ export class VaultContext {
         // Vault creation is gated on the ProgramConfig authority.
         await ensureProgramConfig(this.vaultProgram);
         const vaultVersion = 0;
-        await this.vaultProgram.methods.initialize(this.admin.publicKey, this.operator.publicKey, this.feeRecipient.publicKey, vaultVersion)
+        await this.vaultProgram.methods.initialize(this.admin.publicKey, this.operator.publicKey, this.feeRecipient.publicKey, vaultVersion, DEFAULT_SHARE_OFFSET)
             .accounts({
                 vaultState: this.vaultStatePda,
                 shareMint: this.shareMint,

@@ -8,6 +8,12 @@
 
 import { Connection, Keypair, PublicKey, SystemProgram, SYSVAR_RENT_PUBKEY } from "@solana/web3.js";
 import { AnchorProvider, Program, Wallet } from "@coral-xyz/anchor";
+// `BN` is not a named ESM export of the anchor package (it is CommonJS), and
+// bn.js is only a transitive dependency, so reach it through anchor's default
+// export. `node --check` does NOT catch a bad named import — only actually
+// loading the module does.
+import anchorPkg from "@coral-xyz/anchor";
+const { BN } = anchorPkg;
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
@@ -18,6 +24,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const PROGRAM_ID = new PublicKey("C8B1EpsSGVWK2vMrk3aDT3kL7RCE77otokUh4EC35kK7");
 const JITOSOL_MINT = new PublicKey("J1tos8mqbhdGcF3pgj4PCKyVjzWSURcpLZU7pPGHxSYi");
+// Per-vault virtual-share offset. jitoSOL is 9-decimal, so the program's
+// default is appropriate; a high-value, low-decimal mint would want a smaller
+// one so the minimum first deposit stays reachable.
+const SHARE_OFFSET = 1_000_000;
 const VAULT_VERSION = 0;
 
 const TOKEN_NAME = "Sentora JitoSOL Vault";
@@ -99,7 +109,8 @@ async function main() {
           walletKeypair.publicKey, // admin
           walletKeypair.publicKey, // operator
           walletKeypair.publicKey, // fee_recipient
-          VAULT_VERSION // vault_version
+          VAULT_VERSION, // vault_version
+          new BN(SHARE_OFFSET) // share_offset
         )
         .accounts({
           vaultState: vaultStatePda,

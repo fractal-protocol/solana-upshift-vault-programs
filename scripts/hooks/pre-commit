@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Refuse a commit that leaves a source file untracked.
+#
+# CI cannot do this: GitHub Actions only ever sees committed state, so
+# `git ls-files --others` is always empty there. The check only means anything
+# in the author's worktree, which is why it lives in a hook.
+#
+# This has bitten this repo twice, both times because the author staged with
+# `git add -u` (tracked files only) after creating a new file. The result
+# compiles and tests clean locally while being simply absent for everyone else.
+set -euo pipefail
+
+# No `|| true`: under `set -e` that would turn "the check could not run" into
+# "the check passed". Includes *.sh and the extensionless hooks — the two files
+# added alongside this one are of types the original filter missed.
+missing=$(git ls-files --others --exclude-standard \
+  -- '*.rs' '*.mjs' '*.js' '*.ts' '*.toml' '*.sh' 'scripts/hooks/*')
+
+if [ -n "$missing" ]; then
+  echo "error: source files exist but are not tracked by git:" >&2
+  echo "$missing" | sed 's/^/  /' >&2
+  echo >&2
+  echo "Add them, or add them to .gitignore if they are genuinely local:" >&2
+  echo "  git add <file>" >&2
+  echo >&2
+  echo "To bypass deliberately: git commit --no-verify" >&2
+  exit 1
+fi
+
+# Same invariant CI enforces, but caught before the commit rather than after the
+# push: every relative import must point at a file git tracks.
+# Git hooks run in a non-interactive shell that does not source your profile, so
+# an nvm/fnm-managed node is often absent — especially from GUI clients. Warn
+# loudly rather than skipping in silence, so a skipped check is never mistaken
+# for a passed one.
+if ! command -v node >/dev/null 2>&1; then
+  echo "warning: node not on PATH — reference check SKIPPED (CI still enforces it)" >&2
+else
+  node "$(git rev-parse --show-toplevel)/scripts/check-references.mjs" >/dev/null || {
+    node "$(git rev-parse --show-toplevel)/scripts/check-references.mjs" >&2
+    exit 1
+  }
+fi

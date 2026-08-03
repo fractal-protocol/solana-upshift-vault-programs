@@ -8,21 +8,16 @@
 //! `overflow_propagation.rs`.
 
 use august_vault::{errors::ErrorCode, state::vault::VaultState};
-use integration_tests::harness::{assert_anchor_err, VaultCtx, DEPOSIT_DECIMALS};
-
-/// The program's own first-deposit floor for the harness mint, so these
-/// boundary tests track the formula instead of re-deriving it. A fn rather than
-/// a const because `min_first_deposit` is not `const`.
-fn min_first_deposit() -> u64 {
-    VaultState::min_first_deposit(DEPOSIT_DECIMALS)
-}
+use integration_tests::harness::{
+    assert_anchor_err, harness_min_first_deposit, VaultCtx, HARNESS_SHARE_OFFSET,
+};
 
 // ---- zero amount ----
 
 #[test]
 fn deposit_zero_amount_is_rejected_with_no_side_effects() {
     let mut ctx = VaultCtx::fresh();
-    ctx.mint_to_user(min_first_deposit());
+    ctx.mint_to_user(harness_min_first_deposit());
     let before = ctx.snapshot();
 
     let err = ctx.deposit(0).expect_err("zero deposit must be rejected");
@@ -35,11 +30,11 @@ fn deposit_zero_amount_is_rejected_with_no_side_effects() {
 #[test]
 fn first_deposit_below_minimum_is_rejected() {
     let mut ctx = VaultCtx::fresh();
-    ctx.mint_to_user(min_first_deposit());
+    ctx.mint_to_user(harness_min_first_deposit());
     let before = ctx.snapshot();
 
     let err = ctx
-        .deposit(min_first_deposit() - 1)
+        .deposit(harness_min_first_deposit() - 1)
         .expect_err("first deposit below the floor must be rejected");
     assert_anchor_err(&err, ErrorCode::InsufficientAmount);
     assert_eq!(ctx.snapshot(), before, "CEI violated on InsufficientAmount");
@@ -48,10 +43,10 @@ fn first_deposit_below_minimum_is_rejected() {
 #[test]
 fn first_deposit_at_exact_minimum_succeeds() {
     let mut ctx = VaultCtx::fresh();
-    ctx.mint_to_user(min_first_deposit());
-    ctx.deposit(min_first_deposit())
+    ctx.mint_to_user(harness_min_first_deposit());
+    ctx.deposit(harness_min_first_deposit())
         .expect("the floor itself must be accepted");
-    assert_eq!(ctx.share_mint_supply(), min_first_deposit());
+    assert_eq!(ctx.share_mint_supply(), harness_min_first_deposit());
 }
 
 /// The floor applies to the *first* deposit only: once supply is nonzero a
@@ -59,11 +54,12 @@ fn first_deposit_at_exact_minimum_succeeds() {
 #[test]
 fn subsequent_deposit_below_minimum_is_allowed() {
     let mut ctx = VaultCtx::fresh();
-    ctx.mint_to_user(min_first_deposit() + 1);
-    ctx.deposit(min_first_deposit()).expect("first deposit");
+    ctx.mint_to_user(harness_min_first_deposit() + 1);
+    ctx.deposit(harness_min_first_deposit())
+        .expect("first deposit");
     ctx.deposit(1)
         .expect("post-first deposits are not subject to the floor");
-    assert_eq!(ctx.share_mint_supply(), min_first_deposit() + 1);
+    assert_eq!(ctx.share_mint_supply(), harness_min_first_deposit() + 1);
 }
 
 // ---- truncation: share math rounds to zero ----
@@ -71,11 +67,13 @@ fn subsequent_deposit_below_minimum_is_allowed() {
 #[test]
 fn deposit_rounding_to_zero_shares_is_rejected_with_no_side_effects() {
     let mut ctx = VaultCtx::fresh();
-    ctx.mint_to_user(min_first_deposit() + 1);
-    ctx.deposit(min_first_deposit()).expect("seed deposit");
+    ctx.mint_to_user(harness_min_first_deposit() + 1);
+    ctx.deposit(harness_min_first_deposit())
+        .expect("seed deposit");
 
     // Inflate the share price ~10^6× by faking externally deployed assets:
-    // shares = 1 * (supply + 1) / (total_assets + 1) truncates to 0.
+    // shares = 1 * (supply + HARNESS_SHARE_OFFSET) / (total_assets + HARNESS_SHARE_OFFSET),
+    // and the pro-rata floor, both truncate to 0.
     let mut state = ctx.vault_state_data();
     state.deployed_aum = 1_000_000_000_000;
     ctx.force_overwrite_vault_state(state);
@@ -83,7 +81,7 @@ fn deposit_rounding_to_zero_shares_is_rejected_with_no_side_effects() {
     let supply = ctx.share_mint_supply();
     let total = ctx.vault_state_data().total_assets().unwrap();
     assert_eq!(
-        VaultState::shares_for_deposit(supply, total, 1).unwrap(),
+        VaultState::shares_for_deposit_with_offset(supply, total, 1, HARNESS_SHARE_OFFSET).unwrap(),
         0,
         "fixture must actually sit in the truncation regime"
     );
@@ -120,7 +118,9 @@ fn deposit_overflowing_local_aum_fails_with_number_overflow() {
 
     let supply = ctx.share_mint_supply();
     let total = ctx.vault_state_data().total_assets().unwrap();
-    let shares = VaultState::shares_for_deposit(supply, total, AMOUNT).unwrap();
+    let shares =
+        VaultState::shares_for_deposit_with_offset(supply, total, AMOUNT, HARNESS_SHARE_OFFSET)
+            .unwrap();
     assert!(shares > 0, "fixture must pass the zero-share check");
 
     let before = ctx.snapshot();

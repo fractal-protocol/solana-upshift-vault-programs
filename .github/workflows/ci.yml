@@ -54,6 +54,26 @@ jobs:
             - name: Rustfmt (integration-tests workspace)
               run: cargo fmt --manifest-path integration-tests/Cargo.toml --all --check
 
+    # NOTE: this job cannot detect an author's untracked file. GitHub Actions
+    # checks out committed state, so `git ls-files --others` is always empty
+    # here — that check belongs in a pre-commit hook (scripts/install-hooks.sh),
+    # which is where it now lives.
+    #
+    # What CI *can* prove is that the committed tree is internally consistent:
+    # every relative import resolves to a file git actually has. That catches a
+    # helper written but never staged, which is how it would surface for anyone
+    # cloning the repo.
+    references:
+        name: References resolve
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 20
+            - name: Assert imports and documented script paths resolve
+              run: node scripts/check-references.mjs
+
     clippy:
         name: Clippy
         runs-on: ubuntu-latest
@@ -269,8 +289,17 @@ jobs:
                   set -euo pipefail
                   IMAGE="solanafoundation/solana-verifiable-build@sha256:695f890e620db8c39afe5112e048599f8ee395a0cab5a2e572f30a72c6366cb4"
                   fail=0
+                  # Count what we actually verified. Without this the loop can
+                  # complete having compared NOTHING — a truncated or
+                  # comment-only verified-hashes.txt, a renamed package, or a
+                  # missing trailing newline (`while read` drops an unterminated
+                  # last record) — and the job would report success. This is the
+                  # only gate between a bytecode change and a verified mainnet
+                  # deploy, so it must fail closed.
+                  count=0
                   while read -r pkg exec_expected raw_expected size_expected _; do
                     case "$pkg" in ''|\#*) continue ;; esac
+                    count=$((count + 1))
                     echo "::group::build $pkg"
                     solana-verify build --library-name "$pkg" --base-image "$IMAGE"
                     echo "::endgroup::"
@@ -288,6 +317,11 @@ jobs:
                       fail=1
                     fi
                   done < verified-hashes.txt
+                  if [ "$count" -eq 0 ]; then
+                    echo "::error::verified-hashes.txt yielded no records to verify — nothing was checked."
+                    exit 1
+                  fi
+                  echo "verified $count program(s)"
                   [ "$fail" -eq 0 ]
 
     # Always-running aggregator: a stable required status check that passes for
@@ -297,7 +331,7 @@ jobs:
         name: CI Pass
         if: always()
         runs-on: ubuntu-latest
-        needs: [changes, fmt, clippy, security, client-check, test, reproducible-build]
+        needs: [changes, references, fmt, clippy, security, client-check, test, reproducible-build]
         steps:
             - name: Check results
               run: |

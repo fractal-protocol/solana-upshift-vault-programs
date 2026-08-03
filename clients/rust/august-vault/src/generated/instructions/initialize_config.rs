@@ -23,8 +23,12 @@ pub struct InitializeConfig {
 /// program, so a caller cannot present the `ProgramData` of some unrelated
 /// program they happen to control.
 /// 
-/// Declared before `program_config` so the authorization check runs before
-/// the account is created — Anchor applies constraints in declaration order.
+/// Note that declaration order does **not** make this check run before
+/// `program_config` is created: Anchor emits every `init` field's creation
+/// CPI ahead of all non-init access checks. An upgrade-authority mismatch is
+/// still always caught — the whole transaction reverts — but a caller who
+/// cannot fund the config's rent sees the System Program's error rather than
+/// `NotProtocolAuthority`.
 
     
               
@@ -152,8 +156,12 @@ impl InitializeConfigBuilder {
 /// program, so a caller cannot present the `ProgramData` of some unrelated
 /// program they happen to control.
 /// 
-/// Declared before `program_config` so the authorization check runs before
-/// the account is created — Anchor applies constraints in declaration order.
+/// Note that declaration order does **not** make this check run before
+/// `program_config` is created: Anchor emits every `init` field's creation
+/// CPI ahead of all non-init access checks. An upgrade-authority mismatch is
+/// still always caught — the whole transaction reverts — but a caller who
+/// cannot fund the config's rent sees the System Program's error rather than
+/// `NotProtocolAuthority`.
 #[inline(always)]
     pub fn program_data(&mut self, program_data: solana_pubkey::Pubkey) -> &mut Self {
                         self.program_data = Some(program_data);
@@ -220,8 +228,12 @@ impl InitializeConfigBuilder {
 /// program, so a caller cannot present the `ProgramData` of some unrelated
 /// program they happen to control.
 /// 
-/// Declared before `program_config` so the authorization check runs before
-/// the account is created — Anchor applies constraints in declaration order.
+/// Note that declaration order does **not** make this check run before
+/// `program_config` is created: Anchor emits every `init` field's creation
+/// CPI ahead of all non-init access checks. An upgrade-authority mismatch is
+/// still always caught — the whole transaction reverts — but a caller who
+/// cannot fund the config's rent sees the System Program's error rather than
+/// `NotProtocolAuthority`.
 
       
                     
@@ -250,8 +262,12 @@ pub struct InitializeConfigCpi<'a, 'b> {
 /// program, so a caller cannot present the `ProgramData` of some unrelated
 /// program they happen to control.
 /// 
-/// Declared before `program_config` so the authorization check runs before
-/// the account is created — Anchor applies constraints in declaration order.
+/// Note that declaration order does **not** make this check run before
+/// `program_config` is created: Anchor emits every `init` field's creation
+/// CPI ahead of all non-init access checks. An upgrade-authority mismatch is
+/// still always caught — the whole transaction reverts — but a caller who
+/// cannot fund the config's rent sees the System Program's error rather than
+/// `NotProtocolAuthority`.
 
     
               
@@ -397,8 +413,12 @@ impl<'a, 'b> InitializeConfigCpiBuilder<'a, 'b> {
 /// program, so a caller cannot present the `ProgramData` of some unrelated
 /// program they happen to control.
 /// 
-/// Declared before `program_config` so the authorization check runs before
-/// the account is created — Anchor applies constraints in declaration order.
+/// Note that declaration order does **not** make this check run before
+/// `program_config` is created: Anchor emits every `init` field's creation
+/// CPI ahead of all non-init access checks. An upgrade-authority mismatch is
+/// still always caught — the whole transaction reverts — but a caller who
+/// cannot fund the config's rent sees the System Program's error rather than
+/// `NotProtocolAuthority`.
 #[inline(always)]
     pub fn program_data(&mut self, program_data: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
                         self.instruction.program_data = Some(program_data);

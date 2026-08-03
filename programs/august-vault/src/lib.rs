@@ -100,12 +100,21 @@ pub mod august_vault {
     /// - `operator` - The Operator of the Vault
     /// - `fee_recipient` - The Fee recipient of the Vault
     /// - `vault_version` - Version number for the vault (allows multiple vaults per deposit mint)
+    /// - `share_offset` - This vault's virtual-share offset, in base units of the
+    ///   deposit mint. Must be a power of ten within
+    ///   `MIN_SHARE_OFFSET..=MAX_SHARE_OFFSET`. It is fixed for the life of the
+    ///   vault and also sets the minimum first deposit
+    ///   (`MIN_SUPPLY_MULTIPLE * share_offset`), so choose it for what a base
+    ///   unit of this mint is worth: a larger offset buys a wider margin against
+    ///   share-burn price manipulation, a smaller one keeps a high-value mint
+    ///   launchable.
     pub fn initialize(
         ctx: Context<Initialize>,
         admin: Pubkey,
         operator: Pubkey,
         fee_recipient: Pubkey,
         vault_version: u8,
+        share_offset: u64,
     ) -> Result<()> {
         return instructions::initialize::handler(
             ctx,
@@ -113,11 +122,14 @@ pub mod august_vault {
             operator,
             fee_recipient,
             vault_version,
+            share_offset,
         );
     }
 
     /// Deposit funds in the Vault
     /// Mint Vault shares
+    ///
+    /// No slippage bound — prefer `deposit_checked` in new integrations.
     ///
     /// ### Parameters
     /// - `amount` - The amount to deposit
@@ -125,13 +137,45 @@ pub mod august_vault {
         return instructions::deposit::handler(ctx, amount);
     }
 
+    /// Deposit funds in the Vault, refusing to mint fewer than
+    /// `min_shares_out` shares.
+    ///
+    /// Same accounts and semantics as `deposit`, plus a caller-stated worst
+    /// acceptable rate. Additive rather than a change to `deposit`, so existing
+    /// integrations keep working; pass 0 for identical behaviour.
+    ///
+    /// ### Parameters
+    /// - `amount` - The amount to deposit
+    /// - `min_shares_out` - Revert with `SlippageExceeded` below this many shares
+    pub fn deposit_checked(ctx: Context<Deposit>, amount: u64, min_shares_out: u64) -> Result<()> {
+        return instructions::deposit::handler_checked(ctx, amount, min_shares_out);
+    }
+
     /// Redeem funds from the Vault
     /// Burn shared
     /// Get tokens out
+    ///
+    /// No slippage bound — prefer `redeem_checked` in new integrations.
+    ///
     /// ### Parameters
     /// - `shares` - The amount of shares to burn
     pub fn redeem(ctx: Context<Redeem>, shares: u64) -> Result<()> {
         return instructions::redeem::handler(ctx, shares);
+    }
+
+    /// Redeem funds from the Vault, refusing to pay out less than
+    /// `min_assets_out`.
+    ///
+    /// Same accounts and semantics as `redeem`, plus a caller-stated worst
+    /// acceptable payout, measured **net of the withdrawal fee** — what the
+    /// caller actually receives. Additive rather than a change to `redeem`, so
+    /// existing integrations keep working; pass 0 for identical behaviour.
+    ///
+    /// ### Parameters
+    /// - `shares` - The amount of shares to burn
+    /// - `min_assets_out` - Revert with `SlippageExceeded` below this payout
+    pub fn redeem_checked(ctx: Context<Redeem>, shares: u64, min_assets_out: u64) -> Result<()> {
+        return instructions::redeem::handler_checked(ctx, shares, min_assets_out);
     }
     /// Operator withdraw funds from the Vault
     ///

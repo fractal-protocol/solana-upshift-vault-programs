@@ -32,7 +32,32 @@ pub aum_decrease_limit: u32,
 pub pda_bump: [u8; 1],
 pub vault_version: [u8; 1],
 pub paused: bool,
-pub padding: [u64; 32],
+/// This vault's virtual-share offset, in base units.
+/// 
+/// Per-vault rather than global because the right value depends on what a
+/// base unit of the deposit mint is *worth*. The offset must dominate a
+/// 1-unit retained sliver (so it is an absolute count), while
+/// `MIN_SUPPLY_MULTIPLE * offset` is the minimum first deposit — whose cost
+/// is that count times the base-unit price. One global constant cannot serve
+/// both a 6-decimal dollar stablecoin and an 8-decimal asset worth ~$100k.
+/// 
+/// **Zero means "not set" and maps to [`EXTRA_SHARES`].** Vaults created
+/// before this field existed have zeroed padding, so they read 0 — both live
+/// mainnet vaults are in that state. Never read this field directly: on-chain
+/// use `VaultState::share_offset()`, and off-chain use
+/// `resolved_share_offset()` from the generated Rust client, which mirrors it.
+/// A raw 0 collapses the pricing to pure pro-rata, which agrees with the
+/// program only while the vault sits exactly at par.
+pub share_offset: u64,
+/// Reserved. New fields must be carved **out of** this array so `LEN` stays
+/// 455, the size of the live mainnet vault accounts — enforced by the `const`
+/// assertion below the struct.
+/// 
+/// **Declare them AFTER `share_offset`, never before it.** Inserting a field
+/// earlier shifts `share_offset` off byte 199, and every vault storing a
+/// non-default offset would then silently read 0 and fall back to the default.
+/// `share_offset_stays_at_its_byte_offset` fails if that happens.
+pub padding: [u64; 31],
 }
 
 

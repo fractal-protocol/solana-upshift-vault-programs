@@ -19,11 +19,36 @@
  * 6. Creates metadata
  * 7. Saves deployment record
  * 
- * Usage: node deploy-new-vault.mjs [--network mainnet|devnet]
+ * Usage: node new-vault.mjs [--network mainnet|devnet]
  */
 
+import { redactEndpoint } from './helpers/redact.mjs';
+
+/// Mirror of the program's share-offset rule (`VaultState::is_valid_share_offset`).
+/// Kept in step with `MIN_SHARE_OFFSET` / `MAX_SHARE_OFFSET` in
+/// `programs/august-vault/src/state/vault.rs`.
+const MIN_SHARE_OFFSET = 1_000;
+const MAX_SHARE_OFFSET = 1_000_000;
+const DEFAULT_SHARE_OFFSET = 1_000_000;
+/// Mirror of `MIN_SUPPLY_MULTIPLE`. Named rather than inlined into the message
+/// below so `scripts/check-references.mjs` can cross-check it: it is what the
+/// pre-flight quotes as the minimum first deposit, right before an operator
+/// commits several SOL.
+const MIN_SUPPLY_MULTIPLE = 100;
+function isValidShareOffset(v) {
+  if (!Number.isInteger(v) || v < MIN_SHARE_OFFSET || v > MAX_SHARE_OFFSET) return false;
+  let p = 1;
+  while (p < v) p *= 10;
+  return p === v;
+}
 import { Connection, Keypair, PublicKey, SystemProgram, SYSVAR_RENT_PUBKEY } from '@solana/web3.js';
 import { AnchorProvider, Program, Wallet } from '@coral-xyz/anchor';
+// `BN` is not a named ESM export of the anchor package (it is CommonJS), and
+// bn.js is only a transitive dependency, so reach it through anchor's default
+// export. `node --check` does NOT catch a bad named import — only actually
+// loading the module does.
+import anchorPkg from '@coral-xyz/anchor';
+const { BN } = anchorPkg;
 import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getMint } from '@solana/spl-token';
 import bs58 from 'bs58';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
@@ -55,16 +80,35 @@ ${c.bold}[STEP ${step}]${c.reset} ${msg}`, 'cyan');
 
 // Parse args
 const args = process.argv.slice(2).reduce((acc, arg, i, arr) => {
-  if (arg === '--network' || arg === '-n') acc.network = arr[i + 1];
-  if (arg === '--config' || arg === '-c') acc.configPath = arr[i + 1];
+  // Reject a flag with no value rather than recording `undefined`: a trailing
+  // `--network` would otherwise silently disable the cluster cross-check that
+  // exists to stop a devnet-labelled run deploying to mainnet.
+  const value = (name) => {
+    const v = arr[i + 1];
+    if (v === undefined || v.startsWith('-')) {
+      console.error(`❌ ${name} requires a value`);
+      process.exit(1);
+    }
+    return v;
+  };
+  if (arg === '--network' || arg === '-n') acc.network = value(arg);
+  if (arg === '--config' || arg === '-c') acc.configPath = value(arg);
+  if (arg === '--rewrite-declare-id') acc.rewriteDeclareId = true;
   if (arg === '--help' || arg === '-h') {
     console.log(`
-Usage: node deploy-new-vault.mjs [options]
+Usage: node new-vault.mjs [options]
 
 Options:
   -n, --network <name>    Network: devnet|mainnet (default: from config)
   -c, --config <path>     Config file path (default: ./deploy.config.json)
+      --rewrite-declare-id  REQUIRED — nothing runs without it. Rewrites
+                            declare_id! in lib.rs and Anchor.toml in your
+                            working tree so they name the newly generated
+                            program. Revert both files afterwards.
   -h, --help             Show this help
+
+This script DEPLOYS A NEW PROGRAM. It is not the tool for adding a vault to an
+already-deployed program — see the README.
 
 This script will:
   1. Generate a new program keypair
@@ -109,7 +153,72 @@ function loadConfig() {
     }
   }
 
-  if (args.network) config.network = args.network;
+  // Check the destructive opt-in FIRST, before anything mutates the worktree.
+  //
+  // Step 1 (`generateProgramKeypair`) already backs up and REPLACES
+  // target/deploy/august_vault-keypair.json, so guarding only at step 2 still
+  // rotated a deployment keypair on a supposedly-safe run — and a second run
+  // overwrote the backup with the first run's throwaway, so the original was
+  // recoverable only from elsewhere. Nothing may be written before this check.
+  if (!args.rewriteDeclareId) {
+    logError('This script DEPLOYS A NEW PROGRAM and rewrites your worktree.');
+    logError('   It replaces target/deploy/august_vault-keypair.json, and rewrites');
+    logError('   declare_id! in lib.rs and [programs.mainnet] in Anchor.toml, so');
+    logError('   every later build targets a different program.');
+    logError('   Re-run with --rewrite-declare-id if that is genuinely what you want.');
+    logError('   To add a vault to an EXISTING program, see the README instead.');
+    process.exit(1);
+  }
+
+  // Validate the share offset HERE, before any deployment work. The program
+  // rejects a bad value at `initialize` — which is step 5, after the keypair has
+  // been generated, the program rebuilt and deployed at a cost of 2-5 SOL. An
+  // invalid offset would therefore burn a real deployment before predictably
+  // failing with InvalidShareOffset, and the offset is permanent once set.
+  const shareOffset = config.vaultConfig?.shareOffset ?? DEFAULT_SHARE_OFFSET;
+  if (!isValidShareOffset(shareOffset)) {
+    logError(
+      `vaultConfig.shareOffset (${shareOffset}) is not valid. It must be a power ` +
+      `of ten from ${MIN_SHARE_OFFSET.toLocaleString()} to ` +
+      `${MAX_SHARE_OFFSET.toLocaleString()} inclusive.`
+    );
+    logError(
+      '   The offset is fixed for the vault\'s life and sets both the pricing and ' +
+      'the minimum first deposit, so choose it for what a base unit of the ' +
+      'deposit mint is worth.'
+    );
+    process.exit(1);
+  }
+  config.vaultConfig = { ...config.vaultConfig, shareOffset };
+
+  // `--network` must not merely relabel the config. The cluster actually used is
+  // decided by `config.rpcEndpoint` (see getRpcEndpoint and deployProgram), so
+  // accepting `--network devnet` against a mainnet rpcEndpoint would deploy to
+  // MAINNET — spending real SOL — while printing "devnet". Cross-check instead.
+  if (args.network) {
+    if (config.network && config.network !== args.network) {
+      logError(
+        `--network ${args.network} contradicts deploy.config.json ` +
+        `("network": "${config.network}").`
+      );
+      logError(
+        `   The cluster is decided by rpcEndpoint (${config.rpcEndpoint ? redactEndpoint(config.rpcEndpoint) : 'unset'}), ` +
+        `so this would have targeted ${config.network}.`
+      );
+      logError('   Fix the config or drop the flag.');
+      process.exit(1);
+    }
+    if (!config.network && config.rpcEndpoint) {
+      logError(
+        `--network ${args.network} was passed, but the config has no "network" ` +
+        `field to check it against and rpcEndpoint (${redactEndpoint(config.rpcEndpoint)}) is ` +
+        `what decides the cluster.`
+      );
+      logError('   Add "network" to deploy.config.json so the two can be cross-checked.');
+      process.exit(1);
+    }
+    config.network = args.network;
+  }
   return config;
 }
 
@@ -189,7 +298,18 @@ function generateProgramKeypair(vanityPrefix = null) {
 }
 
 // Update program ID in source files
+//
+// DESTRUCTIVE: rewrites `declare_id!` in lib.rs and the mainnet entry in
+// Anchor.toml, in the working tree. Anyone who runs this script to see what it
+// does — or who gets as far as step 2 before aborting — is left with a mutated
+// checkout that builds a DIFFERENT program, and the next `anchor build` silently
+// produces bytecode for it. That has to be opted into.
 function updateProgramId(programId) {
+  // Belt and braces: loadConfig() already refused without the opt-in, so this
+  // can only fire if a future caller reaches step 2 by another path.
+  if (!args.rewriteDeclareId) {
+    throw new Error('updateProgramId reached without --rewrite-declare-id');
+  }
   logStep(2, 'Updating program ID in source files');
   
   // Update lib.rs
@@ -256,6 +376,17 @@ async function deployProgram(config, deployer, programId) {
     writeFileSync(tmpKeypairPath, JSON.stringify(keypairArray));
     
     logInfo(`Deploying to ${config.network}...`);
+    logInfo(`Cluster actually used: ${redactEndpoint(config.rpcEndpoint) || config.network}`);
+  // Echo the offset explicitly. It is permanent, unchangeable, and defaults
+  // silently when the config key is absent or mistyped — so it is the one
+  // parameter the operator most needs to see before spending SOL.
+  logInfo(
+    `Share offset: ${config.vaultConfig.shareOffset.toLocaleString()}` +
+    `${config.vaultConfig.shareOffset === DEFAULT_SHARE_OFFSET ? ' (default)' : ''}` +
+    ` -> minimum first deposit ${(
+      MIN_SUPPLY_MULTIPLE * config.vaultConfig.shareOffset
+    ).toLocaleString()} base units (or the mint's decimals floor, whichever is larger)`
+  );
     logWarning('This may take several minutes and cost 2-5 SOL');
     
     // Use custom RPC endpoint if provided, otherwise use network name
@@ -323,6 +454,8 @@ async function initializeVault(program, config, deployer) {
     const operator = new PublicKey(config.vaultConfig.operator);
     const feeRecipient = new PublicKey(config.vaultConfig.feeRecipient);
     const vaultVersion = config.vaultConfig.vaultVersion ?? 0;
+    // Already validated in loadConfig(), before any SOL was spent.
+    const shareOffset = config.vaultConfig.shareOffset;
 
     // Derive PDAs - Multi-vault architecture: all PDAs include deposit_mint + vault_version
     const [vaultState] = PublicKey.findProgramAddressSync(
@@ -363,7 +496,7 @@ async function initializeVault(program, config, deployer) {
     logInfo('Sending initialize transaction...');
 
     const tx = await program.methods
-      .initialize(admin, operator, feeRecipient, vaultVersion)
+      .initialize(admin, operator, feeRecipient, vaultVersion, new BN(shareOffset))
       .accounts({
         vaultState,
         shareMint,
@@ -496,9 +629,14 @@ async function saveDeploymentRecord(config, results) {
       shareMint: results.shareMint?.toString(),
       depositMint: config.vaultConfig.depositMint,
       depositMintDecimals: depositMintInfo?.decimals,
+      vaultVersion: config.vaultConfig.vaultVersion ?? 0,
+      // Permanent and unchangeable: record it so the vault's pricing and its
+      // minimum first deposit can be reconstructed from this file alone.
+      shareOffset: config.vaultConfig.shareOffset,
       name: config.vaultConfig.shareTokenName,
       symbol: config.vaultConfig.shareTokenSymbol,
-      decimals: 8, // hardcoded in program
+      // The share mint inherits the deposit mint's decimals; nothing is fixed at 8.
+      decimals: depositMintInfo?.decimals,
       uri: config.vaultConfig.shareTokenUri || '',
       initTx: results.initTx,
       metadataTx: results.metadataTx,

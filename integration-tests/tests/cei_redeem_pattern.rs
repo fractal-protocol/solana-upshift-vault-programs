@@ -11,7 +11,9 @@
 //! as a CEI pass.
 
 use august_vault::{errors::ErrorCode, state::vault::VaultState};
-use integration_tests::harness::{assert_anchor_err, VaultCtx, DEPOSIT_DECIMALS};
+use integration_tests::harness::{
+    assert_anchor_err, VaultCtx, DEPOSIT_DECIMALS, HARNESS_SHARE_OFFSET,
+};
 
 const DEPOSIT_AMOUNT: u64 = 10 * 10u64.pow(DEPOSIT_DECIMALS as u32); // 10 tokens
 const OPERATOR_WITHDRAW: u64 = DEPOSIT_AMOUNT * 9 / 10; // 90% drained off-vault
@@ -102,14 +104,19 @@ fn partial_redeem_within_liquidity_succeeds() {
 
     // Choose `safe_shares` so the implied payout is bounded by `target_assets`.
     // Property (proved by `round_trip_never_extracts_value` in `state/vault.rs`):
-    //   assets_for_redeem(shares_for_deposit(target_assets)) <= target_assets
+    //   assets_for_redeem_with_offset(shares_for_deposit_with_offset(target_assets)) <= target_assets
     // because both helpers floor-round in the protocol's favour. With
     // `target_assets = local_aum / 2`, the predicted payout is guaranteed
     // `< local_aum`, so liquidity will never be the failure mode here.
     let target_assets = local_aum / 2;
-    let safe_shares = VaultState::shares_for_deposit(supply, total_assets, target_assets)
-        .expect("share math fits u64")
-        .min(shares_held);
+    let safe_shares = VaultState::shares_for_deposit_with_offset(
+        supply,
+        total_assets,
+        target_assets,
+        HARNESS_SHARE_OFFSET,
+    )
+    .expect("share math fits u64")
+    .min(shares_held);
     assert!(
         safe_shares > 0,
         "fixture must leave room for a partial redeem"
@@ -118,8 +125,13 @@ fn partial_redeem_within_liquidity_succeeds() {
     // Predict the exact asset payout using the on-chain helper. Fee=0 by
     // default in this fixture, so the user receives `expected_assets` and the
     // fee recipient receives 0.
-    let expected_assets = VaultState::assets_for_redeem(supply, total_assets, safe_shares)
-        .expect("asset math fits u64");
+    let expected_assets = VaultState::assets_for_redeem_with_offset(
+        supply,
+        total_assets,
+        safe_shares,
+        HARNESS_SHARE_OFFSET,
+    )
+    .expect("asset math fits u64");
     assert!(expected_assets > 0, "predicted payout must be non-trivial");
     assert_eq!(
         ctx.vault_state_data().withdrawal_fee,

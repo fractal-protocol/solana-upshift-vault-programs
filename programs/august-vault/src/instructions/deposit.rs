@@ -13,13 +13,36 @@ use anchor_spl::token_interface::{
     mint_to_checked, transfer_checked, Mint, MintToChecked, TokenAccount, TokenInterface,
     TransferChecked,
 };
+/// Deposit without a slippage bound. Equivalent to `handler_checked` with
+/// `min_shares_out = 0`.
 pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
+    handler_checked(ctx, amount, 0)
+}
+
+/// Deposit, refusing to mint fewer than `min_shares_out` shares.
+///
+/// Share count is
+/// `floor(max(amount * (supply + offset) / (total + offset),`
+/// `amount * supply / total))`, where `offset` is the vault's own `share_offset`, so a depositor always forfeits the fractional
+/// remainder — normally dust. The price can also move between quoting and
+/// execution, since share supply is read from the SPL mint and any holder may
+/// burn their own tokens (see `EXTRA_SHARES`). This lets a caller state the worst
+/// rate it will accept instead of trusting the rate it is given. Pass 0 to opt
+/// out.
+///
+/// Fails with `SharePriceUndefined` if the vault holds no assets while shares are
+/// outstanding: that state has no share price, and only `operator_deposit` can
+/// restore one (it recapitalises without minting).
+pub fn handler_checked(ctx: Context<Deposit>, amount: u64, min_shares_out: u64) -> Result<()> {
     require!(amount > 0, ErrorCode::ZeroAmount);
     require!(!ctx.accounts.vault_state.paused, ErrorCode::VaultPaused);
 
     // Enforce minimum deposit only on the very first deposit.
     if ctx.accounts.share_mint.supply == 0 {
-        let min_deposit = VaultState::min_first_deposit(ctx.accounts.deposit_mint.decimals);
+        let min_deposit = ctx
+            .accounts
+            .vault_state
+            .min_first_deposit(ctx.accounts.deposit_mint.decimals);
         require!(amount >= min_deposit, ErrorCode::InsufficientAmount);
     }
 
@@ -27,9 +50,35 @@ pub fn handler(ctx: Context<Deposit>, amount: u64) -> Result<()> {
 
     let supply = ctx.accounts.share_mint.supply;
     let total_assets = ctx.accounts.vault_state.total_assets()?;
-    let shares = VaultState::shares_for_deposit(supply, total_assets, amount)?;
+    let shares = ctx
+        .accounts
+        .vault_state
+        .shares_for_deposit(supply, total_assets, amount)?;
 
+    // Slippage first: a deposit that rounds to zero shares also violates any
+    // non-zero `min_shares_out`, and `SlippageExceeded` tells the caller which
+    // of the two actually happened. Ordered the other way, the most common
+    // slippage failure surfaces as `ZeroAmount` ("Amount must be > 0") even
+    // though the caller passed a perfectly good non-zero amount. `deposit`
+    // passes `min_shares_out = 0`, so its behaviour is unchanged.
+    require!(shares >= min_shares_out, ErrorCode::SlippageExceeded);
     require!(shares > 0, ErrorCode::ZeroAmount);
+
+    // The opening-supply invariant, checked on what was actually minted.
+    //
+    // The amount check above is the advertised minimum and is exact only when
+    // the vault opens empty (minting is 1:1 there, so the two are the same
+    // number). With assets present at zero supply — the pro-rata cap's residual
+    // after the last holder exits above par, an external burn of the whole
+    // supply, or an AUM report at zero supply — the same amount mints strictly
+    // fewer shares and can floor to zero, which would open the vault with the
+    // offset co-holder owning most of it. See `VaultState::min_opening_supply`.
+    if supply == 0 {
+        require!(
+            shares >= ctx.accounts.vault_state.min_opening_supply(),
+            ErrorCode::InsufficientAmount
+        );
+    }
 
     ctx.accounts.mint_to(shares)?;
     ctx.accounts.vault_state.local_aum = ctx

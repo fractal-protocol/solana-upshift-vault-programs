@@ -36,17 +36,58 @@ export function programDataPda(programId) {
 }
 
 /**
- * Read the program's on-chain upgrade authority, or null if the program is not
- * upgradeable / has none.
+ * Read the program's on-chain upgrade authority state.
+ *
+ * Returns a discriminated result rather than a bare `null`, because the reasons
+ * for "no authority" are operationally very different and must not be reported
+ * with the same message. "Immutable" is a permanent, unrecoverable property of a
+ * real program; "not-found" usually just means a typo in `--program-id` or the
+ * wrong `--url`. Collapsing them tells an operator their program is permanently
+ * broken when they actually mistyped an address.
+ *
+ * @returns {{ok: true, authority: PublicKey}
+ *          | {ok: false, reason: 'not-found'|'wrong-owner'|'malformed'|'immutable'}}
  */
-export async function fetchUpgradeAuthority(connection, programId) {
+export async function fetchUpgradeAuthorityState(connection, programId) {
   const info = await connection.getAccountInfo(programDataPda(programId));
-  if (!info || !info.owner.equals(BPF_LOADER_UPGRADEABLE)) return null;
+  if (!info) return { ok: false, reason: 'not-found' };
+  if (!info.owner.equals(BPF_LOADER_UPGRADEABLE)) {
+    return { ok: false, reason: 'wrong-owner' };
+  }
   // bincode UpgradeableLoaderState::ProgramData — 4-byte variant (3), 8-byte
   // slot, then Option<Pubkey> as a 1-byte tag plus the key.
-  if (info.data.length < 45 || info.data.readUInt32LE(0) !== 3) return null;
-  if (info.data[12] !== 1) return null;
-  return new PublicKey(info.data.subarray(13, 45));
+  if (info.data.length < 45 || info.data.readUInt32LE(0) !== 3) {
+    return { ok: false, reason: 'malformed' };
+  }
+  // Only an explicit `Option::None` tag (0) means genuinely immutable. Any
+  // other tag is not a valid bincode `Option`, so it is a parse failure, not a
+  // revoked authority — treating it as immutable would tell an operator their
+  // program can never create vaults again on the strength of a corrupt or
+  // unrecognised byte.
+  const tag = info.data[12];
+  if (tag === 0) return { ok: false, reason: 'immutable' };
+  if (tag !== 1) return { ok: false, reason: 'malformed' };
+  return { ok: true, authority: new PublicKey(info.data.subarray(13, 45)) };
+}
+
+/** Human-readable explanation for a non-`ok` {@link fetchUpgradeAuthorityState}. */
+export function explainUpgradeAuthority(reason, programId) {
+  const id = programId.toBase58();
+  switch (reason) {
+    case 'not-found':
+      return `no ProgramData account exists for ${id}. The program is not deployed ` +
+        `on this cluster, or --program-id / --url is wrong.`;
+    case 'wrong-owner':
+      return `the ProgramData account for ${id} is not owned by the upgradeable ` +
+        `loader, so ${id} is not an upgradeable program.`;
+    case 'malformed':
+      return `the ProgramData account for ${id} did not parse as ` +
+        `UpgradeableLoaderState::ProgramData.`;
+    case 'immutable':
+      return `${id} is immutable — its upgrade authority has been revoked.`;
+    default:
+      return `unknown ProgramData state for ${id}.`;
+  }
 }
 
 /**
@@ -65,6 +106,11 @@ export async function ensureProgramConfig({
   program,
   signer,
   desiredAuthority,
+  // Optional key that pays the account rent and the fee. `initialize_config`
+  // declares `payer` as a Signer separate from `upgrade_authority`, so an ops
+  // key can carry the cost and the authority need not hold SOL. Defaults to
+  // `signer` when omitted.
+  payer = null,
   log = console.log,
 }) {
   const connection = program.provider.connection;
@@ -98,15 +144,19 @@ export async function ensureProgramConfig({
   }
 
   const authority = desiredAuthority ?? signer.publicKey;
-  const onChainUpgradeAuthority = await fetchUpgradeAuthority(connection, programId);
+  const authState = await fetchUpgradeAuthorityState(connection, programId);
 
-  if (onChainUpgradeAuthority === null) {
+  if (!authState.ok) {
+    // Report WHICH of the four states this is. `new-vault.mjs` and
+    // `init-devnet-vault.mjs` both reach here, and a wrong --url or an
+    // undeployed program must not be reported as permanent immutability.
     throw new Error(
-      `Program ${programId.toBase58()} has no readable upgrade authority, so the ` +
-      `program config cannot be bootstrapped. The config is mandatory before ` +
-      `any vault can be initialized.`
+      `${explainUpgradeAuthority(authState.reason, programId)} The program config ` +
+      `cannot be bootstrapped, and it is mandatory before any vault can be ` +
+      `initialized.`
     );
   }
+  const onChainUpgradeAuthority = authState.authority;
 
   if (!onChainUpgradeAuthority.equals(signer.publicKey)) {
     throw new Error(
@@ -122,19 +172,34 @@ export async function ensureProgramConfig({
 
   log(`ℹ️  Bootstrapping program config at ${configPda.toBase58()}`);
   log(`   Vault-creation authority will be: ${authority.toBase58()}`);
-  const tx = await program.methods
+  const feePayer = payer ?? signer;
+  if (payer && !payer.publicKey.equals(signer.publicKey)) {
+    log(`ℹ️  Rent and fees paid by ${payer.publicKey.toBase58()}`);
+  }
+  // Build the transaction rather than calling `.rpc()`, so the TRANSACTION fee
+  // payer can be set explicitly. Setting the instruction's `payer` account only
+  // decides who funds the account rent; `.rpc()` sends through the provider,
+  // and Anchor assigns `tx.feePayer = tx.feePayer ?? provider.wallet.publicKey`
+  // — the upgrade authority. With an ops payer supplied and an authority holding
+  // no SOL, rent would come from the right key while the fee still did not.
+  const built = await program.methods
     .initializeConfig(authority)
     .accounts({
       upgradeAuthority: signer.publicKey,
-      payer: signer.publicKey,
+      payer: feePayer.publicKey,
       // Passed explicitly rather than left to Anchor's PDA resolution: the IDL
       // bakes the build-time `declare_id!` into this account's seed, so
       // resolution would target the committed program's ProgramData even when
       // the caller has retargeted `idl.address` to another cluster's program.
       programData: programDataPda(programId),
     })
-    .signers([signer])
-    .rpc();
+    .transaction();
+  built.feePayer = feePayer.publicKey;
+
+  // The provider's wallet is `signer`, so it signs automatically. A distinct
+  // fee payer must be supplied as an extra signer.
+  const extraSigners = feePayer.publicKey.equals(signer.publicKey) ? [] : [feePayer];
+  const tx = await program.provider.sendAndConfirm(built, extraSigners);
   log(`✅ Program config created. Transaction: ${tx}`);
   log(
     `⚠️  ${authority.toBase58()} is now the ONLY key that can create vaults on ` +

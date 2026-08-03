@@ -116,6 +116,29 @@ fn initialize_config_can_delegate_to_a_different_authority() {
     assert_eq!(ctx.program_config().unwrap().authority, ops_key);
 }
 
+/// The same zero-key guard both rotation instructions have. Bootstrapping to the
+/// zero key would create a config nobody can authorize with, and because the
+/// config is create-once the only remedy would be an upgrade-authority override —
+/// or nothing at all, if the program had since been made immutable.
+#[test]
+fn initialize_config_rejects_the_zero_key() {
+    let mut ctx = BareCtx::new();
+    let upgrade_authority = ctx.upgrade_authority.insecure_clone();
+
+    let err = ctx
+        .try_initialize_config_as(&upgrade_authority, Pubkey::default())
+        .expect_err("the zero key must not be installable as the authority");
+    assert_anchor_err(&err, ErrorCode::InvalidAuthority);
+    assert!(
+        ctx.program_config().is_none(),
+        "rejected bootstrap must not create the config"
+    );
+
+    // And the slot is still free for a real authority afterwards.
+    ctx.try_initialize_config_as(&upgrade_authority, upgrade_authority.pubkey())
+        .expect("a valid authority must still be installable");
+}
+
 #[test]
 fn initialize_config_is_singleton() {
     let mut ctx = BareCtx::new();
@@ -147,8 +170,14 @@ fn initialize_config_rejects_foreign_program_data() {
     let impostor_key = impostor.pubkey();
     ctx.install_foreign_program_data(foreign, &impostor_key);
 
-    ctx.try_initialize_config_with_program_data(&impostor, impostor_key, foreign)
+    let err = ctx
+        .try_initialize_config_with_program_data(&impostor, impostor_key, foreign)
         .expect_err("program_data must be this program's own");
+    // Pin the reason, matching the override twin: a bare `expect_err` would pass
+    // on any failure, including a harness-side mistake such as a wrong account
+    // order or a missing signer. The seeds constraint rejects this before the
+    // upgrade-authority comparison is ever reached.
+    assert_anchor_framework_err(&err, 2006);
     assert!(ctx.program_config().is_none());
 }
 
@@ -490,6 +519,75 @@ fn override_config_authority_rejects_non_upgrade_authority() {
         .override_config_authority_as(&impostor, impostor.pubkey())
         .expect_err("only the upgrade authority may override");
     assert_anchor_err(&err, ErrorCode::NotProtocolAuthority);
+    assert_eq!(ctx.program_config().authority, before);
+}
+
+/// The recovery path must verify it is reading **this** program's `ProgramData`,
+/// not merely some account the loader owns.
+///
+/// `override_config_authority` declares its own `program_data` constraint rather
+/// than sharing one with `initialize_config`, so the spoofing test on that
+/// instruction gives this one no cover. Without `seeds` + `seeds::program`,
+/// `Account<'_, ProgramData>` would still check loader ownership — so an attacker
+/// need only be the upgrade authority of *any* upgradeable program, deploy a
+/// throwaway one, and present its `ProgramData` to seize vault creation on this
+/// program.
+#[test]
+fn override_config_authority_rejects_foreign_program_data() {
+    let mut ctx = VaultCtx::fresh();
+    let impostor = ctx.new_funded_keypair(10_000_000_000);
+    let before = ctx.program_config().authority;
+
+    // A ProgramData account at an unrelated address naming the impostor — i.e.
+    // the impostor genuinely is an upgrade authority, just not of this program.
+    let foreign = Keypair::new().pubkey();
+    let impostor_key = impostor.pubkey();
+    ctx.install_foreign_program_data(foreign, &impostor_key);
+
+    let err = ctx
+        .override_config_authority_with_program_data(&impostor, impostor_key, foreign)
+        .expect_err("program_data must be this program's own");
+    // The seeds constraint rejects it before the authority comparison is reached.
+    assert_anchor_framework_err(&err, 2006);
+    assert_eq!(
+        ctx.program_config().authority,
+        before,
+        "a rejected override must not move the authority"
+    );
+}
+
+/// An immutable program has no upgrade authority at all, so the recovery path is
+/// permanently closed — `Some(signer)` can never equal `None`.
+///
+/// This pins the `None` handling in `override_config_authority`'s own copy of the
+/// constraint. The natural-looking "handle the None case" refactor
+/// (`map_or(true, |a| a == signer)`) would make this instruction callable by
+/// **anyone** once the program is set `--final`, and the equivalent test on
+/// `initialize_config` would not notice.
+///
+/// Operationally this is the trade-off behind single-step rotation: making the
+/// program immutable also permanently forfeits config-authority recovery.
+#[test]
+fn immutable_program_can_never_override_config_authority() {
+    let mut ctx = VaultCtx::fresh();
+    let original = ctx.protocol_authority.insecure_clone();
+    let before = ctx.program_config().authority;
+
+    ctx.make_program_immutable();
+
+    // Not the erstwhile upgrade authority...
+    let err = ctx
+        .override_config_authority_as(&original, original.pubkey())
+        .expect_err("an immutable program has no upgrade authority to satisfy");
+    assert_anchor_err(&err, ErrorCode::NotProtocolAuthority);
+
+    // ...and not anyone else either.
+    let anyone = ctx.new_funded_keypair(10_000_000_000);
+    let err = ctx
+        .override_config_authority_as(&anyone, anyone.pubkey())
+        .expect_err("nobody can satisfy a None upgrade authority");
+    assert_anchor_err(&err, ErrorCode::NotProtocolAuthority);
+
     assert_eq!(ctx.program_config().authority, before);
 }
 

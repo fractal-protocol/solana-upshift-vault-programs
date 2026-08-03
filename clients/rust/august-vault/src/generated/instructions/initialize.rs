@@ -17,13 +17,24 @@ pub struct Initialize {
             /// Gates vault creation: it is restricted to the authority recorded in
 /// `ProgramConfig`, rather than being open to any paying signer.
 /// 
-/// **Declared first on purpose.** Anchor applies each field's constraints in
-/// declaration order, so putting the config and the authority check ahead of
-/// the three `init` accounts makes an unauthorized call fail with
-/// `NotProtocolAuthority` before any account is created. Declared after
-/// them, a caller too poor to fund the rent would instead fail with a System
-/// Program "insufficient lamports" error, so the rejection reason would
-/// depend on the caller's balance rather than on authorization.
+/// **Declared first so a missing config fails closed early.** Anchor
+/// deserializes fields in declaration order, so if this account does not
+/// exist the instruction aborts with `AccountNotInitialized` before any
+/// account is created. That much *is* order-sensitive.
+/// 
+/// The authority comparison below is **not**. It is a `constraint` on a
+/// non-`init` field, and `anchor_syn::codegen::accounts::try_accounts::
+/// generate_constraints` emits every `init` field's creation CPI ahead of
+/// *all* non-init access checks, regardless of declaration order — and
+/// within a single field `linearize` orders `Init` before `Raw`, so moving
+/// the constraint onto an `init` account would not help either. An
+/// unauthorized caller who is also their own `payer` and cannot fund the
+/// rent therefore fails with a System Program "insufficient lamports" error
+/// rather than `NotProtocolAuthority`.
+/// 
+/// Authorization is still enforced in every case — only the error surfaced
+/// depends on the caller's balance. Pinned by
+/// `unauthorized_signer_creates_nothing_whatever_their_balance`.
 /// 
 /// **Namespace note**: `vault_version` is a `u8` seed byte, so each deposit
 /// mint has 256 namespaces and each is single-use. `close_vault` cannot
@@ -134,13 +145,13 @@ impl Initialize {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
  pub struct InitializeInstructionData {
             discriminator: [u8; 8],
-                              }
+                                    }
 
 impl InitializeInstructionData {
   pub fn new() -> Self {
     Self {
                         discriminator: [175, 175, 109, 31, 13, 152, 155, 237],
-                                                                          }
+                                                                                        }
   }
 
     pub(crate) fn try_to_vec(&self) -> Result<Vec<u8>, std::io::Error> {
@@ -161,6 +172,7 @@ impl Default for InitializeInstructionData {
                 pub operator: Pubkey,
                 pub fee_recipient: Pubkey,
                 pub vault_version: u8,
+                pub share_offset: u64,
       }
 
 impl InitializeInstructionArgs {
@@ -200,6 +212,7 @@ pub struct InitializeBuilder {
                 operator: Option<Pubkey>,
                 fee_recipient: Option<Pubkey>,
                 vault_version: Option<u8>,
+                share_offset: Option<u64>,
         __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
@@ -210,13 +223,24 @@ impl InitializeBuilder {
             /// Gates vault creation: it is restricted to the authority recorded in
 /// `ProgramConfig`, rather than being open to any paying signer.
 /// 
-/// **Declared first on purpose.** Anchor applies each field's constraints in
-/// declaration order, so putting the config and the authority check ahead of
-/// the three `init` accounts makes an unauthorized call fail with
-/// `NotProtocolAuthority` before any account is created. Declared after
-/// them, a caller too poor to fund the rent would instead fail with a System
-/// Program "insufficient lamports" error, so the rejection reason would
-/// depend on the caller's balance rather than on authorization.
+/// **Declared first so a missing config fails closed early.** Anchor
+/// deserializes fields in declaration order, so if this account does not
+/// exist the instruction aborts with `AccountNotInitialized` before any
+/// account is created. That much *is* order-sensitive.
+/// 
+/// The authority comparison below is **not**. It is a `constraint` on a
+/// non-`init` field, and `anchor_syn::codegen::accounts::try_accounts::
+/// generate_constraints` emits every `init` field's creation CPI ahead of
+/// *all* non-init access checks, regardless of declaration order — and
+/// within a single field `linearize` orders `Init` before `Raw`, so moving
+/// the constraint onto an `init` account would not help either. An
+/// unauthorized caller who is also their own `payer` and cannot fund the
+/// rent therefore fails with a System Program "insufficient lamports" error
+/// rather than `NotProtocolAuthority`.
+/// 
+/// Authorization is still enforced in every case — only the error surfaced
+/// depends on the caller's balance. Pinned by
+/// `unauthorized_signer_creates_nothing_whatever_their_balance`.
 /// 
 /// **Namespace note**: `vault_version` is a `u8` seed byte, so each deposit
 /// mint has 256 namespaces and each is single-use. `close_vault` cannot
@@ -300,6 +324,11 @@ impl InitializeBuilder {
         self.vault_version = Some(vault_version);
         self
       }
+                #[inline(always)]
+      pub fn share_offset(&mut self, share_offset: u64) -> &mut Self {
+        self.share_offset = Some(share_offset);
+        self
+      }
         /// Add an additional account to the instruction.
   #[inline(always)]
   pub fn add_remaining_account(&mut self, account: solana_instruction::AccountMeta) -> &mut Self {
@@ -331,6 +360,7 @@ impl InitializeBuilder {
                                                                   operator: self.operator.clone().expect("operator is not set"),
                                                                   fee_recipient: self.fee_recipient.clone().expect("fee_recipient is not set"),
                                                                   vault_version: self.vault_version.clone().expect("vault_version is not set"),
+                                                                  share_offset: self.share_offset.clone().expect("share_offset is not set"),
                                     };
     
     accounts.instruction_with_remaining_accounts(args, &self.__remaining_accounts)
@@ -342,13 +372,24 @@ impl InitializeBuilder {
                   /// Gates vault creation: it is restricted to the authority recorded in
 /// `ProgramConfig`, rather than being open to any paying signer.
 /// 
-/// **Declared first on purpose.** Anchor applies each field's constraints in
-/// declaration order, so putting the config and the authority check ahead of
-/// the three `init` accounts makes an unauthorized call fail with
-/// `NotProtocolAuthority` before any account is created. Declared after
-/// them, a caller too poor to fund the rent would instead fail with a System
-/// Program "insufficient lamports" error, so the rejection reason would
-/// depend on the caller's balance rather than on authorization.
+/// **Declared first so a missing config fails closed early.** Anchor
+/// deserializes fields in declaration order, so if this account does not
+/// exist the instruction aborts with `AccountNotInitialized` before any
+/// account is created. That much *is* order-sensitive.
+/// 
+/// The authority comparison below is **not**. It is a `constraint` on a
+/// non-`init` field, and `anchor_syn::codegen::accounts::try_accounts::
+/// generate_constraints` emits every `init` field's creation CPI ahead of
+/// *all* non-init access checks, regardless of declaration order — and
+/// within a single field `linearize` orders `Init` before `Raw`, so moving
+/// the constraint onto an `init` account would not help either. An
+/// unauthorized caller who is also their own `payer` and cannot fund the
+/// rent therefore fails with a System Program "insufficient lamports" error
+/// rather than `NotProtocolAuthority`.
+/// 
+/// Authorization is still enforced in every case — only the error surfaced
+/// depends on the caller's balance. Pinned by
+/// `unauthorized_signer_creates_nothing_whatever_their_balance`.
 /// 
 /// **Namespace note**: `vault_version` is a `u8` seed byte, so each deposit
 /// mint has 256 namespaces and each is single-use. `close_vault` cannot
@@ -401,13 +442,24 @@ pub struct InitializeCpi<'a, 'b> {
             /// Gates vault creation: it is restricted to the authority recorded in
 /// `ProgramConfig`, rather than being open to any paying signer.
 /// 
-/// **Declared first on purpose.** Anchor applies each field's constraints in
-/// declaration order, so putting the config and the authority check ahead of
-/// the three `init` accounts makes an unauthorized call fail with
-/// `NotProtocolAuthority` before any account is created. Declared after
-/// them, a caller too poor to fund the rent would instead fail with a System
-/// Program "insufficient lamports" error, so the rejection reason would
-/// depend on the caller's balance rather than on authorization.
+/// **Declared first so a missing config fails closed early.** Anchor
+/// deserializes fields in declaration order, so if this account does not
+/// exist the instruction aborts with `AccountNotInitialized` before any
+/// account is created. That much *is* order-sensitive.
+/// 
+/// The authority comparison below is **not**. It is a `constraint` on a
+/// non-`init` field, and `anchor_syn::codegen::accounts::try_accounts::
+/// generate_constraints` emits every `init` field's creation CPI ahead of
+/// *all* non-init access checks, regardless of declaration order — and
+/// within a single field `linearize` orders `Init` before `Raw`, so moving
+/// the constraint onto an `init` account would not help either. An
+/// unauthorized caller who is also their own `payer` and cannot fund the
+/// rent therefore fails with a System Program "insufficient lamports" error
+/// rather than `NotProtocolAuthority`.
+/// 
+/// Authorization is still enforced in every case — only the error surfaced
+/// depends on the caller's balance. Pinned by
+/// `unauthorized_signer_creates_nothing_whatever_their_balance`.
 /// 
 /// **Namespace note**: `vault_version` is a `u8` seed byte, so each deposit
 /// mint has 256 namespaces and each is single-use. `close_vault` cannot
@@ -612,6 +664,7 @@ impl<'a, 'b> InitializeCpiBuilder<'a, 'b> {
                                 operator: None,
                                 fee_recipient: None,
                                 vault_version: None,
+                                share_offset: None,
                     __remaining_accounts: Vec::new(),
     });
     Self { instruction }
@@ -619,13 +672,24 @@ impl<'a, 'b> InitializeCpiBuilder<'a, 'b> {
       /// Gates vault creation: it is restricted to the authority recorded in
 /// `ProgramConfig`, rather than being open to any paying signer.
 /// 
-/// **Declared first on purpose.** Anchor applies each field's constraints in
-/// declaration order, so putting the config and the authority check ahead of
-/// the three `init` accounts makes an unauthorized call fail with
-/// `NotProtocolAuthority` before any account is created. Declared after
-/// them, a caller too poor to fund the rent would instead fail with a System
-/// Program "insufficient lamports" error, so the rejection reason would
-/// depend on the caller's balance rather than on authorization.
+/// **Declared first so a missing config fails closed early.** Anchor
+/// deserializes fields in declaration order, so if this account does not
+/// exist the instruction aborts with `AccountNotInitialized` before any
+/// account is created. That much *is* order-sensitive.
+/// 
+/// The authority comparison below is **not**. It is a `constraint` on a
+/// non-`init` field, and `anchor_syn::codegen::accounts::try_accounts::
+/// generate_constraints` emits every `init` field's creation CPI ahead of
+/// *all* non-init access checks, regardless of declaration order — and
+/// within a single field `linearize` orders `Init` before `Raw`, so moving
+/// the constraint onto an `init` account would not help either. An
+/// unauthorized caller who is also their own `payer` and cannot fund the
+/// rent therefore fails with a System Program "insufficient lamports" error
+/// rather than `NotProtocolAuthority`.
+/// 
+/// Authorization is still enforced in every case — only the error surfaced
+/// depends on the caller's balance. Pinned by
+/// `unauthorized_signer_creates_nothing_whatever_their_balance`.
 /// 
 /// **Namespace note**: `vault_version` is a `u8` seed byte, so each deposit
 /// mint has 256 namespaces and each is single-use. `close_vault` cannot
@@ -706,6 +770,11 @@ impl<'a, 'b> InitializeCpiBuilder<'a, 'b> {
         self.instruction.vault_version = Some(vault_version);
         self
       }
+                #[inline(always)]
+      pub fn share_offset(&mut self, share_offset: u64) -> &mut Self {
+        self.instruction.share_offset = Some(share_offset);
+        self
+      }
         /// Add an additional account to the instruction.
   #[inline(always)]
   pub fn add_remaining_account(&mut self, account: &'b solana_account_info::AccountInfo<'a>, is_writable: bool, is_signer: bool) -> &mut Self {
@@ -733,6 +802,7 @@ impl<'a, 'b> InitializeCpiBuilder<'a, 'b> {
                                                                   operator: self.instruction.operator.clone().expect("operator is not set"),
                                                                   fee_recipient: self.instruction.fee_recipient.clone().expect("fee_recipient is not set"),
                                                                   vault_version: self.instruction.vault_version.clone().expect("vault_version is not set"),
+                                                                  share_offset: self.instruction.share_offset.clone().expect("share_offset is not set"),
                                     };
         let instruction = InitializeCpi {
         __program: self.instruction.__program,
@@ -779,6 +849,7 @@ struct InitializeCpiBuilderInstruction<'a, 'b> {
                 operator: Option<Pubkey>,
                 fee_recipient: Option<Pubkey>,
                 vault_version: Option<u8>,
+                share_offset: Option<u64>,
         /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
   __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
 }

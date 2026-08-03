@@ -14,21 +14,39 @@ use anchor_spl::token_interface::{
     transfer_checked, BurnChecked, Mint, TokenAccount, TokenInterface, TransferChecked,
 };
 
-/// Redeems shares for underlying assets.
+/// Redeem without a slippage bound. Equivalent to `handler_checked` with
+/// `min_assets_out = 0`.
+pub fn handler(ctx: Context<Redeem>, shares: u64) -> Result<()> {
+    handler_checked(ctx, shares, 0)
+}
+
+/// Redeems shares for underlying assets, refusing to pay out less than
+/// `min_assets_out`.
+///
+/// The bound is on what the caller actually **receives** — net of the
+/// withdrawal fee — because both inputs to that figure can move between quoting
+/// and execution: `operator_update_aum` may lower the reported AUM (by up to
+/// `aum_decrease_limit`, which an admin can widen to 100%), and
+/// `set_withdrawal_fee` may raise the fee. `redeem` passes 0, so its behaviour
+/// is unchanged.
+///
+/// The mirror of `deposit_checked`; see its doc comment for why a caller-stated
+/// worst acceptable rate is needed on both legs.
 ///
 /// SECURITY: This function follows the CEI (Check-Effects-Interactions) pattern strictly.
 /// The liquidity check MUST occur before burn_shares and transfers to prevent wasted
 /// compute units on failed transactions and ensure proper error handling.
 /// See security finding C-01 in SECURITY_AUDIT_REPORT.md.
-pub fn handler(ctx: Context<Redeem>, shares: u64) -> Result<()> {
+pub fn handler_checked(ctx: Context<Redeem>, shares: u64, min_assets_out: u64) -> Result<()> {
     require!(shares > 0, ErrorCode::ZeroAmount);
     require!(!ctx.accounts.vault_state.paused, ErrorCode::VaultPaused);
 
     let supply = ctx.accounts.share_mint.supply;
     let total_assets = ctx.accounts.vault_state.total_assets()?;
-    let assets = VaultState::assets_for_redeem(supply, total_assets, shares)?;
-
-    require!(assets > 0, ErrorCode::ZeroAmount);
+    let assets = ctx
+        .accounts
+        .vault_state
+        .assets_for_redeem(supply, total_assets, shares)?;
 
     let fee_numerator = (assets as u128)
         .checked_mul(ctx.accounts.vault_state.withdrawal_fee as u128)
@@ -39,6 +57,15 @@ pub fn handler(ctx: Context<Redeem>, shares: u64) -> Result<()> {
         .map_err(|_| ErrorCode::NumberOverflow)?;
 
     let final_amount = assets.checked_sub(fees).ok_or(ErrorCode::MathError)?;
+
+    // Slippage before the zero check, for the same reason as `deposit_checked`:
+    // a redemption that rounds to nothing also violates any non-zero
+    // `min_assets_out`, and `SlippageExceeded` says which of the two happened.
+    // Ordered the other way it would surface as `ZeroAmount` ("Amount must be
+    // > 0") even though the caller passed a perfectly good share count.
+    // `redeem` passes 0, so it still reports `ZeroAmount` here.
+    require!(final_amount >= min_assets_out, ErrorCode::SlippageExceeded);
+    require!(assets > 0, ErrorCode::ZeroAmount);
 
     // CEI - Checks: Validate liquidity BEFORE any state changes
     require!(

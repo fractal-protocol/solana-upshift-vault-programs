@@ -6,6 +6,7 @@
 //
 // As of 10 March 2036 (the "Change Date"), use of this software will be
 // governed by version 2.0 of the Apache License.
+import { redactEndpoint } from './redact.mjs';
 import { Connection, Keypair, PublicKey, SystemProgram, SYSVAR_RENT_PUBKEY } from '@solana/web3.js';
 import { AnchorProvider, Program, Wallet } from '@coral-xyz/anchor';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
@@ -28,12 +29,36 @@ const logSuccess = (msg) => log(`✅ ${msg}`, 'green');
 const logError = (msg) => log(`❌ ${msg}`, 'red');
 const logInfo = (msg) => log(`ℹ️  ${msg}`, 'cyan');
 
-// Parse programId from CLI args or use default
+// Parse args. `--network` is honoured, not silently discarded: this previously
+// accepted the flag and ignored it while defaulting to the LIVE MAINNET program
+// and taking the RPC from deploy.config.json — so `meta:devnet` on a
+// mainnet-configured machine sent a mainnet transaction while the operator
+// believed otherwise.
 const args = process.argv.slice(2).reduce((acc, arg, i, arr) => {
-  if (arg === '--program-id') acc.programId = arr[i + 1];
+  // Reject a flag with no value rather than recording `undefined`. A trailing
+  // `--network` (truncated paste, empty shell variable, npm script appending
+  // the flag last) would otherwise leave `args.network` falsy, and the
+  // cross-check below short-circuits on the falsy operand — silently restoring
+  // the accept-and-ignore behaviour this parser exists to prevent, right before
+  // a live transaction. Same for `--program-id`, whose default is the LIVE
+  // MAINNET program.
+  const value = (name) => {
+    const v = arr[i + 1];
+    if (v === undefined || v.startsWith('-')) {
+      logError(`${name} requires a value`);
+      process.exit(1);
+    }
+    return v;
+  };
+  if (arg === '--program-id') acc.programId = value(arg);
+  if (arg === '--network') acc.network = value(arg);
   return acc;
-}, { programId: 'up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt' });
-const programId = new PublicKey(args.programId);
+}, {});
+
+/// The mainnet program. Used as a default ONLY when the resolved cluster is
+/// mainnet — previously it was the unconditional default, so `meta:devnet`
+/// derived every PDA under the mainnet program and sent to devnet.
+const MAINNET_PROGRAM_ID = 'up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt';
 
 async function main() {
   log('\n🎨 Creating Vault Token Metadata', 'green');
@@ -41,9 +66,61 @@ async function main() {
   // Load config
   const configPath = join(__dirname, '..', 'deploy.config.json');
   const config = JSON.parse(readFileSync(configPath, 'utf-8'));
-  
+
+  // Resolve the cluster ONCE, and never skip the check. `rpcEndpoint` is what
+  // actually decides where the transaction goes; `network` is the label. The
+  // check used to be wrapped in `if (args.network)`, so `pnpm meta` — which
+  // passes no flag — sent a real transaction to whatever the config pointed at
+  // with no confirmation at all.
+  if (!config.network) {
+    logError(
+      `deploy.config.json has no "network" field, so the cluster implied by ` +
+      `rpcEndpoint (${redactEndpoint(config.rpcEndpoint)}) cannot be confirmed.\n` +
+      `   Add "network": "devnet" | "mainnet" to the config.`
+    );
+    process.exit(1);
+  }
+  if (args.network && args.network !== config.network) {
+    logError(
+      `--network ${args.network} contradicts deploy.config.json ` +
+      `("network": "${config.network}", rpcEndpoint drives the actual cluster).\n` +
+      `   This script sends to the config's RPC, so it would have targeted ` +
+      `${config.network}. Fix the config or drop the flag.`
+    );
+    process.exit(1);
+  }
+
+  // The program must match the cluster too. Defaulting to the mainnet program
+  // is only ever right on mainnet.
+  if (!args.programId && config.network !== 'mainnet') {
+    logError(
+      `--program-id is required on ${config.network}: the built-in default is ` +
+      `the MAINNET program (${MAINNET_PROGRAM_ID}), which does not exist there.`
+    );
+    process.exit(1);
+  }
+  const programId = new PublicKey(args.programId ?? MAINNET_PROGRAM_ID);
+
+  logInfo(`Cluster: ${config.network} (${redactEndpoint(config.rpcEndpoint)})`);
+  logInfo(`Program: ${programId.toBase58()}`);
+
   const deployer = Keypair.fromSecretKey(bs58.decode(config.deployerPrivateKey));
   logSuccess(`Deployer: ${deployer.publicKey.toBase58()}`);
+
+  // `create_share_token_metadata` takes `admin` as a Signer, and the only key
+  // this script holds is the deployer. If they differ the transaction cannot be
+  // signed at all — say so here rather than failing inside `serialize()` with a
+  // bare "Signature verification failed".
+  if (config.vaultConfig?.admin && config.vaultConfig.admin !== deployer.publicKey.toBase58()) {
+    logError(
+      `vaultConfig.admin (${config.vaultConfig.admin}) is not the deployer ` +
+      `(${deployer.publicKey.toBase58()}), but the instruction requires the ` +
+      `admin's signature and this script holds only deployerPrivateKey.\n` +
+      `   Run this from the admin key, or build the transaction for external ` +
+      `signing the way deploy/bootstrap-config.mjs --unsigned does.`
+    );
+    process.exit(1);
+  }
 
   // Setup connection
   const connection = new Connection(config.rpcEndpoint, 'confirmed');
@@ -59,20 +136,38 @@ async function main() {
   const provider = new AnchorProvider(connection, new Wallet(deployer), { commitment: 'confirmed' });
   const program = new Program(idl, provider);
 
-  // Derive PDAs (include depositMint in seeds for multi-vault support)
+  // Derive PDAs. The seeds are (tag, deposit_mint, vault_version) — omitting
+  // vault_version derives an address that does not exist, so every run failed
+  // with AccountNotInitialized after paying a fee. Matches
+  // `create_metadata.rs` and the derivation in `new-vault.mjs`.
   const depositMint = new PublicKey(config.vaultConfig.depositMint);
+  // Validate before it reaches `Buffer.from([...])`, which coerces silently:
+  // `Buffer.from(['v1'])` is `<Buffer 00>` and `Buffer.from([300])` is
+  // `<Buffer 2c>`, so a bad config value derives a DIFFERENT live vault's PDAs
+  // while the log below prints the value the operator wrote. Unlike
+  // `new-vault.mjs` there is no `u8` instruction argument downstream to throw
+  // on it, so this is the only place it can be caught.
+  const vaultVersion = config.vaultConfig.vaultVersion ?? 0;
+  if (!Number.isInteger(vaultVersion) || vaultVersion < 0 || vaultVersion > 255) {
+    logError(
+      `vaultConfig.vaultVersion must be an integer in 0..=255, got ` +
+      `${JSON.stringify(config.vaultConfig.vaultVersion)}.`
+    );
+    process.exit(1);
+  }
 
   const [vaultState] = PublicKey.findProgramAddressSync(
-    [Buffer.from('VAULT_STATE'), depositMint.toBuffer()],
+    [Buffer.from('VAULT_STATE'), depositMint.toBuffer(), Buffer.from([vaultVersion])],
     programId
   );
 
   const [shareMint] = PublicKey.findProgramAddressSync(
-    [Buffer.from('mint'), depositMint.toBuffer()],
+    [Buffer.from('mint'), depositMint.toBuffer(), Buffer.from([vaultVersion])],
     programId
   );
 
   log(`Deposit Mint: ${depositMint.toBase58()}`, 'cyan');
+  log(`Vault Version: ${vaultVersion}`, 'cyan');
   log(`Vault State: ${vaultState.toBase58()}`, 'cyan');
   log(`Share Mint: ${shareMint.toBase58()}
 `, 'cyan');
