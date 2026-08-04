@@ -165,6 +165,38 @@ six-figure opening deposit, where `1000` asks roughly a thousandth of that.
   transfer-altering extensions**; the supported mint types are agreed as part of
   vault onboarding.
 
+### Writing up a security fix in this repository
+
+This repository is **public, and the program it builds is upgradeable and live**.
+A fix therefore becomes readable the moment it is pushed, while the deployed
+program is still vulnerable — the merge and the remediation are separate events,
+often days apart.
+
+Two consequences, and they pull in opposite directions:
+
+1. **A fix in public discloses the weakness it fixes, and that is unavoidable.**
+   The reasoning behind a security-relevant constant has to live next to it, and
+   the file has to stay public for the build to be reproducibly verifiable. Do not
+   try to obscure it — an unexplained constant is worse than a disclosed one,
+   because the next person to touch it will not know what it is load-bearing for.
+2. **Quantified exploit results are a different matter, and they are avoidable.**
+   Sweep outputs, profitability percentages and worked attack parameters convert
+   "there is a weakness here" into "here is how well it pays". They add nothing a
+   reviewer of this repository needs.
+
+So: **explain the mechanism, keep the numbers out.** State what property is being
+defended and why the chosen value defends it; put sweep regions, profitability
+figures and worked attack configurations in the internal security review and
+reference it. `share_burn_pricing.rs` follows this pattern and says so explicitly;
+`state/vault.rs`'s `EXTRA_SHARES` comment explains the manoeuvre without a single
+figure.
+
+This applies to **commit messages and pull-request descriptions as much as to
+code** — they are the same public artifact, and a commit message cannot be edited
+after the fact without rewriting history, which on this repository would re-SHA
+the commits that `verified-hashes.txt`'s CI provenance is pinned to. Get it right
+the first time; a PR body can be edited, a commit message effectively cannot.
+
 ## Reproducible Builds & Verification
 
 The program builds reproducibly: `solana-verify build` in a pinned Docker image (Solana 2.3.0) yields a byte-identical `.so` whose SHA-256 is recorded in [`verified-hashes.txt`](verified-hashes.txt) and asserted in CI, and the program embeds a `security_txt!` contact + source-repo pointer in its bytecode. Because the program is **upgradeable**, on-chain verification is point-in-time. See **[VERIFY.md](VERIFY.md)** for the pinned toolchain, exact commands, expected hashes, and how to verify the live on-chain program.
