@@ -37,3 +37,19 @@ test-scripts/env.sh
 # Temporary files
 *.tmp
 *.log
+
+# Review and audit documents (this repository is PUBLIC)
+#
+# Audit drafts, due-diligence reports and their working copies get dropped in the
+# working tree while they are being worked through, and a `git add -A` will
+# happily stage one. That has nearly happened here more than once with a
+# due-diligence draft sitting in the repo root — the risk is not a broken build,
+# it is publishing someone else's confidential document.
+#
+# No negation pattern on purpose: publishing a document should require saying so
+# explicitly with `git add -f <file>`, rather than depending on where the file
+# happens to sit. Nothing of this kind is tracked today.
+*.pdf
+*.docx
+*.xlsx
+*.pptx
