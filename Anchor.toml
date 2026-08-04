@@ -30,8 +30,8 @@ wallet = "/tmp/deployer_keypair.json"
 startup_wait = 20000
 
 [scripts]
-cei-pattern = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/1_*.ts tests/11_redeem_cei_pattern.ts"
-close-vault = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/12_*.ts"
-multi-vault = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/11_*.ts"
-test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/1_*.ts tests/2_*.ts tests/3_*.ts tests/11_*.ts tests/12_*.ts tests/13_*.ts"
-version-security = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/13_*.ts"
+cei-pattern = "pnpm exec ts-mocha -p ./tsconfig.json -t 1000000 tests/1_*.ts tests/11_redeem_cei_pattern.ts"
+close-vault = "pnpm exec ts-mocha -p ./tsconfig.json -t 1000000 tests/12_*.ts"
+multi-vault = "pnpm exec ts-mocha -p ./tsconfig.json -t 1000000 tests/11_*.ts"
+test = "pnpm exec ts-mocha -p ./tsconfig.json -t 1000000 tests/1_*.ts tests/2_*.ts tests/3_*.ts tests/11_*.ts tests/12_*.ts tests/13_*.ts"
+version-security = "pnpm exec ts-mocha -p ./tsconfig.json -t 1000000 tests/13_*.ts"
