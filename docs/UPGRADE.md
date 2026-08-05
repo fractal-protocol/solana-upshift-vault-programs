@@ -113,6 +113,21 @@ git checkout <commit-on-default-branch>
 git tag v0.1.0 && git push origin v0.1.0     # v* tags are admin-only per the tag ruleset
 ```
 
+Releasing a commit that is **behind** the default branch is supported (the guard
+accepts `identical|behind`), and is the right choice when the tip has since
+gained commits that do not change the program — the release then names the exact
+commit the audit and the frontend's `EXPECTED_BUILD` refer to.
+
+> **Do not add `--target` to `gh release create`.** If the tagged commit's
+> `.github/workflows/` differs from the default branch's — which any workflow
+> change merged after it produces — `POST /releases` demands the `workflows`
+> scope. That is not a valid `permissions:` key and `GITHUB_TOKEN` can never hold
+> it, so publishing fails with `403 Resource not accessible by integration`,
+> naming a permission rather than its cause. This sank the first `v0.1.0`
+> attempt. Note the tag itself is unaffected — only the release object fails, so
+> the fix requires a NEW tag on a commit carrying the corrected workflow (a
+> tag-triggered run always uses the workflow file as of the tagged commit).
+
 Download the released `august_vault_v0.1.0.so`, and confirm it matches:
 
 ```bash

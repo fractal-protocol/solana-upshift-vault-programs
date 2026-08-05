@@ -202,12 +202,28 @@ jobs:
                   NOTES=$(printf 'Reproducible build of %s at commit %s (solana-verify %s, image %s).\n\nExecutable hash (get-program-hash / get-executable-hash): `%s`.\n\nReproduce: check out this tag and follow VERIFY.md.\n\nDeploying on-chain: this artifact is NOT auto-deployed. The mainnet upgrade authority is a Fordefi MPC key; perform the verified upgrade + OtterSec registration per docs/UPGRADE.md. Verification is point-in-time (the program is upgradeable).' \
                     "$PACKAGE" "$SHA" "$SOLANA_VERIFY_VERSION" "$VERIFIABLE_IMAGE" "$EXEC")
 
+                  # NO --target. It is redundant (the tag already exists and the
+                  # assertion above proves it points at $SHA), and passing it makes
+                  # the release UNPUBLISHABLE by GITHUB_TOKEN whenever the tagged
+                  # commit's `.github/workflows/` differs from the default branch's:
+                  # POST /releases then requires the `workflows` scope, which is not
+                  # a valid `permissions:` key and which GITHUB_TOKEN can never hold.
+                  # It fails as `403 Resource not accessible by integration` — a
+                  # permissions error that looks nothing like its cause. Omitting it
+                  # makes the API evaluate the default branch's own tip against
+                  # itself, so the check cannot fire.
+                  #
+                  # This is not hypothetical: it sank the first v0.1.0 attempt. The
+                  # guard deliberately accepts a tag that is `behind` the default
+                  # branch, so releasing an older commit is a SUPPORTED path — and
+                  # any workflow change merged after that commit triggers this. See
+                  # https://github.com/cli/cli/issues/9514.
                   if gh release view "$TAG" >/dev/null 2>&1; then
                     echo "Release $TAG already exists — verifying its asset."
                   else
                     gh release create "$TAG" \
                       "dist/${PACKAGE}_${TAG}.so" "dist/${PACKAGE}_${TAG}.hashes.txt" \
-                      --target "$SHA" --title "$TAG" --notes "$NOTES"
+                      --title "$TAG" --notes "$NOTES"
                   fi
 
                   # Read back the published .so and confirm it matches what we built.
