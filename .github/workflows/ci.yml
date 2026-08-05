@@ -208,14 +208,12 @@ jobs:
             - name: Rust unit tests (program-side math)
               run: cargo test -p august-vault --lib
 
-            # MUST run after "Build (SBF, committed program ID)" above and BEFORE
-            # the localnet-ID rebuild in phase 2: these tests `include_bytes!` the
-            # on-disk target/deploy artifact, and cargo does not rebuild it for
-            # them (integration-tests is a separate workspace). Reordering would
-            # silently point the mainnet-fork guard at the wrong bytecode.
-            # integration-tests/build.rs enforces this — it fails the build if any
-            # source the SBF build read has changed since it ran — so a reorder
-            # breaks loudly instead of passing against stale bytes.
+            # These tests `include_bytes!` the on-disk target/deploy artifact, and
+            # cargo has no dependency edge to it (integration-tests is a separate
+            # workspace). integration-tests/build.rs therefore runs the SBF build
+            # itself, so the bytecode always matches the source tree — including
+            # after phase 2 below rewrites declare_id! for localnet. Previously
+            # this was safe only because `anchor build` happened to run above.
             - name: LiteSVM integration tests (incl. mainnet-fork layout guard)
               run: cargo test --manifest-path integration-tests/Cargo.toml --tests --locked
 

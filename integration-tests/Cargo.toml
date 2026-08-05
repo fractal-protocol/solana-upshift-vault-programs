@@ -24,17 +24,15 @@ publish = false
 # under `cargo test` in milliseconds and are parallel-safe (each test gets its
 # own SVM).
 #
-# Build the program first:
-#     anchor build
-#
-# Then:
+# Run the tests with:
 #     cargo test --manifest-path integration-tests/Cargo.toml
 #
-# The first step is not optional and is machine-enforced: cargo has no dependency
-# edge from these tests to the program's SBF artifact (separate workspaces), so a
-# stale artifact would be tested silently and pass. build.rs fails the build if any
-# source the SBF build actually read (per its own dep-info) has changed since it ran.
-# See build.rs for the reasoning and the ALLOW_STALE_PROGRAM_SO escape hatch.
+# No separate `anchor build` needed: build.rs runs the SBF build first, because
+# cargo has no dependency edge from these tests to the program's artifact
+# (separate workspaces) and a stale one would be tested silently and pass. This
+# does require the SBF toolchain (`cargo-build-sbf`, from the Solana CLI). See
+# build.rs for the reasoning and the ALLOW_STALE_PROGRAM_SO escape hatch, which
+# skips the build to test a hand-placed artifact.
 
 [lib]
 path = "src/lib.rs"
