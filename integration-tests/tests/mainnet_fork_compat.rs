@@ -703,63 +703,173 @@ fn offpar_vault_real_state_is_above_par_and_prices_inside_pro_rata() {
          supply={supply}); at par every offset gives the same answer"
     );
 
-    // One whole share / one whole token (both mints are 9 decimals).
-    let one = 1_000_000_000u64;
+    // ---------------------------------------------------------------------
+    // EXERCISE THE LOADED BYTECODE. Everything above reads state; the assertions
+    // that matter must run the deposit/redeem HANDLERS in the .so that
+    // `new_svm()` loaded. Calling `vs.shares_for_deposit(..)` here instead would
+    // only re-run host-side Rust: a regression in the handler's legacy-offset
+    // wiring — the very thing this fixture exists to catch — would leave a
+    // helper-only test green.
+    // ---------------------------------------------------------------------
+    let one = 1_000_000_000u64; // 1 whole token / share (both mints are 9 decimals)
 
-    // --- redeem: the offset term binds, so the holder is paid strictly INSIDE
-    // pro rata. This is the direction that makes a share-burn attack unprofitable.
-    let paid = vs.assets_for_redeem(supply, total_assets, one).unwrap();
-    let pro_rata_assets = (one as u128 * total_assets as u128 / supply as u128) as u64;
     assert_eq!(
-        paid,
-        ref_assets(supply, total_assets, one),
-        "independent formula"
-    );
-    assert_eq!(paid, 1_999_999_997, "frozen literal");
-    assert!(
-        paid < pro_rata_assets,
-        "above par the offset term must be the smaller of the two (paid={paid}, \
-         pro_rata={pro_rata_assets})"
+        vs.withdrawal_fee, 0,
+        "fixture assumption: this vault charges no withdrawal fee, so the redeem \
+         payout below is gross == net"
     );
 
-    // --- deposit: the offset term is the larger, so `max` takes it and the
-    // depositor mints slightly MORE than pro rata.
-    let minted = vs.shares_for_deposit(supply, total_assets, one).unwrap();
+    let user = Keypair::new();
+    svm.airdrop(&user.pubkey(), 1_000_000_000).unwrap();
+    let user_tokens = Keypair::new().pubkey();
+    let user_shares = Keypair::new().pubkey();
+    inject(
+        &mut svm,
+        user_tokens,
+        spl,
+        packed_token(deposit_mint, user.pubkey(), one),
+    );
+    inject(
+        &mut svm,
+        user_shares,
+        spl,
+        packed_token(share_mint, user.pubkey(), 0),
+    );
+
+    // --- DEPOSIT. Above par the offset term is the LARGER, so `max` takes it and
+    // the depositor mints slightly more than pro rata.
     let pro_rata_shares = (one as u128 * supply as u128 / total_assets as u128) as u64;
-    assert_eq!(
-        minted,
-        ref_shares(supply, total_assets, one),
-        "independent formula"
+    let expected_shares = ref_shares(supply, total_assets, one);
+    let ix = Instruction {
+        program_id: august_vault::ID,
+        accounts: ix_accounts::Deposit {
+            vault_state,
+            vault_token_ata: vault_ata,
+            sender_token_account: user_tokens,
+            sender_share_account: user_shares,
+            share_mint,
+            deposit_mint,
+            signer: user.pubkey(),
+            token_program: spl,
+        }
+        .to_account_metas(None),
+        data: ix_data::Deposit { amount: one }.data(),
+    };
+    let bh = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(&[ix], Some(&user.pubkey()), &[&user], bh);
+    let res = svm.send_transaction(tx);
+    assert!(
+        res.is_ok(),
+        "deposit against real off-par vault state failed: {:?}",
+        res.err()
     );
+
+    let minted = token_amount(&svm, &user_shares);
+    assert_eq!(minted, expected_shares, "independent formula");
     assert_eq!(minted, 500_000_000, "frozen literal");
     assert!(
         minted > pro_rata_shares,
         "above par the offset term must be the larger (minted={minted}, \
          pro_rata={pro_rata_shares})"
     );
-
-    // --- what the retune actually changed on this live state. The DEPLOYED build
-    // (fca11d73) used offsets of 1, which round to pro rata at this scale. Pinned
-    // as literals so the size of the change to live pricing is recorded rather
-    // than inferred: a holder redeeming one whole share receives 4,975 base units
-    // less (-0.00025%), and a depositor of one whole token mints 1,244 base units
-    // more (+0.00025%).
-    let redeem_under_old_offsets = 2_000_004_972u64;
-    let deposit_under_old_offsets = 499_998_756u64;
+    // The retune's effect on live pricing, now backed by an executed transaction
+    // rather than arithmetic: the DEPLOYED build (fca11d73) used offsets of 1,
+    // which round to pro rata at this scale, so it would have minted 1,244 fewer
+    // base units (+0.00025% for the depositor).
     assert_eq!(
-        redeem_under_old_offsets - paid,
-        4_975,
-        "redeem shift vs the deployed build"
-    );
-    assert_eq!(
-        minted - deposit_under_old_offsets,
+        minted - 499_998_756,
         1_244,
         "deposit shift vs the deployed build"
     );
 
+    let vs_after = read_vault_state(&svm, &vault_state);
+    assert_eq!(
+        vs_after.local_aum,
+        OFFPAR_LOCAL_AUM + one,
+        "local_aum += deposit"
+    );
+    assert_eq!(
+        vs_after.deployed_aum, OFFPAR_DEPLOYED_AUM,
+        "deployed_aum unchanged by a user deposit"
+    );
+    assert_eq!(
+        token_amount(&svm, &vault_ata),
+        one,
+        "the deposit is the vault's entire reserve — it started empty"
+    );
+
+    // --- REDEEM straight back out. The deposit above is what makes this possible:
+    // the reserve started at zero (fully deployed), so there was nothing to pay a
+    // redemption from.
+    let fee_recipient_acct = Keypair::new().pubkey();
+    inject(
+        &mut svm,
+        fee_recipient_acct,
+        spl,
+        packed_token(deposit_mint, vs_after.fee_recipient, 0),
+    );
+    let supply_after = SplMint::unpack(&svm.get_account(&share_mint).unwrap().data[..SplMint::LEN])
+        .unwrap()
+        .supply;
+    let total_after = vs_after.total_assets().unwrap();
+    let expected_assets = ref_assets(supply_after, total_after, minted);
+    let pro_rata_assets = (minted as u128 * total_after as u128 / supply_after as u128) as u64;
+
+    let redeem_ix = Instruction {
+        program_id: august_vault::ID,
+        accounts: ix_accounts::Redeem {
+            vault_state,
+            vault_deposit_ata: vault_ata,
+            sender_token_account: user_tokens,
+            sender_share_account: user_shares,
+            fee_recipient_account: fee_recipient_acct,
+            share_mint,
+            deposit_mint,
+            signer: user.pubkey(),
+            token_program: spl,
+        }
+        .to_account_metas(None),
+        data: ix_data::Redeem { shares: minted }.data(),
+    };
+    let bh = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(&[redeem_ix], Some(&user.pubkey()), &[&user], bh);
+    let res = svm.send_transaction(tx);
+    assert!(
+        res.is_ok(),
+        "redeem against real off-par vault state failed: {:?}",
+        res.err()
+    );
+
+    let returned = token_amount(&svm, &user_tokens);
+    assert_eq!(returned, expected_assets, "independent formula");
+    assert_eq!(returned, 999_999_998, "frozen literal");
+    // The direction that makes a share-burn attack unprofitable: above par the
+    // holder is paid strictly INSIDE pro rata.
+    assert!(
+        returned < pro_rata_assets,
+        "above par the offset term must be the smaller (returned={returned}, \
+         pro_rata={pro_rata_assets})"
+    );
+    // And the round trip must not extract value, against real state.
+    assert!(
+        returned <= one,
+        "round trip extracted value: paid {one}, took {returned}"
+    );
+    assert_eq!(
+        token_amount(&svm, &user_shares),
+        0,
+        "all shares burned on redeem"
+    );
+    let vs_final = read_vault_state(&svm, &vault_state);
+    assert_eq!(
+        vs_final.local_aum,
+        token_amount(&svm, &vault_ata),
+        "local_aum must still equal the reserve after the round trip"
+    );
+
     println!(
         "off-par fork OK: supply={supply} total_assets={total_assets} \
-         redeem(1 share)={paid} (pro_rata={pro_rata_assets}) \
-         mint(1 token)={minted} (pro_rata={pro_rata_shares})"
+         deposit({one}) -> {minted} shares (pro_rata {pro_rata_shares}); \
+         redeem back -> {returned} (pro_rata {pro_rata_assets})"
     );
 }
