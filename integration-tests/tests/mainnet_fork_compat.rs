@@ -1,9 +1,10 @@
 //! Mainnet fork / on-chain layout-compatibility guard.
 //!
 //! Loads the built `august_vault` bytecode (`target/deploy/august_vault.so`)
-//! into LiteSVM together with the REAL on-chain accounts of the live USDC and
-//! jitoSOL vaults — dumped byte-for-byte from mainnet into `tests/fixtures/*.bin`
-//! — and proves the current code operates on the *existing* state correctly:
+//! into LiteSVM together with the REAL on-chain accounts of all three live
+//! vaults — USDC, jitoSOL, and the one that is off par — dumped byte-for-byte
+//! from mainnet into `tests/fixtures/*.bin`, and proves the current code operates
+//! on the *existing* state correctly:
 //!   1. deserializes the existing `VaultState` (guards the account layout);
 //!   2. reads the vault reserve token account back, consistent with accounting;
 //!   3. exercises a real user deposit against the live USDC vault state, minting
@@ -12,10 +13,17 @@
 //!      carries the raised offsets and the pro-rata cap — is exercised against
 //!      real state too, and the round trip is shown not to extract value.
 //!
-//! Note the live snapshots are ~1:1 (supply == total_assets), a state in which the
-//! share-price offsets cancel exactly — so these tests are deliberately
-//! insensitive to the offsets' *values*. That is the point: they guard
-//! compatibility with existing accounts, not the tuning of the math.
+//! The USDC and jitoSOL snapshots are exactly 1:1 (supply == total_assets), a
+//! state in which the share-price offsets cancel identically — so those two tests
+//! are insensitive to the offsets' *values*. They guard compatibility with
+//! existing accounts, not the tuning of the math.
+//!
+//! That insensitivity was total until the third fixture was added: with only
+//! at-par vaults, reverting the offsets from 10^6 back to the deployed value of 1
+//! left every test in this file passing, so nothing here observed what the retune
+//! did to real state. The off-par vault closes that — see
+//! `offpar_vault_real_state_is_above_par_and_prices_inside_pro_rata`, which is
+//! deliberately offset-SENSITIVE and pins the size of the change.
 //!
 //! WHY THIS EXISTS: every other test uses *fresh* vaults, so they can't catch a
 //! change that breaks compatibility with accounts created by an *earlier*
@@ -23,8 +31,10 @@
 //! test that guards "new code can still read + operate on old on-chain state" —
 //! the core risk of any program upgrade.
 //!
-//! The fixtures are a FROZEN snapshot (mainnet ~slot 434,275,342), so this test
-//! is deterministic and network-free — live vault activity does NOT affect it.
+//! The fixtures are FROZEN snapshots (USDC + jitoSOL at mainnet ~slot
+//! 434,275,342; the off-par vault at ~slot 437,402,306 — they need not share a
+//! slot, since each test only reads its own vault's accounts), so this test is
+//! deterministic and network-free — live vault activity does NOT affect it.
 //! The `*_AUM` constants are the field values *in that snapshot*; asserting them
 //! verifies the byte→field mapping (i.e. the layout). If an intentional change
 //! alters the `VaultState` layout or deposit math, refresh the fixtures and
@@ -61,6 +71,10 @@ const USDC_LOCAL_AUM: u64 = 92_501_610_605;
 const USDC_DEPLOYED_AUM: u64 = 1_760_151_000_000;
 const JITO_LOCAL_AUM: u64 = 584_082_970;
 const JITO_DEPLOYED_AUM: u64 = 1_582_093_475;
+/// The one live vault that is OFF par (see `offpar_vault_real_state_is_above_par`).
+const OFFPAR_SUPPLY: u64 = 200_999_500_249;
+const OFFPAR_LOCAL_AUM: u64 = 0;
+const OFFPAR_DEPLOYED_AUM: u64 = 402_000_000_000;
 
 fn pk(s: &str) -> Pubkey {
     Pubkey::from_str(s).unwrap()
@@ -606,4 +620,146 @@ fn usdc_deposit_rounding_on_nonunit_state() {
         "frozen: 0.5x price, 3 units in -> 1 share (rounded down, favoring the vault)"
     );
     println!("USDC rounding OK: 0.5x price, deposit=3 -> shares={minted} (floored from 1.4999)");
+}
+
+/// The only live mainnet vault that is **off par**, and therefore the only one on
+/// which the offset retune (1 -> 10^6) changes any number at all.
+///
+/// Both other fixtures sit at `total_assets == supply`, where `(T+O)/(S+O)` is
+/// identically 1.0 for every offset and both clamps are equalities — so they
+/// cannot distinguish the old pricing from the new one, no matter how the offsets
+/// move. That made the retune's effect on real state unobserved by this file.
+///
+/// It also covers a second state the other two miss: `local_aum == 0` with the
+/// whole balance in `deployed_aum`, i.e. fully deployed with an empty reserve.
+///
+/// Snapshot: mainnet ~slot 437,402,306.
+#[test]
+fn offpar_vault_real_state_is_above_par_and_prices_inside_pro_rata() {
+    let mut svm = new_svm();
+    let spl = pk(SPL_TOKEN);
+
+    let vault_state = pk("EhuUbTe3RcowbE9zp5TeaUpMjX5pEYWj6yEtQ2tAQKH7");
+    let share_mint = pk("5xwaaHP3vM2Part8bZsYBg3hjDkvTeSddUmwhyXHiNuS");
+    let vault_ata = pk("BQUFduRuJHcmZup9CVRuLwT4UKjw2cQpYXf9t3xEujuv");
+    let deposit_mint = pk("CD4VCkNGiFc6a6iPdaXZr6WyvRnQqvGE8DQvyk7bCK5n");
+
+    inject(
+        &mut svm,
+        vault_state,
+        august_vault::ID,
+        include_bytes!("fixtures/offpar_vault_state.bin").to_vec(),
+    );
+    inject(
+        &mut svm,
+        share_mint,
+        spl,
+        include_bytes!("fixtures/offpar_share_mint.bin").to_vec(),
+    );
+    inject(
+        &mut svm,
+        vault_ata,
+        spl,
+        include_bytes!("fixtures/offpar_vault_ata.bin").to_vec(),
+    );
+    inject(
+        &mut svm,
+        deposit_mint,
+        spl,
+        include_bytes!("fixtures/offpar_mint.bin").to_vec(),
+    );
+
+    let vs = read_vault_state(&svm, &vault_state);
+    assert_eq!(vs.deposit_mint, deposit_mint);
+    assert_eq!(vs.share_mint, share_mint);
+    assert_live_vault_offset_is_legacy_zero(&vs);
+    assert_eq!(vs.local_aum, OFFPAR_LOCAL_AUM, "snapshot local_aum");
+    assert_eq!(
+        vs.deployed_aum, OFFPAR_DEPLOYED_AUM,
+        "snapshot deployed_aum"
+    );
+
+    // Fully deployed: the reserve is empty and every asset is reported off-vault.
+    // Neither other fixture exercises this.
+    assert_eq!(
+        token_amount(&svm, &vault_ata),
+        vs.local_aum,
+        "invariant: reserve balance == local_aum accounting"
+    );
+    assert_eq!(token_amount(&svm, &vault_ata), 0, "reserve is empty");
+
+    let supply = SplMint::unpack(&svm.get_account(&share_mint).unwrap().data[..SplMint::LEN])
+        .unwrap()
+        .supply;
+    assert_eq!(supply, OFFPAR_SUPPLY, "snapshot share supply");
+
+    let total_assets = vs.total_assets().unwrap();
+    assert_eq!(total_assets, OFFPAR_LOCAL_AUM + OFFPAR_DEPLOYED_AUM);
+    // The whole point of this fixture. If a refresh ever lands it at par, the
+    // assertions below stop testing anything and this fails to say so.
+    assert!(
+        total_assets > supply,
+        "this fixture exists to cover an ABOVE-par vault (total_assets={total_assets}, \
+         supply={supply}); at par every offset gives the same answer"
+    );
+
+    // One whole share / one whole token (both mints are 9 decimals).
+    let one = 1_000_000_000u64;
+
+    // --- redeem: the offset term binds, so the holder is paid strictly INSIDE
+    // pro rata. This is the direction that makes a share-burn attack unprofitable.
+    let paid = vs.assets_for_redeem(supply, total_assets, one).unwrap();
+    let pro_rata_assets = (one as u128 * total_assets as u128 / supply as u128) as u64;
+    assert_eq!(
+        paid,
+        ref_assets(supply, total_assets, one),
+        "independent formula"
+    );
+    assert_eq!(paid, 1_999_999_997, "frozen literal");
+    assert!(
+        paid < pro_rata_assets,
+        "above par the offset term must be the smaller of the two (paid={paid}, \
+         pro_rata={pro_rata_assets})"
+    );
+
+    // --- deposit: the offset term is the larger, so `max` takes it and the
+    // depositor mints slightly MORE than pro rata.
+    let minted = vs.shares_for_deposit(supply, total_assets, one).unwrap();
+    let pro_rata_shares = (one as u128 * supply as u128 / total_assets as u128) as u64;
+    assert_eq!(
+        minted,
+        ref_shares(supply, total_assets, one),
+        "independent formula"
+    );
+    assert_eq!(minted, 500_000_000, "frozen literal");
+    assert!(
+        minted > pro_rata_shares,
+        "above par the offset term must be the larger (minted={minted}, \
+         pro_rata={pro_rata_shares})"
+    );
+
+    // --- what the retune actually changed on this live state. The DEPLOYED build
+    // (fca11d73) used offsets of 1, which round to pro rata at this scale. Pinned
+    // as literals so the size of the change to live pricing is recorded rather
+    // than inferred: a holder redeeming one whole share receives 4,975 base units
+    // less (-0.00025%), and a depositor of one whole token mints 1,244 base units
+    // more (+0.00025%).
+    let redeem_under_old_offsets = 2_000_004_972u64;
+    let deposit_under_old_offsets = 499_998_756u64;
+    assert_eq!(
+        redeem_under_old_offsets - paid,
+        4_975,
+        "redeem shift vs the deployed build"
+    );
+    assert_eq!(
+        minted - deposit_under_old_offsets,
+        1_244,
+        "deposit shift vs the deployed build"
+    );
+
+    println!(
+        "off-par fork OK: supply={supply} total_assets={total_assets} \
+         redeem(1 share)={paid} (pro_rata={pro_rata_assets}) \
+         mint(1 token)={minted} (pro_rata={pro_rata_shares})"
+    );
 }
