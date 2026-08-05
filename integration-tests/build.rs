@@ -20,60 +20,46 @@
 //! point the fork guard at a localnet-ID binary. This guard makes the requirement
 //! explicit and machine-enforced instead of implied by step order.
 //!
-//! ## Content, not timestamps
+//! ## Ask the build, don't second-guess it
 //!
-//! The guard compares a recorded manifest of input **content hashes** against the
-//! current ones. An earlier timestamp-based version was wrong in both directions
-//! and is worth recording so it is not reintroduced:
+//! The guard reads the **dep-info the SBF build itself writes**
+//! (`target/<sbf-triple>/release/august_vault.d`): a Makefile-style list of
+//! exactly the files rustc read to produce the bytecode, plus its own mtime as the
+//! moment that build ran. Staleness is then a two-line question — is any of those
+//! files newer than that build, or has one been deleted?
 //!
-//! - **It could wedge the build.** Cargo fingerprints a manifest's parsed
-//!   *contents*, not its mtime, so `touch Cargo.toml` makes the file newer than
-//!   the artifact while `anchor build` has nothing to relink. The guard then failed
-//!   with a recovery command that could not clear it. The same applied to a
-//!   `git checkout` that rewrote a file byte-identically. A guard that can wedge a
-//!   build is a guard someone deletes.
-//! - **It could not see a deletion.** Removing an input leaves every surviving
-//!   file older than the artifact, so a timestamp comparison saw nothing.
+//! Two earlier designs were wrong, and the reasons are worth keeping so neither is
+//! reintroduced:
 //!
-//! Content hashing fixes both: a real edit, addition or deletion changes the
-//! manifest, and a content-preserving touch or checkout does not. It also aligns
-//! the guard with what actually matters — identical bytes in produce identical
-//! bytecode out, whatever the mtimes say.
+//! 1. **Comparing hand-picked source paths by mtime.** Cargo fingerprints a
+//!    manifest's parsed *contents*, not its mtime, so `touch Cargo.toml` made the
+//!    file newer than the artifact while `anchor build` had nothing to relink —
+//!    a failure the prescribed recovery command could not clear.
+//! 2. **Comparing hand-picked source paths by content hash, treating changed
+//!    artifact bytes as proof of a rebuild.** A rebuild need not change the output:
+//!    add a comment to a `#[cfg(test)]` file, run `anchor build`, and the `.so`
+//!    is byte-identical — so the guard rejected every run forever.
 //!
-//! The hash is FNV-1a, not a cryptographic digest. This guards against staleness,
-//! not against an adversary crafting a collision in your own working tree.
+//! Both failed the same way: they guessed at the input set. Cargo already knows it.
+//! `#[cfg(test)]` files are absent from the dep-info because rustc never reads them
+//! for a release build, so editing them cannot fire the guard — correctly, since
+//! they cannot change the bytecode. And because any real change makes cargo
+//! recompile and rewrite both the `.d` and the `.so`, **a rebuild always clears a
+//! failure**. That is the property both earlier versions lacked.
 //!
-//! ## Which inputs count
+//! ## Known limitation
 //!
-//! The program's Rust sources and manifests, the root manifest (its `[profile]`
-//! affects codegen), and the lockfile.
+//! Dep-info covers source files, not manifests. Editing `Cargo.lock` or a
+//! `Cargo.toml` without rebuilding is therefore not detected. Including them was
+//! tried and is what caused failure mode 1 above: cargo will not relink on a
+//! content-preserving manifest touch, so the guard became unclearable. A real
+//! manifest edit does force a recompile, so the window is "edited a manifest and
+//! ran the tests without building" — narrower than the wedge it replaces.
 //!
-//! Two files are excluded on purpose:
-//!
-//! - **`Anchor.toml`** — not a bytecode input. Its `[toolchain]` sets only
-//!   `package_manager`, `[features]` governs IDL/lint rather than codegen, and
-//!   `[programs.*]` are addresses (`declare_id!` lives in source). Its
-//!   `[scripts]`/`[provider]`/`[test]` sections change routinely — PR #16 rewrote
-//!   `[scripts]` from yarn to pnpm.
-//! - **`rust-toolchain.toml`** — its own header states it does not govern the
-//!   verifiable on-chain bytecode: the SBF build uses platform-tools' bundled
-//!   Rust, fixed by the pinned `solana-verify` image. It pins host tooling only.
-//!
-//! If a version pin is ever added to `Anchor.toml [toolchain]`, add it here — with
-//! content hashing there is no longer a wedge risk in doing so.
-//!
-//! ## The one gap that remains
-//!
-//! Comparison needs a baseline, so the first run after adoption (or after
-//! `cargo clean`) has nothing to compare against and can only record what it sees.
-//! A deletion that happened *before* that first run is therefore invisible. The
-//! guard says so via a `cargo:warning` rather than implying coverage it does not
-//! have; one `anchor build` closes it permanently.
-//!
-//! Removing that gap entirely would mean invoking the SBF build from here — making
-//! the missing dependency edge real instead of approximating it. That is the
-//! sound fix, and deliberately not done in this change: it would make `cargo test`
-//! require the SBF toolchain and silently overwrite a hand-placed artifact.
+//! Closing it properly means invoking the SBF build from here, making the missing
+//! dependency edge real rather than approximating it. Deliberately not done: it
+//! would make `cargo test` require the SBF toolchain and would silently overwrite
+//! a hand-placed artifact.
 //!
 //! Escape hatch for the one legitimate case — deliberately testing a
 //! hand-supplied artifact, e.g. a devnet-ID build during an upgrade rehearsal:
@@ -84,21 +70,10 @@
 //!
 //! CI must never set it.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-
-/// Directories scanned for program sources, relative to the repo root.
-const SOURCE_DIRS: &[&str] = &["programs"];
-/// Extensions that can change the bytecode. Anything else under `programs/`
-/// (docs, notes) cannot.
-const SOURCE_EXTS: &[&str] = &["rs", "toml"];
-/// Individual input files, relative to the repo root.
-const SOURCE_FILES: &[&str] = &["Cargo.lock", "Cargo.toml"];
+use std::time::SystemTime;
 
 const ARTIFACT: &str = "target/deploy/august_vault.so";
-/// The recorded baseline: input content hashes as of the last accepted artifact.
-/// Lives beside the artifact, so `cargo clean` drops both together.
-const RECEIPT: &str = "target/deploy/.august_vault.so.inputs";
 const ESCAPE_HATCH: &str = "ALLOW_STALE_PROGRAM_SO";
 
 fn main() {
@@ -110,14 +85,13 @@ fn main() {
     println!("cargo:rerun-if-env-changed={ESCAPE_HATCH}");
     let artifact = repo_root.join(ARTIFACT);
     println!("cargo:rerun-if-changed={}", artifact.display());
-    for dir in SOURCE_DIRS {
-        println!("cargo:rerun-if-changed={}", repo_root.join(dir).display());
-    }
-    for file in SOURCE_FILES {
-        println!("cargo:rerun-if-changed={}", repo_root.join(file).display());
-    }
-    // NOT rerun-if-changed on RECEIPT — this script writes it, and watching it
-    // would make every build dirty the next one.
+    // Watch the program sources so an edit re-runs this check. Watching the
+    // directory (rather than the files the dep-info names) also catches a file
+    // being added or removed.
+    println!(
+        "cargo:rerun-if-changed={}",
+        repo_root.join("programs").display()
+    );
 
     if std::env::var_os(ESCAPE_HATCH).is_some() {
         println!(
@@ -127,156 +101,132 @@ fn main() {
         return;
     }
 
-    let artifact_bytes = match std::fs::read(&artifact) {
-        Ok(b) => b,
-        Err(_) => panic!(
+    if !artifact.exists() {
+        panic!(
             "\n\n{ARTIFACT} does not exist, so the LiteSVM tests have no program to load.\n\
              Build it first:\n    anchor build\n\n"
+        );
+    }
+
+    // The SBF build's own record of what it read. Its directory is the target
+    // triple, which has been renamed across toolchains (sbf-… -> sbpf-…), so find
+    // it rather than hardcoding.
+    let dep_info = match find_dep_info(&repo_root) {
+        Some(p) => p,
+        None => panic!(
+            "\n\n\
+             No SBF dep-info found under target/, so there is no record of which sources\n\
+             produced {ARTIFACT} and its freshness cannot be checked.\n\n\
+             Build the program with the SBF toolchain:\n\n\
+             \x20   anchor build\n\n\
+             (If you are deliberately testing a hand-supplied artifact, set {ESCAPE_HATCH}=1.)\n\n"
         ),
     };
 
-    let mut inputs: BTreeMap<String, u64> = BTreeMap::new();
-    for dir in SOURCE_DIRS {
-        visit(&repo_root.join(dir), &repo_root, &mut inputs);
-    }
-    for file in SOURCE_FILES {
-        consider(&repo_root.join(file), &repo_root, &mut inputs);
-    }
+    let built_at = modified(&dep_info).expect("dep-info mtime is readable");
 
-    let manifest = render(fnv1a(&artifact_bytes), &inputs);
-    let receipt_path = repo_root.join(RECEIPT);
-
-    match std::fs::read_to_string(&receipt_path) {
-        Ok(previous) => {
-            let (prev_artifact, prev_inputs) = split(&previous);
-            let (this_artifact, this_inputs) = split(&manifest);
-            // A different artifact means it was rebuilt, so whatever the inputs are
-            // now is the new baseline. Only compare while the bytes are unchanged.
-            if prev_artifact == this_artifact && prev_inputs != this_inputs {
-                fail_stale(&describe(prev_inputs, this_inputs));
-            }
-        }
-        Err(_) => {
-            // No baseline. Say so rather than implying coverage: a deletion made
-            // before this run leaves nothing to detect it by.
-            println!(
-                "cargo:warning=establishing the {ARTIFACT} freshness baseline \
-                 ({RECEIPT} was absent). An input DELETED before this run cannot be \
-                 detected; run `anchor build` once to close that gap."
-            );
+    let mut newer: Vec<String> = Vec::new();
+    let mut missing: Vec<String> = Vec::new();
+    for input in parse_dep_info(&dep_info) {
+        let rel = input
+            .strip_prefix(&repo_root)
+            .unwrap_or(&input)
+            .display()
+            .to_string();
+        match modified(&input) {
+            None => missing.push(rel),
+            Some(t) if t > built_at => newer.push(rel),
+            Some(_) => {}
         }
     }
 
-    // Best-effort: a receipt that cannot be written costs future detection, not the
-    // correctness of this run, so do not fail the build over it.
-    let _ = std::fs::write(&receipt_path, manifest);
-}
+    if newer.is_empty() && missing.is_empty() {
+        return;
+    }
 
-fn fail_stale(detail: &str) -> ! {
+    let mut detail = Vec::new();
+    if !newer.is_empty() {
+        detail.push(format!("modified since that build: {}", newer.join(", ")));
+    }
+    if !missing.is_empty() {
+        detail.push(format!("deleted since that build: {}", missing.join(", ")));
+    }
     panic!(
         "\n\n\
-         {ARTIFACT} is STALE — its inputs have changed since it was built.\n\n\
-         \x20 {detail}\n\n\
+         {ARTIFACT} is STALE — the program was compiled before these changes.\n\n\
+         \x20 {}\n\n\
          The LiteSVM tests `include_bytes!` that artifact at compile time and cargo does\n\
          not rebuild it, so running them now would exercise bytecode that does not match\n\
          this source tree — and pass. Rebuild first:\n\n\
          \x20   anchor build\n\n\
-         Only real content changes are reported, so a rebuild always clears this. If you\n\
-         are deliberately testing a hand-supplied artifact (e.g. a devnet-ID build during\n\
-         an upgrade rehearsal), set {ESCAPE_HATCH}=1.\n\n"
+         The file list comes from the SBF build's own dep-info, so only files that really\n\
+         affect the bytecode are reported, and a rebuild always clears this.\n\n\
+         If you are deliberately testing a hand-supplied artifact (e.g. a devnet-ID build\n\
+         during an upgrade rehearsal), set {ESCAPE_HATCH}=1.\n\n",
+        detail.join("\n  ")
     )
 }
 
-/// FNV-1a. Fast, dependency-free, and sufficient to detect edits — see the module
-/// docs on why this is not a cryptographic guarantee.
-fn fnv1a(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in bytes {
-        hash ^= *b as u64;
-        hash = hash.wrapping_mul(0x100_0000_01b3);
-    }
-    hash
+fn modified(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path).ok()?.modified().ok()
 }
 
-fn render(artifact_hash: u64, inputs: &BTreeMap<String, u64>) -> String {
-    let mut out = format!("artifact {artifact_hash:016x}\n");
-    for (path, hash) in inputs {
-        out.push_str(&format!("{path} {hash:016x}\n"));
-    }
-    out
-}
-
-/// Split a rendered manifest into (artifact line, input lines).
-fn split(s: &str) -> (&str, Vec<&str>) {
-    let mut lines = s.lines();
-    let artifact = lines.next().unwrap_or("");
-    (artifact, lines.collect())
-}
-
-/// Name what changed, so the failure is diagnosable rather than "something".
-fn describe(prev: Vec<&str>, now: Vec<&str>) -> String {
-    let paths = |v: &Vec<&str>| -> Vec<String> {
-        v.iter()
-            .filter_map(|l| l.rsplit_once(' ').map(|(p, _)| p.to_string()))
-            .collect()
-    };
-    let (p, n) = (paths(&prev), paths(&now));
-    let removed: Vec<String> = p.iter().filter(|x| !n.contains(x)).cloned().collect();
-    let added: Vec<String> = n.iter().filter(|x| !p.contains(x)).cloned().collect();
-    let changed: Vec<String> = now
-        .iter()
-        .filter(|l| !prev.contains(l))
-        .filter_map(|l| l.rsplit_once(' ').map(|(path, _)| path.to_string()))
-        .filter(|path| !added.contains(path))
-        .collect();
-
-    let mut parts = Vec::new();
-    if !changed.is_empty() {
-        parts.push(format!("changed: {}", changed.join(", ")));
-    }
-    if !removed.is_empty() {
-        parts.push(format!("removed: {}", removed.join(", ")));
-    }
-    if !added.is_empty() {
-        parts.push(format!("added: {}", added.join(", ")));
-    }
-    if parts.is_empty() {
-        return "an input changed".to_string();
-    }
-    parts.join("\n  ")
-}
-
-fn consider(path: &Path, repo_root: &Path, inputs: &mut BTreeMap<String, u64>) {
-    if let Ok(bytes) = std::fs::read(path) {
-        let rel = path.strip_prefix(repo_root).unwrap_or(path);
-        inputs.insert(rel.display().to_string(), fnv1a(&bytes));
-    }
-}
-
-/// Recurse the program sources, skipping build output and dotfiles.
-fn visit(dir: &Path, repo_root: &Path, inputs: &mut BTreeMap<String, u64>) {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name();
-        if name == "target" || name.to_string_lossy().starts_with('.') {
+/// Locate `august_vault.d` under an SBF target directory, preferring the most
+/// recently written one if a toolchain rename left more than one behind.
+fn find_dep_info(repo_root: &Path) -> Option<PathBuf> {
+    let target = repo_root.join("target");
+    let mut best: Option<(PathBuf, SystemTime)> = None;
+    for entry in std::fs::read_dir(&target).ok()?.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        // sbf-solana-solana / sbpf-solana-solana / bpfel-unknown-unknown
+        if !(name.contains("sbf") || name.contains("sbpf") || name.contains("bpf")) {
             continue;
         }
-        match entry.file_type() {
-            Ok(t) if t.is_dir() => visit(&path, repo_root, inputs),
-            Ok(t) if t.is_file() => {
-                let is_input = path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .is_some_and(|e| SOURCE_EXTS.contains(&e));
-                if is_input {
-                    consider(&path, repo_root, inputs);
-                }
+        let candidate = entry.path().join("release").join("august_vault.d");
+        if let Some(t) = modified(&candidate) {
+            if best.as_ref().is_none_or(|(_, bt)| t > *bt) {
+                best = Some((candidate, t));
             }
-            _ => {}
         }
     }
+    best.map(|(p, _)| p)
+}
+
+/// Parse rustc's Makefile-style dep-info: the first line is
+/// `<output>: <dep> <dep> …`, followed by one empty rule per dep.
+///
+/// Paths containing spaces are backslash-escaped by rustc; unescape them so a
+/// checkout under such a path does not read as a set of missing files.
+fn parse_dep_info(path: &Path) -> Vec<PathBuf> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(_) => return Vec::new(),
+    };
+    let first = text.lines().next().unwrap_or_default();
+    let rhs = match first.split_once(": ") {
+        Some((_, r)) => r,
+        None => return Vec::new(),
+    };
+
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut chars = rhs.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if chars.peek() == Some(&' ') => {
+                current.push(' ');
+                chars.next();
+            }
+            ' ' => {
+                if !current.is_empty() {
+                    out.push(PathBuf::from(std::mem::take(&mut current)));
+                }
+            }
+            _ => current.push(c),
+        }
+    }
+    if !current.is_empty() {
+        out.push(PathBuf::from(current));
+    }
+    out
 }

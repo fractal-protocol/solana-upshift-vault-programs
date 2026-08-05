@@ -32,8 +32,8 @@ publish = false
 #
 # The first step is not optional and is machine-enforced: cargo has no dependency
 # edge from these tests to the program's SBF artifact (separate workspaces), so a
-# stale artifact would be tested silently and pass. build.rs fails the build if the
-# program's input CONTENT has changed since target/deploy/august_vault.so was built.
+# stale artifact would be tested silently and pass. build.rs fails the build if any
+# source the SBF build actually read (per its own dep-info) has changed since it ran.
 # See build.rs for the reasoning and the ALLOW_STALE_PROGRAM_SO escape hatch.
 
 [lib]
