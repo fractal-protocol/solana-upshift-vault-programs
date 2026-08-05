@@ -93,14 +93,33 @@ fn main() {
 
     println!("cargo:rerun-if-env-changed={ESCAPE_HATCH}");
     // Re-run when anything that feeds the SBF build changes. Cargo walks watched
-    // directories recursively, so this covers every program source, and the
-    // manifests/lockfile cover profile, feature and dependency changes.
-    for path in ["programs", "Cargo.toml", "Cargo.lock", ".cargo/config.toml"] {
-        println!("cargo:rerun-if-changed={}", repo_root.join(path).display());
+    // directories recursively, so `programs` covers every program source, and the
+    // manifests/lockfile cover profile, feature and dependency changes. `.cargo` is
+    // watched as a DIRECTORY so a config added later is still noticed.
+    //
+    // Only paths that EXIST are registered. A `rerun-if-changed` on a missing path
+    // is permanently "stale: missing", which re-runs this script on every single
+    // invocation — and since the script rewrites the embedded artifact, every
+    // integration-test target then relinks each time. This repo has
+    // `.cargo/audit.toml` but no `.cargo/config.toml`, so naming that file directly
+    // cost ~5s on every no-op `cargo test`.
+    for path in ["programs", "Cargo.toml", "Cargo.lock", ".cargo"] {
+        let watched = repo_root.join(path);
+        if watched.exists() {
+            println!("cargo:rerun-if-changed={}", watched.display());
+        }
     }
 
     if std::env::var_os(ESCAPE_HATCH).is_some() {
         let parked = repo_root.join(PARKED_ARTIFACT);
+        // Declare the parked artifact an input, or replacing it would keep
+        // embedding the previous OUT_DIR copy and a rehearsal would silently test
+        // the wrong bytes. Registered only on this path, where it is actually read:
+        // doing it unconditionally would re-introduce the missing-path staleness
+        // above for every checkout that has not built the program yet.
+        if parked.exists() {
+            println!("cargo:rerun-if-changed={}", parked.display());
+        }
         println!(
             "cargo:warning={ESCAPE_HATCH} is set — NOT building. Embedding {PARKED_ARTIFACT} \
              as-is, which may not match this source tree."
