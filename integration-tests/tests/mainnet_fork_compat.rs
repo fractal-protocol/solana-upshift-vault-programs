@@ -1,8 +1,8 @@
 //! Mainnet fork / on-chain layout-compatibility guard.
 //!
-//! Loads the built `august_vault` bytecode (`target/deploy/august_vault.so`
-//! — freshness of that artifact is enforced by `integration-tests/build.rs`,
-//! since `cargo test` does not rebuild it and a stale one would pass silently)
+//! Loads the `august_vault` bytecode that `integration-tests/build.rs` compiles
+//! from source into `$OUT_DIR` on every `cargo test` — so these assertions can
+//! never run against a stale artifact
 //! into LiteSVM together with the REAL on-chain accounts of all three live
 //! vaults — USDC, jitoSOL, and the one that is off par — dumped byte-for-byte
 //! from mainnet into `tests/fixtures/*.bin`, and proves the current code operates
@@ -84,9 +84,9 @@ fn pk(s: &str) -> Pubkey {
 
 fn new_svm() -> LiteSVM {
     let mut svm = LiteSVM::new();
-    let prog = include_bytes!("../../target/deploy/august_vault.so").to_vec();
+    let prog = include_bytes!(concat!(env!("OUT_DIR"), "/august_vault.so")).to_vec();
     svm.add_program(august_vault::ID, &prog)
-        .expect("load august_vault.so — build the program first");
+        .expect("load august_vault.so — built by build.rs into OUT_DIR");
     svm
 }
 

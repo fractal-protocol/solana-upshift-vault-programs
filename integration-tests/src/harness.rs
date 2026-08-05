@@ -121,9 +121,9 @@ impl VaultCtx {
 
         svm.add_program(
             august_vault::ID,
-            include_bytes!("../../target/deploy/august_vault.so"),
+            include_bytes!(concat!(env!("OUT_DIR"), "/august_vault.so")),
         )
-        .expect("load august_vault.so — run `anchor build` first");
+        .expect("load august_vault.so — built by build.rs into OUT_DIR");
 
         let payer = airdrop_keypair(&mut svm, 100_000_000_000);
         // Vault creation is gated on the ProgramConfig authority, and the config
@@ -1249,9 +1249,9 @@ impl BareCtx {
         let mut svm = LiteSVM::new();
         svm.add_program(
             august_vault::ID,
-            include_bytes!("../../target/deploy/august_vault.so"),
+            include_bytes!(concat!(env!("OUT_DIR"), "/august_vault.so")),
         )
-        .expect("load august_vault.so — run `anchor build` first");
+        .expect("load august_vault.so — built by build.rs into OUT_DIR");
         let upgrade_authority = airdrop_keypair(&mut svm, 10_000_000_000);
         install_program_data(&mut svm, &upgrade_authority.pubkey());
         Self {
