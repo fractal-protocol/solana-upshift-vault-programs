@@ -208,6 +208,12 @@ jobs:
             - name: Rust unit tests (program-side math)
               run: cargo test -p august-vault --lib
 
+            # These tests `include_bytes!` the on-disk target/deploy artifact, and
+            # cargo has no dependency edge to it (integration-tests is a separate
+            # workspace). integration-tests/build.rs therefore runs the SBF build
+            # itself, so the bytecode always matches the source tree — including
+            # after phase 2 below rewrites declare_id! for localnet. Previously
+            # this was safe only because `anchor build` happened to run above.
             - name: LiteSVM integration tests (incl. mainnet-fork layout guard)
               run: cargo test --manifest-path integration-tests/Cargo.toml --tests --locked
 
