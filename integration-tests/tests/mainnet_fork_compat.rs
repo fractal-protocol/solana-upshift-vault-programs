@@ -1,6 +1,8 @@
 //! Mainnet fork / on-chain layout-compatibility guard.
 //!
-//! Loads the built `august_vault` bytecode (`target/deploy/august_vault.so`)
+//! Loads the built `august_vault` bytecode (`target/deploy/august_vault.so`
+//! — freshness of that artifact is enforced by `integration-tests/build.rs`,
+//! since `cargo test` does not rebuild it and a stale one would pass silently)
 //! into LiteSVM together with the REAL on-chain accounts of all three live
 //! vaults — USDC, jitoSOL, and the one that is off par — dumped byte-for-byte
 //! from mainnet into `tests/fixtures/*.bin`, and proves the current code operates

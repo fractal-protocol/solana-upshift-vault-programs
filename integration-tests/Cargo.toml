@@ -29,6 +29,12 @@ publish = false
 #
 # Then:
 #     cargo test --manifest-path integration-tests/Cargo.toml
+#
+# The first step is not optional and is machine-enforced: cargo has no dependency
+# edge from these tests to the program's SBF artifact (separate workspaces), so a
+# stale artifact would be tested silently and pass. build.rs fails the build if
+# target/deploy/august_vault.so is older than the program source. See build.rs for
+# the reasoning and the ALLOW_STALE_PROGRAM_SO escape hatch.
 
 [lib]
 path = "src/lib.rs"

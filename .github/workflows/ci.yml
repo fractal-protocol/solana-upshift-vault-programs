@@ -208,6 +208,14 @@ jobs:
             - name: Rust unit tests (program-side math)
               run: cargo test -p august-vault --lib
 
+            # MUST run after "Build (SBF, committed program ID)" above and BEFORE
+            # the localnet-ID rebuild in phase 2: these tests `include_bytes!` the
+            # on-disk target/deploy artifact, and cargo does not rebuild it for
+            # them (integration-tests is a separate workspace). Reordering would
+            # silently point the mainnet-fork guard at the wrong bytecode.
+            # integration-tests/build.rs enforces this — it fails the build if the
+            # artifact is older than the program source — so a reorder breaks
+            # loudly instead of passing against stale bytes.
             - name: LiteSVM integration tests (incl. mainnet-fork layout guard)
               run: cargo test --manifest-path integration-tests/Cargo.toml --tests --locked
 
