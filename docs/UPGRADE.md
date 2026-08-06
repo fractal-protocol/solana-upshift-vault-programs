@@ -110,7 +110,8 @@ asserts `verified-hashes.txt`, attests provenance, and publishes the `.so`.
 
 ```bash
 git checkout <commit-on-default-branch>
-git tag v0.1.0 && git push origin v0.1.0     # v* tags are admin-only per the tag ruleset
+git tag v0.1.1 && git push origin v0.1.1     # v* tags are admin-only per the tag ruleset
+#   (v0.1.1, not v0.1.0: the first attempt never published — see the note below)
 ```
 
 Releasing a commit that is **behind** the default branch is supported (the guard
@@ -128,11 +129,11 @@ commit the audit and the frontend's `EXPECTED_BUILD` refer to.
 > the fix requires a NEW tag on a commit carrying the corrected workflow (a
 > tag-triggered run always uses the workflow file as of the tagged commit).
 
-Download the released `august_vault_v0.1.0.so`, and confirm it matches:
+Download the released `august_vault_v0.1.1.so`, and confirm it matches:
 
 ```bash
-solana-verify get-executable-hash august_vault_v0.1.0.so   # == verified-hashes.txt exec_sha256
-sha256sum august_vault_v0.1.0.so                            # == raw_sha256
+solana-verify get-executable-hash august_vault_v0.1.1.so   # == verified-hashes.txt exec_sha256
+sha256sum august_vault_v0.1.1.so                            # == raw_sha256
 ```
 
 Also confirm the GitHub **build attestation** exists for the asset
@@ -167,7 +168,10 @@ DEVNET_SO=target/deploy/august_vault.so   # the devnet-ID build from above
 
 # Extend ProgramData first if the new .so is larger than the current allocation.
 solana program show C8B1EpsSGVWK2vMrk3aDT3kL7RCE77otokUh4EC35kK7 -u devnet   # inspect ProgramData len
-# solana program extend C8B1Eps… <deficit_bytes> -u devnet -k <ops-payer.json>   # if needed
+# solana program extend C8B1Eps… <deficit_bytes> -u devnet -k <devnet-authority.json>   # if needed
+#   NOTE: on Agave 3.x this must be signed by the program's UPGRADE AUTHORITY, not
+#   the ops payer — see the mainnet note in Step 2. On devnet the team holds that
+#   key, so it is only a question of which -k to pass.
 
 # Upgrade, signed directly by the devnet authority keypair (writes buffer + deploys):
 solana program deploy "$DEVNET_SO" \
@@ -202,7 +206,7 @@ solana program show up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt -u mainnet-beta
 #    first per integration-tests/tests/mainnet_fork_compat.rs), and full CI green.
 
 # 3. Confirm the release .so is the verified artifact.
-solana-verify get-executable-hash august_vault_v0.1.0.so   # == verified-hashes.txt
+solana-verify get-executable-hash august_vault_v0.1.1.so   # == verified-hashes.txt
 
 # 4. Preserve the CURRENTLY-deployed binary for byte-exact rollback. It IS
 #    reproducible from source (it is the previous verified release), so this dump
@@ -231,11 +235,36 @@ sha256sum pre-upgrade-august_vault.so
 # you subtract directly. Using `Data Length` in the `+ 45 - size` form instead
 # over-extends by exactly 45 bytes.
 # For the hashes in verified-hashes.txt: 605,160 + 45 - 507,781 = 97,424.
+# ⚠ THE CLI COMMAND BELOW FAILS ON AGAVE 3.x. Read this first.
+#
+#   Error: Upgrade authority B75DM… does not match <ops-payer>
+#
+# Agave 3.x sends `ExtendProgramChecked`, which requires the UPGRADE AUTHORITY to
+# sign, and `solana program extend` has no --authority flag: it signs with -k. On
+# mainnet that key is Fordefi, so the documented ops-payer command cannot work.
+#
+# The ON-CHAIN instruction is still permissionless. The plain `ExtendProgram`
+# (loader instruction 6) needs only a payer signature — verified by simulation and
+# then executed on mainnet 6 Aug 2026 (tx 4zAQ7aGaxwc576hGJJCK2yUqG9yCYEHPTgrHybL4SFRdFoiagSrqX5w1yEZXVqYrotxpUYkgYKBoW8BwFLv74hMa),
+# taking ProgramData from 507,736 to 605,160 bytes with the ops payer alone.
+#
+# So this does NOT need a fourth Fordefi signature. Two ways to do it:
+#
+#   (a) Use a Solana 2.x CLI, which sends the unchecked instruction. This is the
+#       version CI pins (SOLANA_VERSION in ci.yml), so it matches the toolchain the
+#       release was built with.
+#
+#   (b) Send loader instruction 6 directly — 8 bytes of data: u32 LE 6, then u32 LE
+#       additional_bytes. Accounts, in order: programdata (w), program (w),
+#       system program, payer (signer, w). SIMULATE FIRST and confirm the log line
+#       "Extended ProgramData account by <n> bytes" before sending.
+#
+# Either way, verify afterwards that `Data Length` equals the new .so size exactly.
 solana program extend up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt 97424 \
-  -u mainnet-beta -k <ops-payer.json>
+  -u mainnet-beta -k <ops-payer.json>   # ← Agave 2.x only; see the note above
 
 # Upload the verified .so into a buffer.
-solana program write-buffer august_vault_v0.1.0.so -u mainnet-beta -k <ops-payer.json>
+solana program write-buffer august_vault_v0.1.1.so -u mainnet-beta -k <ops-payer.json>
 #   -> Buffer: <BUFFER_ADDRESS>
 
 # Hand the buffer to the upgrade authority so Fordefi can consume it.
