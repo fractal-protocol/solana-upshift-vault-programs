@@ -186,8 +186,9 @@ Afterwards:
   `cargo test --manifest-path integration-tests/Cargo.toml --test mainnet_fork_compat`,
   **or** interact with a devnet vault (deposit/redeem/operator) and confirm
   correct behavior.
-- Confirm `solana-verify get-program-hash -u devnet C8B1Eps…` equals the
-  devnet build's hash.
+- Confirm `solana-verify get-program-hash -u https://api.devnet.solana.com C8B1Eps…`
+  equals the devnet build's hash. (`solana-verify` rejects cluster monikers — see
+  the note in Step 2.)
 
 Only proceed to mainnet once the devnet rehearsal is clean.
 
@@ -213,7 +214,12 @@ solana-verify get-executable-hash august_vault_v0.1.1.so   # == verified-hashes.
 #    is a convenience, not the only recovery route — archive it anyway.
 solana program dump up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt \
   pre-upgrade-august_vault.so -u mainnet-beta
-solana-verify get-program-hash -u mainnet-beta up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt
+solana-verify get-program-hash -u https://api.mainnet-beta.solana.com \
+  up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt
+#    NOTE: solana-verify needs the full URL. `-u mainnet-beta` fails here with
+#    "Program up12… is not deployed: AccountNotFound", which mid-ceremony reads
+#    as "the program is gone". The `solana` CLI on the line above does accept
+#    the moniker — the two tools differ.
 #    Expect fca11d73ae5ba0635ee76964945c52ddcf78a167eb4c60317ae63df4a4e7cc1d
 #    (505,216 B) — the release recorded in verified-hashes.txt before this one.
 #    If you get something else, STOP: an unrecorded upgrade has happened.
@@ -297,8 +303,10 @@ remedy. If immutability is ever wanted, Step 4 must happen first. Pinned by
 **Post-upgrade verification:**
 
 ```bash
-solana-verify get-program-hash -u mainnet-beta up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt
+solana-verify get-program-hash -u https://api.mainnet-beta.solana.com \
+  up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt
 #   Now equals verified-hashes.txt exec_sha256 (cb1352a5…)
+#   Confirmed on 2026-08-06 after the v0.1.1 upgrade.
 ```
 
 If you paused, **unpause first** — `deposit` and `redeem` are pause-gated, so
@@ -309,12 +317,20 @@ with a tiny deposit + redeem and confirm the expected shares/assets.
 
 ## Step 3 — Register on-chain verification (Fordefi-signed)
 
+> **`-u` takes a full RPC URL here, not a cluster moniker.** `solana-verify`
+> hands the value straight to its HTTP client, so `-u mainnet-beta` fails:
+> `export-pda-tx` prints `Using connection url: mainnet-beta` and then
+> `Error: Unable to get last deployed slot: builder error`, and
+> `remote submit-job` fails with `relative URL without a base`. Only
+> `remote get-job` tolerates it, because it queries the OtterSec API and never
+> touches an RPC. Omitting `-u` is worse than either: it falls back to the CLI's
+> configured cluster, which Step 1 pointed at devnet.
+
 ```bash
 # Build the (unsigned) verify-PDA upload transaction for the authority as uploader.
-# Pin the exact release commit, library, image, and cluster — an omitted
-# --commit-hash resolves to the remote default-branch HEAD (wrong if `init`
-# advanced after tagging) and an omitted -u uses the CLI's configured cluster
-# (which Step 1 pointed at devnet).
+# Pin the exact release commit, library and image — an omitted --commit-hash
+# resolves to the remote default-branch HEAD, which is wrong if `init` advanced
+# after tagging.
 solana-verify export-pda-tx \
   https://github.com/fractal-protocol/solana-upshift-vault-programs \
   --program-id up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt \
@@ -322,23 +338,41 @@ solana-verify export-pda-tx \
   --commit-hash <RELEASE_COMMIT_SHA> \
   --library-name august_vault \
   --base-image solanafoundation/solana-verifiable-build@sha256:695f890e620db8c39afe5112e048599f8ee395a0cab5a2e572f30a72c6366cb4 \
-  -u mainnet-beta \
+  -u https://api.mainnet-beta.solana.com \
   --encoding base58
 ```
 
 - Sign + submit that transaction via **Fordefi** (the uploader must be the
-  upgrade authority for explorers to trust the record).
-- Submit the OtterSec remote job and poll it (mainnet explicit):
+  upgrade authority for explorers to trust the record). If a verify PDA already
+  exists for this (uploader, program) pair the program records an `update`
+  rather than an `init`; the same command covers both.
+- **Then submit the OtterSec remote job.** This is a required step, not a
+  confirmation of one. The PDA only records *what to build*: until the job runs,
+  the API keeps serving the previous release's result, so every explorer shows
+  the program as unverified — and after an upgrade it shows it as *failing*
+  verification, since the recorded commit now builds to the old binary.
 
 ```bash
 solana-verify remote submit-job --program-id up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt \
-  --uploader B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM -u mainnet-beta
-solana-verify remote get-job --job-id <JOB_ID> -u mainnet-beta   # wait for success
+  --uploader B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM \
+  -u https://api.mainnet-beta.solana.com
+# submit-job polls to completion on its own; get-job only re-reads a finished job.
+solana-verify remote get-job --job-id <JOB_ID>
 ```
 
-**Uploading the PDA alone is not sufficient — the remote job must succeed.**
-Then confirm the "verified" badge on Solana Explorer, SolanaFM, Solscan, and
-`https://verify.osec.io/status/up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt`.
+Confirm `is_verified: true` and `on_chain_hash == executable_hash` at
+`https://verify.osec.io/status/up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt`,
+then check the badge on Solana Explorer, SolanaFM and Solscan.
+
+**v0.1.1 (2026-08-06).** PDA `AUHMtzxmdhHaRvKXi3jmYyae7zg3Ki4Hh4XFGdBvcqwb`
+updated in tx
+`3B97dPhHRPivZphWPbzPohwhbxj2f5BtqeYBuKo71fQnWUZfPBVnwTQH2gCD8C56DLMHiCCyAoNSrbYomvGNcA6w`;
+job `e5774e7e-853c-4688-8452-59a2e5497090` then verified
+`cb1352a5dc4ab9513c10c1083534837bb4c666ed8ad9c3919f02f752bff52df9`. The commit
+recorded was `6a250947`, the parent of the `v0.1.1` tag rather than the tag
+itself — the two differ only in CI config and docs (`programs/`, `Cargo.lock`
+and `Cargo.toml` are byte-identical, and `verified-hashes.txt` records the same
+hash at both), so verification is sound. Pin the **tag** next time.
 
 ---
 
