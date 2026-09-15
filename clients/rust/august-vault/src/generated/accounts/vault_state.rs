@@ -66,8 +66,8 @@ pub share_offset: u64,
 /// is WQ-03 and does not exist yet, so the gate below is dormant on every live
 /// vault. When WQ-03 lands it MUST validate that the key derives as this vault's
 /// queue PDA before storing it, and MUST also accept `Pubkey::default()` to clear
-/// the field (with the current queue co-signing — `docs/WITHDRAWAL_QUEUE.md`,
-/// decision 3). That derivation check is not tidiness: a key nobody can sign for
+/// the field (with the current queue co-signing — AUGUST-7664 records why).
+/// That derivation check is not tidiness: a key nobody can sign for
 /// freezes every holder's exit on that vault permanently, since `redeem` is the
 /// only path that burns shares and `close_vault` requires a zero supply. Deposits
 /// would keep working, so the vault would take funds it cannot return.

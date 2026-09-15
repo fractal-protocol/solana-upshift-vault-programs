@@ -150,8 +150,8 @@ on their behalf by CPI, signing as that PDA. It is a per-vault setting, not a
 program-wide one: vaults on the same program can differ.
 
 The queue program, the instruction that sets this field, and the request/cooldown
-semantics are specified in [docs/WITHDRAWAL_QUEUE.md](docs/WITHDRAWAL_QUEUE.md)
-and are not yet implemented; this release only adds the field and the gate.
+semantics are none of them implemented yet; this release adds only the field and
+the gate. The design is tracked under AUGUST-7663.
 
 ## Security
 
