@@ -14,13 +14,19 @@ cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
-idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+# `august-vault/idl-build` is forwarded so that the first queue account or
+# instruction referencing a vault type appears in the IDL. Without it that type is
+# simply absent, which is an obscure failure to chase later.
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build", "august-vault/idl-build"]
 
 [dependencies]
 anchor-lang = "0.31.1"
 anchor-spl = "0.31.1"
 solana-security-txt = "1.1.1"
-# The queue finalizes by CPI into the vault's `redeem_checked`, signing as its
+# The queue will finalize by CPI into the vault's `redeem_checked`, signing as its
 # own PDA. `cpi` implies `no-entrypoint`, so linking the vault here pulls in its
-# types and CPI helpers without a second entrypoint in this artifact.
+# types and CPI helpers without a second entrypoint in this artifact. Nothing in
+# `src/` references it yet: the dependency is deliberately ahead of the
+# instructions so the build hazard it creates (see integration-tests/build.rs) is
+# wired and reviewed now rather than mid-feature. Do not drop it as unused.
 august-vault = { path = "../august-vault", features = ["cpi"] }

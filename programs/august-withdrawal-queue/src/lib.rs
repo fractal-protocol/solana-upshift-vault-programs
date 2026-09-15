@@ -8,10 +8,11 @@
 
 //! Delayed redemption for `august_vault`.
 //!
-//! A vault whose `withdrawal_queue_authority` names this program's per-vault PDA
-//! accepts redemptions from that PDA only. Holders request a withdrawal here,
-//! wait out a cooldown, and the request is finalized by CPI into the vault's
-//! `redeem_checked` with the PDA signing.
+//! The design: a vault whose `withdrawal_queue_authority` names this program's
+//! per-vault PDA will accept redemptions from that PDA only. Holders request a
+//! withdrawal here, wait out a cooldown, and the request is finalized by CPI into
+//! the vault's `redeem_checked` with the PDA signing. None of that exists yet —
+//! neither the vault field nor the instructions below.
 //!
 //! **This crate is a scaffold.** It carries the program identity, the error ABI
 //! pin and the build wiring; the state accounts and instructions arrive with

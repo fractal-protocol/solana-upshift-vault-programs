@@ -14,8 +14,7 @@ use anchor_lang::prelude::*;
 /// anywhere but the end silently renumbers every variant after it.
 ///
 /// This enum is deliberately near-empty: each instruction brings its own errors
-/// as it lands, appended at the end and pinned below. The two here are the ones
-/// every instruction needs.
+/// as it lands, appended at the end and pinned below.
 #[error_code]
 #[derive(PartialEq)]
 pub enum ErrorCode {
@@ -27,8 +26,10 @@ pub enum ErrorCode {
 
 /// Compile-time pin of the ABI above, generated from one list so completeness
 /// and correctness cannot come apart. See the vault's `errors.rs` for the full
-/// rationale — this is the same mechanism, kept identical on purpose so the two
-/// programs are read the same way.
+/// rationale — deliberately duplicated rather than shared, since sharing would
+/// mean `#[macro_export]` on the live mainnet crate, and the macro captures
+/// `ErrorCode`/`ANCHOR_USER_ERROR_OFFSET` by bare name. Nothing enforces that the
+/// two copies stay in step; they pin independent ABIs and need not.
 macro_rules! pin_error_abi {
     ($($variant:ident => $ordinal:literal),+ $(,)?) => {
         #[allow(dead_code)]
@@ -43,7 +44,8 @@ macro_rules! pin_error_abi {
             $(assert!(ErrorCode::$variant as u32 == $ordinal);)+
         };
 
-        /// Every pinned variant with its on-chain code, for a runtime canary.
+        /// Every pinned variant with its on-chain code. Consumed by
+        /// `errors_discriminant_canary` below.
         #[allow(dead_code)]
         pub const ABI_PINS: &[(ErrorCode, u32)] = &[
             $((ErrorCode::$variant, $ordinal + ANCHOR_USER_ERROR_OFFSET),)+
@@ -57,4 +59,29 @@ pub const ANCHOR_USER_ERROR_OFFSET: u32 = 6000;
 pin_error_abi! {
     NotVaultAdmin => 0,
     MathError => 1,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Anchor assigns discriminants sequentially from 6000 in declaration order,
+    /// so reordering or inserting a variant silently shifts every code after it.
+    /// The compile-time pin above catches that at build time; this catches the
+    /// case where the pinned list itself is what drifted. Mirrors the vault's
+    /// `errors_discriminant_canary`.
+    #[test]
+    fn errors_discriminant_canary() {
+        assert!(
+            !ABI_PINS.is_empty(),
+            "ABI_PINS is empty — this canary would assert nothing"
+        );
+        for (variant, code) in ABI_PINS.iter().copied() {
+            assert_eq!(
+                variant as u32 + ANCHOR_USER_ERROR_OFFSET,
+                code,
+                "ErrorCode declaration order shifted — see the ABI warning in errors.rs",
+            );
+        }
+    }
 }

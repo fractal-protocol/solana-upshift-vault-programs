@@ -124,8 +124,10 @@ impl VaultCtx {
             include_bytes!(concat!(env!("OUT_DIR"), "/august_vault.so")),
         )
         .expect("load august_vault.so — built by build.rs into OUT_DIR");
-        // Loaded alongside the vault so the two-program wiring is exercised by
-        // every test, not only the ones that will eventually drive the queue.
+        // Loaded alongside the vault so every suite built on this harness carries
+        // the two-program wiring, not only the ones that will drive the queue.
+        // `mainnet_fork_compat.rs` builds its own SVM and loads the vault alone;
+        // `embedded_artifacts.rs` covers the queue artifact on its own.
         svm.add_program(
             august_withdrawal_queue::ID,
             include_bytes!(concat!(env!("OUT_DIR"), "/august_withdrawal_queue.so")),
@@ -1259,8 +1261,10 @@ impl BareCtx {
             include_bytes!(concat!(env!("OUT_DIR"), "/august_vault.so")),
         )
         .expect("load august_vault.so — built by build.rs into OUT_DIR");
-        // Loaded alongside the vault so the two-program wiring is exercised by
-        // every test, not only the ones that will eventually drive the queue.
+        // Loaded alongside the vault so every suite built on this harness carries
+        // the two-program wiring, not only the ones that will drive the queue.
+        // `mainnet_fork_compat.rs` builds its own SVM and loads the vault alone;
+        // `embedded_artifacts.rs` covers the queue artifact on its own.
         svm.add_program(
             august_withdrawal_queue::ID,
             include_bytes!(concat!(env!("OUT_DIR"), "/august_withdrawal_queue.so")),

@@ -14,11 +14,14 @@ instead of paying out instantly. Until it has instructions, it builds and deploy
 but does nothing, and no vault refers to it.
 
 **Both programs are built one crate at a time, never as a whole workspace.** The
-queue depends on the vault with `features = ["cpi"]` to reach its CPI helpers, and
-a workspace-wide `cargo build-sbf` also emits that dependency copy of the vault —
-an entrypoint-less cdylib — into the same output directory, where it overwrites
-the real artifact. `integration-tests/build.rs` and CI both build per manifest for
-this reason.
+queue depends on the vault with `features = ["cpi"]`, and `cpi` implies
+`no-entrypoint`. Cargo unifies a dependency's features across a single build, so a
+workspace-wide `cargo build-sbf` compiles the vault once under
+`default ∪ cpi ∪ no-entrypoint` and emits a ~900-byte `august_vault.so` with no
+entrypoint for the loader to dispatch to. `integration-tests/build.rs` builds per
+manifest for this reason; CI uses `anchor build`, which already builds each program
+separately. Two guards catch a regression: `integration-tests/tests/embedded_artifacts.rs`
+and the size floor in CI's program-size step.
 
 ## Features
 

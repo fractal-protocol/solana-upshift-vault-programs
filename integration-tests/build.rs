@@ -1,10 +1,9 @@
 //! Builds the program bytecode the LiteSVM tests execute, so it cannot be stale.
 //!
-//! `mainnet_fork_compat.rs` (and the other suites, via `new_svm`) load the program
-//! with `include_bytes!("../../target/deploy/august_vault.so")`, resolved at
-//! COMPILE time from whatever artifact is on disk. `cargo test` does not rebuild
-//! it: this workspace is excluded from the root one, so cargo has no dependency
-//! edge from these tests to the program's SBF artifact.
+//! The suites load each program with `include_bytes!`, resolved at COMPILE time
+//! from whatever artifact is on disk. `cargo test` does not rebuild them: this
+//! workspace is excluded from the root one, so cargo has no dependency edge from
+//! these tests to the programs' SBF artifacts.
 //!
 //! The consequence is a silent false pass — edit the program, run `cargo test`
 //! without rebuilding, and every test exercises the OLD bytecode and goes green.
@@ -51,10 +50,10 @@
 //!   stale artifact. The documented workflow already required `anchor build`
 //!   first, so this makes an existing requirement enforceable rather than adding
 //!   one.
-//! - **The tests embed `$OUT_DIR/august_vault.so`, not `target/deploy`.** The build
+//! - **The tests embed the artifacts under `$OUT_DIR`, not `target/deploy`.** The build
 //!   writes into a fresh `--sbf-out-dir` under `OUT_DIR` and that file is what gets
 //!   embedded, so the bytes provably come from this invocation. Checking that
-//!   `target/deploy/august_vault.so` merely *exists* was not enough: `cargo
+//!   an artifact in `target/deploy` merely *exists* was not enough: `cargo
 //!   build-sbf` skips its copy step when compilation is cached, so a stale or
 //!   hand-placed artifact there survived and was embedded. `target/deploy` is now
 //!   left alone entirely — a release artifact parked there is no longer clobbered.
@@ -80,11 +79,21 @@ use std::process::Command;
 /// Every program the tests embed, as (manifest, artifact).
 ///
 /// **Built one manifest at a time, never the workspace in one go.** The queue
-/// depends on the vault with `features = ["cpi"]` to reach its CPI helpers, and a
-/// workspace-wide `cargo build-sbf` emits that dependency copy of the vault — a
-/// `no-entrypoint` cdylib — into the same out-dir, where it lands on top of the
-/// real vault artifact. The result is a ~900-byte `august_vault.so` that LiteSVM
-/// rejects with `InvalidAccountData`. Per-manifest builds keep them apart.
+/// depends on the vault with `features = ["cpi"]`, and `cpi` implies
+/// `no-entrypoint`. Cargo unifies features per dependency across a single build,
+/// so a workspace-wide `cargo build-sbf` compiles the vault ONCE under
+/// `default ∪ cpi ∪ no-entrypoint` — cfg'ing `entrypoint!` out of the only
+/// `august_vault.so` that exists. The result is a ~900-byte artifact that LiteSVM
+/// rejects with `InvalidAccountData`. Confirm with:
+///
+/// ```text
+/// cargo tree -e features -i august-vault --workspace
+/// ```
+///
+/// A per-manifest build resolves features from that manifest alone, so the vault
+/// built by itself never sees `cpi`. The invariant to preserve is therefore "never
+/// let the vault and a `cpi` consumer be feature-unified in one cargo invocation" —
+/// separate out-dirs alone would NOT save you.
 const PROGRAMS: &[(&str, &str)] = &[
     ("programs/august-vault/Cargo.toml", "august_vault.so"),
     (
@@ -161,7 +170,11 @@ fn main() {
     // bytecode under test would come from an uncommitted dependency set.
     // `cargo metadata` is real cargo, so it does honour it, and it touches nothing.
     let lock_path = repo_root.join("Cargo.lock");
-    let lock_before = std::fs::read(&lock_path).ok();
+    // Not `.ok()`: a `None` here would silently disable the post-build comparison
+    // below, which is the only check that observes an actual re-resolve. The
+    // lockfile is committed, so failing to read it is a real problem.
+    let lock_before = std::fs::read(&lock_path)
+        .unwrap_or_else(|e| panic!("read the committed {}: {e}", lock_path.display()));
     let mut meta = Command::new("cargo");
     meta.arg("metadata")
         .arg("--locked")
@@ -192,15 +205,22 @@ fn main() {
     // into --sbf-out-dir unconditionally, including when compilation is cached, so
     // its presence is proof this invocation produced it.
     //
-    // Cleared wholesale rather than per program: an earlier layout wrote the `.so`
-    // files directly into `sbf-out`, so a stale checkout can have a FILE where a
-    // per-program directory now belongs.
+    // Cleared wholesale rather than per program: one call covers every program
+    // plus anything an earlier layout left in here.
     let staging_root = out_dir.join("sbf-out");
-    let _ = std::fs::remove_dir_all(&staging_root);
+    match std::fs::remove_dir_all(&staging_root) {
+        Ok(()) => {}
+        // Absent on the first run, which is the normal case.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        // Anything else leaves artifacts behind that the per-program existence
+        // check below would happily accept as this invocation's output.
+        Err(e) => panic!("clear the SBF staging directory {}: {e}", staging_root.display()),
+    }
 
     for (manifest, artifact) in PROGRAMS {
-        // Each program gets its own staging directory. Sharing one would put the
-        // vault's dependency copy, built for the queue, next to the real thing.
+        // One staging directory per program, so the artifact found after a build
+        // is attributable to THAT build: nothing another program's invocation
+        // wrote can satisfy this one's existence check below.
         let staging = staging_root.join(artifact.trim_end_matches(".so"));
         std::fs::create_dir_all(&staging).expect("create the SBF staging directory");
 
@@ -242,15 +262,15 @@ fn main() {
 
         // Belt and braces: prove the build did not re-resolve. Cheap, and the only
         // check that actually observes the outcome rather than the intent.
-        if let (Some(before), Ok(after)) = (&lock_before, std::fs::read(&lock_path)) {
-            if *before != after {
-                panic!(
-                    "\n\n\
-                 The SBF build modified the root Cargo.lock, so the bytecode under test came\n\
-                 from a dependency resolution that is not the committed one.\n\n\
-                 Review `git diff Cargo.lock` and commit it if the change is intended.\n\n"
-                );
-            }
+        let after = std::fs::read(&lock_path)
+            .unwrap_or_else(|e| panic!("re-read {} after the build: {e}", lock_path.display()));
+        if lock_before != after {
+            panic!(
+                "\n\n\
+             The SBF build modified the root Cargo.lock, so the bytecode under test came\n\
+             from a dependency resolution that is not the committed one.\n\n\
+             Review `git diff Cargo.lock` and commit it if the change is intended.\n\n"
+            );
         }
 
         let built = staging.join(artifact);

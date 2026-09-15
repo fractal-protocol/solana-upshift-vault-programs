@@ -199,27 +199,36 @@ jobs:
             # Rust tests. The mainnet-fork guard injects real on-chain accounts
             # whose PDAs derive from that ID, so it MUST run before the key rewrite.
             - name: Build (SBF, committed program ID)
-              run: anchor build
+              # target/ is restored from cache with `restore-keys`, so artifacts
+              # from another branch's run can be sitting here. Clear them, or the
+              # per-program check below proves only that a build happened once.
+              run: |
+                  rm -f target/deploy/*.so
+                  anchor build
 
-            # Every artifact, not `head -1`: with two programs that silently
-            # checked whichever the filesystem listed first and ignored the other.
+            # Checks each program by NAME. The predecessor took `head -1` and so
+            # checked whichever artifact the filesystem happened to list first.
             - name: Check program size
               run: |
                   set -euo pipefail
-                  found=0
-                  for SO in target/deploy/*.so; do
-                    found=$((found + 1))
+                  for dir in programs/*/; do
+                    prog=$(basename "$dir" | tr '-' '_')
+                    SO="target/deploy/${prog}.so"
+                    [ -f "$SO" ] || { echo "::error::$SO was not produced by anchor build"; exit 1; }
                     SZ=$(wc -c < "$SO")
-                    echo "$(basename "$SO"): $((SZ / 1024))KB ($SZ bytes)"
-                    [ "$SZ" -le 1400000 ] || echo "::warning::$(basename "$SO") exceeds 1.4MB ($SZ bytes)"
+                    echo "${prog}.so: $((SZ / 1024))KB ($SZ bytes)"
+                    # Lower bound, not just upper: a workspace-wide build compiles
+                    # the vault under the queue's `cpi` feature (which implies
+                    # `no-entrypoint`) and emits a ~900-byte artifact with nothing
+                    # to dispatch to. See integration-tests/build.rs.
+                    [ "$SZ" -ge 51200 ] || { echo "::error::${prog}.so is only $SZ bytes — built with no-entrypoint?"; exit 1; }
+                    [ "$SZ" -le 1400000 ] || echo "::warning::${prog}.so exceeds 1.4MB ($SZ bytes)"
                   done
-                  # Fail closed: a glob that matched nothing would otherwise pass.
-                  [ "$found" -ge 2 ] || { echo "expected 2 program artifacts, found $found"; exit 1; }
 
             - name: Rust unit tests (program-side math)
-              run: |
-                  cargo test -p august-vault --lib
-                  cargo test -p august-withdrawal-queue --lib
+              # --workspace so a new program's unit tests are picked up without
+              # editing this step.
+              run: cargo test --workspace --lib
 
             # These tests `include_bytes!` the on-disk target/deploy artifact, and
             # cargo has no dependency edge to it (integration-tests is a separate
@@ -237,16 +246,23 @@ jobs:
               run: |
                   solana-keygen new --no-bip39-passphrase -o /tmp/deployer_keypair.json --force
                   mkdir -p target/deploy
-                  solana-keygen new --no-bip39-passphrase -o target/deploy/august_vault-keypair.json --force
-                  solana-keygen new --no-bip39-passphrase -o target/deploy/august_withdrawal_queue-keypair.json --force
+                  for dir in programs/*/; do
+                    prog=$(basename "$dir" | tr '-' '_')
+                    solana-keygen new --no-bip39-passphrase -o "target/deploy/${prog}-keypair.json" --force
+                  done
 
             - name: Sync program key for localnet
               run: |
                   rm -rf target/deploy/*.so target/sbpf-solana-solana target/sbf-solana-solana target/idl target/types
                   anchor keys sync
-                  for prog in august_vault august_withdrawal_queue; do
+                  for dir in programs/*/; do
+                    prog=$(basename "$dir" | tr '-' '_')
                     PROGRAM_ID=$(solana-keygen pubkey "target/deploy/${prog}-keypair.json")
                     sed -i "s/^${prog} = \".*\"/${prog} = \"$PROGRAM_ID\"/" Anchor.toml
+                    # sed exits 0 having substituted nothing, so confirm it landed:
+                    # a renamed [programs.*] entry would deploy under a stale id.
+                    grep -q "^${prog} = \"$PROGRAM_ID\"" Anchor.toml \
+                      || { echo "::error::Anchor.toml has no '${prog} = ...' entry to sync"; exit 1; }
                   done
 
             - name: Rebuild with localnet program ID
@@ -309,17 +325,17 @@ jobs:
                   set -euo pipefail
                   IMAGE="solanafoundation/solana-verifiable-build@sha256:695f890e620db8c39afe5112e048599f8ee395a0cab5a2e572f30a72c6366cb4"
                   fail=0
-                  # Count what we actually verified. Without this the loop can
+                  # Record what we actually verified. Without this the loop can
                   # complete having compared NOTHING — a truncated or
                   # comment-only verified-hashes.txt, a renamed package, or a
                   # missing trailing newline (`while read` drops an unterminated
                   # last record) — and the job would report success. This is the
                   # only gate between a bytecode change and a verified mainnet
                   # deploy, so it must fail closed.
-                  count=0
+                  seen=""
                   while read -r pkg exec_expected raw_expected size_expected _; do
                     case "$pkg" in ''|\#*) continue ;; esac
-                    count=$((count + 1))
+                    seen="$seen $pkg"
                     echo "::group::build $pkg"
                     solana-verify build --library-name "$pkg" --base-image "$IMAGE"
                     echo "::endgroup::"
@@ -337,16 +353,16 @@ jobs:
                       fail=1
                     fi
                   done < verified-hashes.txt
-                  # Not just "more than zero": with two programs in the workspace, a
-                  # file missing the queue row would verify the vault, report success,
-                  # and let an unpinned queue binary through. Tie the count to what
-                  # actually exists in programs/.
-                  expected=$(ls -d programs/*/ | wc -l | tr -d ' ')
-                  if [ "$count" -ne "$expected" ]; then
-                    echo "::error::verified-hashes.txt yielded $count record(s) but programs/ has $expected — every program needs a row."
+                  # Compare the SET of packages, not how many rows there were: two
+                  # august_vault rows and no queue row would satisfy a count, verify
+                  # the vault twice, and let an unpinned queue binary through.
+                  expected=$(ls -d programs/*/ | xargs -n1 basename | tr '-' '_' | sort | tr '\n' ' ')
+                  pinned=$(printf '%s\n' $seen | sort | tr '\n' ' ')
+                  if [ "$pinned" != "$expected" ]; then
+                    echo "::error::verified-hashes.txt pins [$pinned] but programs/ holds [$expected] — every program needs exactly one row."
                     exit 1
                   fi
-                  echo "verified $count program(s)"
+                  echo "verified: $pinned"
                   [ "$fail" -eq 0 ]
 
     # Always-running aggregator: a stable required status check that passes for
