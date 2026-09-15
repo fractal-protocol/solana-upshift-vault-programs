@@ -56,7 +56,8 @@ pub const BPS_DENOMINATOR: u32 = 10_000;
 /// **This constant is now on-chain state for pre-existing vaults.** Every vault
 /// created before `share_offset` existed stores 0 and resolves to this value, so
 /// changing it re-prices those vaults on the next upgrade. Treat it as frozen for
-/// the live deployment; per-vault tuning is what `share_offset` is for.
+/// the live deployment; per-vault tuning is what `share_offset` is for. All three
+/// live mainnet vaults are in that state.
 ///
 /// **And `min_first_deposit` must move with them.** The ghost co-holder's claim
 /// is `EXTRA_SHARES / (supply + EXTRA_SHARES)`, so it is only negligible while
@@ -137,18 +138,37 @@ pub struct VaultState {
     /// A raw 0 collapses the pricing to pure pro-rata, which agrees with the
     /// program only while the vault sits exactly at par.
     pub share_offset: u64,
-    /// Reserved. New fields must be carved **out of** this array so `LEN` stays
-    /// 455, the size of the live mainnet vault accounts — enforced by the `const`
-    /// assertion below the struct.
+    /// The only key permitted to redeem, or zero for "no queue".
     ///
-    /// **Declare them AFTER `share_offset`, never before it.** Inserting a field
-    /// earlier shifts `share_offset` off byte 199, and every vault storing a
-    /// non-default offset would then silently read 0 and fall back to the default.
-    /// `share_offset_stays_at_its_byte_offset` fails if that happens.
-    pub padding: [u64; 31],
+    /// Zero is what every live vault reads — their padding is zeroed here, so the
+    /// field arrives without a migration and redemption stays open to any holder.
+    /// When set it holds this vault's withdrawal-queue PDA, and a direct holder
+    /// redeem is refused with `WithdrawalQueueRequired` (6021).
+    ///
+    /// **Nothing writes it yet.** The setter must reject any key that does not
+    /// derive as this vault's queue PDA: a key nobody can sign for freezes every
+    /// exit permanently, while deposits keep working.
+    ///
+    /// Read via [`Self::withdrawal_queue`], never raw.
+    pub withdrawal_queue_authority: Pubkey,
+    /// Reserved. Carve new fields **out of** this array so `LEN` stays 455, the
+    /// size of the live mainnet accounts — enforced by the `const` assertion below.
+    ///
+    /// **Declare a new field immediately before `padding`.** Anything inserted
+    /// earlier shifts the fields after it, silently: `share_offset` off byte 199
+    /// re-prices every vault that set one, and `withdrawal_queue_authority` off
+    /// byte 207 is worse — shifted into untouched padding it reads zeroes, so a
+    /// gated vault quietly reopens to direct redemption. Pinned by
+    /// `share_offset_stays_at_its_byte_offset`,
+    /// `withdrawal_queue_authority_stays_at_its_byte_offset` and
+    /// `every_field_stays_at_its_byte_offset`.
+    pub padding: [u64; 27],
 }
 
-/// **Compile-time layout guard.** Two live mainnet vaults are 455-byte accounts.
+/// **Compile-time layout guard.** Three live mainnet vaults are 455-byte accounts
+/// — the `jito_*`, `usdc_*` and `offpar_*` fixtures `mainnet_fork_compat.rs` runs
+/// against. (A fourth account is 454 bytes and has never been deserializable; it
+/// predates this layout and is written off, not a regression.)
 /// Growing `VaultState` past that makes every existing vault fail to deserialize
 /// — user funds become unreachable without a migration. Anchor's `init` sizes new
 /// accounts from `INIT_SPACE`, so a new field silently changes this number; the
@@ -188,6 +208,24 @@ impl VaultState {
         self.pda_bump = pda_bump;
         self.vault_version = vault_version;
         self.share_offset = share_offset;
+        // `withdrawal_queue_authority` is left unassigned: a vault opens ungated,
+        // and Anchor's `init` constraint has already zeroed the allocation. Unlike
+        // the explicit zeroing above, this field relies on that.
+    }
+
+    /// The queue that must handle this vault's redemptions, if any.
+    ///
+    /// Returns the key rather than a bool so "gated, but compared against
+    /// something else" cannot be written at a call site.
+    pub fn withdrawal_queue(&self) -> Option<Pubkey> {
+        (self.withdrawal_queue_authority != Pubkey::default())
+            .then_some(self.withdrawal_queue_authority)
+    }
+
+    /// Whether redemptions on this vault must go through a withdrawal queue.
+    /// Derived from [`Self::withdrawal_queue`] so the two cannot disagree.
+    pub fn requires_withdrawal_queue(&self) -> bool {
+        self.withdrawal_queue().is_some()
     }
 
     /// Get the seed for the vault state PDA

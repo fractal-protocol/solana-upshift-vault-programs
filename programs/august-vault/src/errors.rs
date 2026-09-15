@@ -20,7 +20,13 @@ use anchor_lang::prelude::*;
 #[error_code]
 #[derive(PartialEq)]
 pub enum ErrorCode {
-    #[msg("Signer must be the admin")]
+    // Was "Signer must be the admin" — a copy of `NotAdmin`'s text on the
+    // operator's error. It is raised only by the three operator instructions,
+    // whose constraint is `vault_state.operator == operator.key()`, so the
+    // message named the wrong role and the wrong wallet. On 14 Sep 2026 that
+    // sent ops to the admin key while the vault was waiting on the operator.
+    // The wording below is what `tests/11_multi_vault.ts` has always expected.
+    #[msg("Signer must be the operator")]
     NotOperator,
     #[msg("Amount must be > 0")]
     ZeroAmount,
@@ -62,6 +68,8 @@ pub enum ErrorCode {
     SharePriceUndefined,
     #[msg("Share offset must be a power of ten within the permitted range")]
     InvalidShareOffset,
+    #[msg("Signer is not this vault's withdrawal_queue_authority; holders request a withdrawal at the queue instead")]
+    WithdrawalQueueRequired,
 }
 
 /// Compile-time pin of the ABI described above, placed next to the enum it
@@ -133,4 +141,5 @@ pin_error_abi! {
     SlippageExceeded => 18,
     SharePriceUndefined => 19,
     InvalidShareOffset => 20,
+    WithdrawalQueueRequired => 21,
 }

@@ -604,6 +604,191 @@ fn share_offset_stays_at_its_byte_offset() {
     );
 }
 
+/// Every field's byte offset, in one table.
+///
+/// The sentinel tests below pin the two fields carved out of `padding`; neither
+/// notices a field added, resized or reordered elsewhere. The table must cover
+/// the account contiguously from byte 8 to `LEN`, so an unrecorded field leaves a
+/// gap and fails here with its neighbour named.
+///
+/// When it fails, ask whether an existing account already stores that field at
+/// the old offset before re-deriving the numbers.
+#[test]
+fn every_field_stays_at_its_byte_offset() {
+    use anchor_lang::AccountSerialize;
+
+    fn pk(b: u8) -> Pubkey {
+        Pubkey::new_from_array([b; 32])
+    }
+    // Distinct per field, so a row cannot pass by matching a neighbour.
+    const FEE: u32 = 0x1111_1111;
+    const LOCAL: u64 = 0x2222_2222_2222_2222;
+    const DEPLOYED: u64 = 0x3333_3333_3333_3333;
+    const INC: u32 = 0x4444_4444;
+    const DEC: u32 = 0x5555_5555;
+    const OFFSET: u64 = 0x8888_8888_8888_8888;
+    const PAD: u64 = 0x9999_9999_9999_9999;
+
+    let state = VaultState {
+        operator: pk(1),
+        admin: pk(2),
+        share_mint: pk(3),
+        deposit_mint: pk(4),
+        fee_recipient: pk(5),
+        withdrawal_fee: FEE,
+        local_aum: LOCAL,
+        deployed_aum: DEPLOYED,
+        aum_increase_limit: INC,
+        aum_decrease_limit: DEC,
+        pda_bump: [0x66],
+        vault_version: [0x77],
+        paused: true,
+        share_offset: OFFSET,
+        withdrawal_queue_authority: pk(9),
+        padding: [PAD; 27],
+    };
+    let mut bytes = Vec::new();
+    state.try_serialize(&mut bytes).expect("serialize");
+
+    // (field, first byte, serialized form). Add a row when you add a field.
+    let layout: Vec<(&str, usize, Vec<u8>)> = vec![
+        ("operator", 8, pk(1).to_bytes().to_vec()),
+        ("admin", 40, pk(2).to_bytes().to_vec()),
+        ("share_mint", 72, pk(3).to_bytes().to_vec()),
+        ("deposit_mint", 104, pk(4).to_bytes().to_vec()),
+        ("fee_recipient", 136, pk(5).to_bytes().to_vec()),
+        ("withdrawal_fee", 168, FEE.to_le_bytes().to_vec()),
+        ("local_aum", 172, LOCAL.to_le_bytes().to_vec()),
+        ("deployed_aum", 180, DEPLOYED.to_le_bytes().to_vec()),
+        ("aum_increase_limit", 188, INC.to_le_bytes().to_vec()),
+        ("aum_decrease_limit", 192, DEC.to_le_bytes().to_vec()),
+        ("pda_bump", 196, vec![0x66]),
+        ("vault_version", 197, vec![0x77]),
+        ("paused", 198, vec![1]),
+        ("share_offset", 199, OFFSET.to_le_bytes().to_vec()),
+        ("withdrawal_queue_authority", 207, pk(9).to_bytes().to_vec()),
+        (
+            "padding",
+            239,
+            [PAD; 27].iter().flat_map(|w| w.to_le_bytes()).collect(),
+        ),
+    ];
+
+    // Contiguity is what forces the table to stay complete.
+    let mut cursor = 8;
+    for (name, at, want) in &layout {
+        assert_eq!(
+            *at, cursor,
+            "`{name}` is recorded at byte {at} but the fields before it end at \
+             {cursor} — a field was added, resized or reordered without updating \
+             this table"
+        );
+        assert_eq!(
+            &bytes[*at..*at + want.len()],
+            want.as_slice(),
+            "`{name}` did not serialize at byte {at}"
+        );
+        cursor = at + want.len();
+    }
+    assert_eq!(
+        cursor,
+        VaultState::LEN,
+        "the table covers bytes 8..{cursor}, but the account is {} bytes — a \
+         field at the end is missing from the table",
+        VaultState::LEN
+    );
+    assert_eq!(
+        bytes.len(),
+        VaultState::LEN,
+        "serialized size must equal LEN"
+    );
+}
+
+/// `withdrawal_queue_authority` must stay at byte 207, immediately after
+/// `share_offset`.
+///
+/// The queue gate compares the transaction signer against whatever this offset
+/// decodes to. Shift the field and a gated vault reads a different key there:
+/// every redemption is refused, including the queue's own CPI, so holders of that
+/// vault cannot exit by any path until the program is upgraded again.
+#[test]
+fn withdrawal_queue_authority_stays_at_its_byte_offset() {
+    use anchor_lang::AccountSerialize;
+
+    // Every other field is `Default`-zero, so a 32-byte run of 0xA7 can only be
+    // this one. (Zeroing is the reason, not the byte pattern: there are five
+    // other `Pubkey` fields.)
+    const SENTINEL: [u8; 32] = [0xA7; 32];
+    // A second sentinel so flushness is asserted against where `share_offset`
+    // actually landed, not a hardcoded 199 that folds into the literal below.
+    const OFFSET_SENTINEL: u64 = 0x00B4_C5D6_E7F8_0912;
+    let state = VaultState {
+        withdrawal_queue_authority: Pubkey::new_from_array(SENTINEL),
+        share_offset: OFFSET_SENTINEL,
+        ..Default::default()
+    };
+    let mut bytes = Vec::new();
+    state.try_serialize(&mut bytes).expect("serialize");
+
+    let at = bytes
+        .windows(32)
+        .position(|w| w == SENTINEL)
+        .expect("sentinel must appear in the serialized account");
+    assert_eq!(
+        at, 207,
+        "withdrawal_queue_authority moved from byte 207 to {at}. A vault with a \
+         queue attached would read a different key there and refuse every \
+         redemption, the queue's own CPI included. Carve new fields from the END \
+         of `padding`, after this one."
+    );
+    // Fails independently of the check above: both shifting together fires that
+    // one, a gap opening between them fires this one.
+    let offset_at = bytes
+        .windows(8)
+        .position(|w| w == OFFSET_SENTINEL.to_le_bytes())
+        .expect("share_offset sentinel must appear too");
+    assert_eq!(
+        at,
+        offset_at + 8,
+        "a gap opened between share_offset (at {offset_at}) and \
+         withdrawal_queue_authority (at {at})"
+    );
+}
+
+/// A vault created before this field existed must decode as "no queue".
+///
+/// Those accounts are 455 bytes with zeroes across the whole padding region, so
+/// nothing migrates them: the new field simply reads the zeroes already there.
+/// If that ever stopped meaning "ungated", the upgrade would silently freeze
+/// redemptions on all three live mainnet vaults at once.
+///
+/// Catches a size change and a legacy account that stops deserializing. It does
+/// NOT catch a shifted field — an all-zero buffer decodes to zero wherever the
+/// field sits — which is what the offset test above is for.
+#[test]
+fn legacy_zero_padding_decodes_as_no_queue() {
+    use anchor_lang::{AccountDeserialize, Discriminator};
+
+    // Exactly what a pre-upgrade account looks like: discriminator, then 447
+    // zero bytes. Every field, not just the new one, is zero here.
+    let mut raw = VaultState::DISCRIMINATOR.to_vec();
+    raw.resize(VaultState::LEN, 0);
+    assert_eq!(raw.len(), 455, "a live vault account is 455 bytes");
+
+    let state = VaultState::try_deserialize(&mut raw.as_slice())
+        .expect("a zero-padded legacy account must still deserialize");
+
+    assert_eq!(
+        state.withdrawal_queue_authority,
+        Pubkey::default(),
+        "zeroed padding must decode as the zero key"
+    );
+    assert!(
+        !state.requires_withdrawal_queue(),
+        "a legacy vault must stay open to direct redemption"
+    );
+}
+
 /// Only powers of ten inside the permitted band may be stored on a vault.
 #[test]
 fn share_offset_validation_is_exact() {

@@ -29,7 +29,7 @@ impl VaultState {
     ///
     /// **Off-chain consumers must use this, not the raw `share_offset` field.**
     /// Vaults created before that field existed store 0, which is not a usable
-    /// offset — both live mainnet vaults are in exactly that state. Pricing a
+    /// offset — all three live mainnet vaults are in exactly that state. Pricing a
     /// deposit with a raw 0 collapses the formula to pure pro-rata, which agrees
     /// with the program only while the vault sits exactly at par and diverges the
     /// moment any AUM is reported. A quote computed that way, fed to
@@ -39,6 +39,28 @@ impl VaultState {
             0 => EXTRA_SHARES,
             v => v as u128,
         }
+    }
+
+    /// The queue that must handle this vault's redemptions, if any.
+    ///
+    /// `None` means redemption is instant and open to any share holder — the
+    /// state every vault created before the field existed is in, since their
+    /// padding is zeroed there. `Some(key)` means only that key may call
+    /// `redeem` / `redeem_checked`; a holder who tries is refused with
+    /// `WithdrawalQueueRequired` (6021), and must go through the queue instead.
+    ///
+    /// An SDK deciding whether to offer "Redeem" or "Request withdrawal" should
+    /// branch on this rather than comparing the raw field, so the sentinel is
+    /// interpreted in one place.
+    pub fn withdrawal_queue(&self) -> Option<Pubkey> {
+        (self.withdrawal_queue_authority != Pubkey::default())
+            .then_some(self.withdrawal_queue_authority)
+    }
+
+    /// Whether redemptions on this vault must go through a withdrawal queue.
+    /// Derived from [`Self::withdrawal_queue`] so the two cannot disagree.
+    pub fn requires_withdrawal_queue(&self) -> bool {
+        self.withdrawal_queue().is_some()
     }
 
     /// Smallest first deposit this vault accepts, mirroring the program's
@@ -82,7 +104,8 @@ mod tests {
             vault_version: [0; 1],
             paused: false,
             share_offset: 0,
-            padding: [0; 31],
+            withdrawal_queue_authority: zero,
+            padding: [0; 27],
         };
         assert_eq!(vs.resolved_share_offset(), EXTRA_SHARES);
         assert_eq!(vs.min_first_deposit(6), 100_000_000);

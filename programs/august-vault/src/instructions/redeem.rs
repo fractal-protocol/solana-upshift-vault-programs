@@ -41,6 +41,22 @@ pub fn handler_checked(ctx: Context<Redeem>, shares: u64, min_assets_out: u64) -
     require!(shares > 0, ErrorCode::ZeroAmount);
     require!(!ctx.accounts.vault_state.paused, ErrorCode::VaultPaused);
 
+    // Withdrawal-queue gate. When a queue is attached, its PDA is the only key
+    // allowed to redeem; holders exit through the queue instead, and the queue
+    // redeems on their behalf by CPI, signing as that PDA.
+    //
+    // In the handler, not an `Accounts` constraint — a constraint could express
+    // it, but would apply to every handler using `Redeem` whether or not it
+    // should be gated. The cost: a future entry point reusing `Redeem` with its
+    // own handler does NOT inherit this, so gate it there too.
+    if let Some(queue) = ctx.accounts.vault_state.withdrawal_queue() {
+        require_keys_eq!(
+            ctx.accounts.signer.key(),
+            queue,
+            ErrorCode::WithdrawalQueueRequired
+        );
+    }
+
     let supply = ctx.accounts.share_mint.supply;
     let total_assets = ctx.accounts.vault_state.total_assets()?;
     let assets = ctx
@@ -91,6 +107,10 @@ pub fn handler_checked(ctx: Context<Redeem>, shares: u64, min_assets_out: u64) -
         &ctx.accounts.sender_token_account.to_account_info(),
     )?;
 
+    // Under a queue the signer IS the queue PDA, so all three identity fields
+    // become the queue rather than the holder. Deliberate: the event shape is ABI
+    // and existing indexers must keep parsing it. Per-holder attribution comes
+    // from the queue program's own events.
     emit!(WithdrawEvt {
         caller: ctx.accounts.signer.key(),
         receiver: ctx.accounts.signer.key(),
