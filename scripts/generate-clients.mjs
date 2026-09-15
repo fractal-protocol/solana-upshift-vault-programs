@@ -19,26 +19,39 @@ import { fileURLToPath } from "url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(__dirname, "..");
 
-const idlPath = join(projectRoot, "target/idl/august_vault.json");
-const idl = JSON.parse(readFileSync(idlPath, "utf-8"));
+// One entry per program. Adding a program means adding a row here and a crate
+// under `clients/rust/`; nothing else in this script is program-specific.
+const PROGRAMS = [
+    { idl: "target/idl/august_vault.json", crate: "clients/rust/august-vault", label: "August Vault" },
+    {
+        idl: "target/idl/august_withdrawal_queue.json",
+        crate: "clients/rust/august-withdrawal-queue",
+        label: "August Withdrawal Queue",
+    },
+];
 
-const codamaTree = createFromRoot(rootNodeFromAnchor(idl));
+for (const { idl: idlRelPath, crate, label } of PROGRAMS) {
+    const idlPath = join(projectRoot, idlRelPath);
+    const idl = JSON.parse(readFileSync(idlPath, "utf-8"));
 
-// `renderVisitor` writes its source modules to the first positional arg.
-// `crateFolder` is the crate root (where Cargo.toml lives) and is used by the
-// renderer to resolve relative paths in generated `Cargo.toml` snippets when
-// they're auto-managed. Pinned to the renderer version in package.json — if
-// you bump @codama/renderers-rust, verify the path semantics still match.
-const crateRoot = join(projectRoot, "clients/rust/august-vault");
-const generatedPath = join(crateRoot, "src/generated");
+    const codamaTree = createFromRoot(rootNodeFromAnchor(idl));
 
-codamaTree.accept(
-    renderVisitor(generatedPath, {
-        crateFolder: crateRoot,
-        // Codama invokes `cargo +<toolchain> fmt`; leave formatting off if
-        // a +nightly toolchain isn't installed locally.
-        formatCode: false,
-    }),
-);
+    // `renderVisitor` writes its source modules to the first positional arg.
+    // `crateFolder` is the crate root (where Cargo.toml lives) and is used by the
+    // renderer to resolve relative paths in generated `Cargo.toml` snippets when
+    // they're auto-managed. Pinned to the renderer version in package.json — if
+    // you bump @codama/renderers-rust, verify the path semantics still match.
+    const crateRoot = join(projectRoot, crate);
+    const generatedPath = join(crateRoot, "src/generated");
 
-console.log("August Vault client generated successfully at:", generatedPath);
+    codamaTree.accept(
+        renderVisitor(generatedPath, {
+            crateFolder: crateRoot,
+            // Codama invokes `cargo +<toolchain> fmt`; leave formatting off if
+            // a +nightly toolchain isn't installed locally.
+            formatCode: false,
+        }),
+    );
+
+    console.log(`${label} client generated successfully at:`, generatedPath);
+}

@@ -1,6 +1,24 @@
-# Upshift Vault Program
+# Upshift Vault Programs
 
 A share-based vault on Solana built with Anchor. Users deposit an SPL token and receive shares in return. An operator deploys vault funds externally (e.g., yield strategies), while an admin manages roles, fees, and emergency controls.
+
+This workspace builds two programs:
+
+| Crate | Artifact | Status |
+|---|---|---|
+| `programs/august-vault` | `august_vault.so` | Live on mainnet and devnet. Everything below describes this program. |
+| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | **Scaffold only.** Carries the program identity, the error-ABI pin and the build wiring; no state accounts or instructions yet. |
+
+The queue will let a vault route redemptions through a request-and-cooldown flow
+instead of paying out instantly. Until it has instructions, it builds and deploys
+but does nothing, and no vault refers to it.
+
+**Both programs are built one crate at a time, never as a whole workspace.** The
+queue depends on the vault with `features = ["cpi"]` to reach its CPI helpers, and
+a workspace-wide `cargo build-sbf` also emits that dependency copy of the vault —
+an entrypoint-less cdylib — into the same output directory, where it overwrites
+the real artifact. `integration-tests/build.rs` and CI both build per manifest for
+this reason.
 
 ## Features
 

@@ -77,9 +77,27 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const ARTIFACT_NAME: &str = "august_vault.so";
-const PARKED_ARTIFACT: &str = "target/deploy/august_vault.so";
+/// Every program the tests embed, as (manifest, artifact).
+///
+/// **Built one manifest at a time, never the workspace in one go.** The queue
+/// depends on the vault with `features = ["cpi"]` to reach its CPI helpers, and a
+/// workspace-wide `cargo build-sbf` emits that dependency copy of the vault — a
+/// `no-entrypoint` cdylib — into the same out-dir, where it lands on top of the
+/// real vault artifact. The result is a ~900-byte `august_vault.so` that LiteSVM
+/// rejects with `InvalidAccountData`. Per-manifest builds keep them apart.
+const PROGRAMS: &[(&str, &str)] = &[
+    ("programs/august-vault/Cargo.toml", "august_vault.so"),
+    (
+        "programs/august-withdrawal-queue/Cargo.toml",
+        "august_withdrawal_queue.so",
+    ),
+];
 const ESCAPE_HATCH: &str = "ALLOW_STALE_PROGRAM_SO";
+
+/// Where a parked artifact lives when the escape hatch is used.
+fn parked_path(repo_root: &Path, artifact: &str) -> PathBuf {
+    repo_root.join("target/deploy").join(artifact)
+}
 
 fn main() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -87,9 +105,8 @@ fn main() {
         .expect("integration-tests must sit one level below the repository root")
         .to_path_buf();
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
-    // What the tests `include_bytes!`.
-    let embedded = out_dir.join(ARTIFACT_NAME);
-    let program_manifest = repo_root.join("programs/august-vault/Cargo.toml");
+    // Only used for the lockfile pre-check below, which is workspace-wide.
+    let program_manifest = repo_root.join("Cargo.toml");
 
     println!("cargo:rerun-if-env-changed={ESCAPE_HATCH}");
     // Re-run when anything that feeds the SBF build changes. Cargo walks watched
@@ -111,24 +128,28 @@ fn main() {
     }
 
     if std::env::var_os(ESCAPE_HATCH).is_some() {
-        let parked = repo_root.join(PARKED_ARTIFACT);
         // Declare the parked artifact an input, or replacing it would keep
         // embedding the previous OUT_DIR copy and a rehearsal would silently test
         // the wrong bytes. Registered only on this path, where it is actually read:
         // doing it unconditionally would re-introduce the missing-path staleness
         // above for every checkout that has not built the program yet.
-        if parked.exists() {
-            println!("cargo:rerun-if-changed={}", parked.display());
-        }
-        println!(
-            "cargo:warning={ESCAPE_HATCH} is set — NOT building. Embedding {PARKED_ARTIFACT} \
-             as-is, which may not match this source tree."
-        );
-        if let Err(e) = install(&parked, &embedded) {
-            panic!(
-                "\n\n{ESCAPE_HATCH} is set, but {PARKED_ARTIFACT} could not be used ({e}).\n\
-                 Put the artifact you want to test there, or unset {ESCAPE_HATCH}.\n\n"
+        for (_, artifact) in PROGRAMS {
+            let parked = parked_path(&repo_root, artifact);
+            if parked.exists() {
+                println!("cargo:rerun-if-changed={}", parked.display());
+            }
+            println!(
+                "cargo:warning={ESCAPE_HATCH} is set — NOT building. Embedding {} as-is, \
+                 which may not match this source tree.",
+                parked.display()
             );
+            if let Err(e) = install(&parked, &out_dir.join(artifact)) {
+                panic!(
+                    "\n\n{ESCAPE_HATCH} is set, but {} could not be used ({e}).\n\
+                     Put the artifact you want to test there, or unset {ESCAPE_HATCH}.\n\n",
+                    parked.display()
+                );
+            }
         }
         return;
     }
@@ -170,68 +191,78 @@ fn main() {
     // afterwards cannot be a leftover from an earlier run. `cargo build-sbf` copies
     // into --sbf-out-dir unconditionally, including when compilation is cached, so
     // its presence is proof this invocation produced it.
-    let staging = out_dir.join("sbf-out");
-    let _ = std::fs::remove_dir_all(&staging);
-    std::fs::create_dir_all(&staging).expect("create the SBF staging directory");
+    //
+    // Cleared wholesale rather than per program: an earlier layout wrote the `.so`
+    // files directly into `sbf-out`, so a stale checkout can have a FILE where a
+    // per-program directory now belongs.
+    let staging_root = out_dir.join("sbf-out");
+    let _ = std::fs::remove_dir_all(&staging_root);
 
-    let mut cmd = Command::new("cargo");
-    cmd.arg("build-sbf")
-        .arg("--manifest-path")
-        .arg(&program_manifest)
-        .arg("--sbf-out-dir")
-        .arg(&staging)
-        // Forwarded in case a future cargo-build-sbf honours it; today it does
-        // not, which is why the lockfile is checked separately above and below.
-        .arg("--")
-        .arg("--locked")
-        .current_dir(&repo_root);
-    scrub_env(&mut cmd);
+    for (manifest, artifact) in PROGRAMS {
+        // Each program gets its own staging directory. Sharing one would put the
+        // vault's dependency copy, built for the queue, next to the real thing.
+        let staging = staging_root.join(artifact.trim_end_matches(".so"));
+        std::fs::create_dir_all(&staging).expect("create the SBF staging directory");
 
-    let output = match cmd.output() {
-        Ok(o) => o,
-        Err(e) => panic!(
-            "\n\n\
+        let mut cmd = Command::new("cargo");
+        cmd.arg("build-sbf")
+            .arg("--manifest-path")
+            .arg(repo_root.join(manifest))
+            .arg("--sbf-out-dir")
+            .arg(&staging)
+            // Forwarded in case a future cargo-build-sbf honours it; today it does
+            // not, which is why the lockfile is checked separately above and below.
+            .arg("--")
+            .arg("--locked")
+            .current_dir(&repo_root);
+        scrub_env(&mut cmd);
+
+        let output = match cmd.output() {
+            Ok(o) => o,
+            Err(e) => panic!(
+                "\n\n\
              Could not run `cargo build-sbf` ({e}).\n\n\
              These tests embed the program bytecode at compile time, so the SBF toolchain is\n\
              required. It ships with the Solana CLI:\n\n\
              \x20   sh -c \"$(curl -sSfL https://release.anza.xyz/stable/install)\"\n\n\
              To embed an existing artifact instead, set {ESCAPE_HATCH}=1.\n\n"
-        ),
-    };
+            ),
+        };
 
-    if !output.status.success() {
-        panic!(
-            "\n\n\
-             The SBF build of august-vault failed, so the LiteSVM tests have no current\n\
-             bytecode to run against. Fix the program, or set {ESCAPE_HATCH}=1 to embed the\n\
-             existing {PARKED_ARTIFACT}.\n\n\
-             --- cargo build-sbf stderr ---\n{}\n",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    // Belt and braces: prove the build did not re-resolve. Cheap, and the only
-    // check that actually observes the outcome rather than the intent.
-    if let (Some(before), Ok(after)) = (&lock_before, std::fs::read(&lock_path)) {
-        if *before != after {
+        if !output.status.success() {
             panic!(
                 "\n\n\
+             The SBF build failed, so the LiteSVM tests have no current bytecode to run\n\
+             against. Fix the program, or set {ESCAPE_HATCH}=1 to embed the existing\n\
+             target/deploy artifacts.\n\n\
+             --- cargo build-sbf stderr ---\n{}\n",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        // Belt and braces: prove the build did not re-resolve. Cheap, and the only
+        // check that actually observes the outcome rather than the intent.
+        if let (Some(before), Ok(after)) = (&lock_before, std::fs::read(&lock_path)) {
+            if *before != after {
+                panic!(
+                    "\n\n\
                  The SBF build modified the root Cargo.lock, so the bytecode under test came\n\
                  from a dependency resolution that is not the committed one.\n\n\
                  Review `git diff Cargo.lock` and commit it if the change is intended.\n\n"
-            );
+                );
+            }
         }
-    }
 
-    let built = staging.join(ARTIFACT_NAME);
-    if let Err(e) = install(&built, &embedded) {
-        panic!(
-            "\n\n\
-             `cargo build-sbf` reported success but {ARTIFACT_NAME} was not produced in the\n\
+        let built = staging.join(artifact);
+        if let Err(e) = install(&built, &out_dir.join(artifact)) {
+            panic!(
+                "\n\n\
+             `cargo build-sbf` reported success but {artifact} was not produced in the\n\
              staging directory ({e}).\n\n\
              The build may be writing elsewhere — check for a CARGO_TARGET_DIR or\n\
              .cargo/config.toml override.\n\n"
-        );
+            );
+        }
     }
 }
 

@@ -124,6 +124,13 @@ impl VaultCtx {
             include_bytes!(concat!(env!("OUT_DIR"), "/august_vault.so")),
         )
         .expect("load august_vault.so — built by build.rs into OUT_DIR");
+        // Loaded alongside the vault so the two-program wiring is exercised by
+        // every test, not only the ones that will eventually drive the queue.
+        svm.add_program(
+            august_withdrawal_queue::ID,
+            include_bytes!(concat!(env!("OUT_DIR"), "/august_withdrawal_queue.so")),
+        )
+        .expect("load august_withdrawal_queue.so — built by build.rs into OUT_DIR");
 
         let payer = airdrop_keypair(&mut svm, 100_000_000_000);
         // Vault creation is gated on the ProgramConfig authority, and the config
@@ -1252,6 +1259,13 @@ impl BareCtx {
             include_bytes!(concat!(env!("OUT_DIR"), "/august_vault.so")),
         )
         .expect("load august_vault.so — built by build.rs into OUT_DIR");
+        // Loaded alongside the vault so the two-program wiring is exercised by
+        // every test, not only the ones that will eventually drive the queue.
+        svm.add_program(
+            august_withdrawal_queue::ID,
+            include_bytes!(concat!(env!("OUT_DIR"), "/august_withdrawal_queue.so")),
+        )
+        .expect("load august_withdrawal_queue.so — built by build.rs into OUT_DIR");
         let upgrade_authority = airdrop_keypair(&mut svm, 10_000_000_000);
         install_program_data(&mut svm, &upgrade_authority.pubkey());
         Self {

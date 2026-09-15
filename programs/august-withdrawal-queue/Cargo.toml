@@ -1,0 +1,26 @@
+[package]
+name = "august-withdrawal-queue"
+version = "0.1.0"
+description = "Delayed redemption queue for august-vault"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "august_withdrawal_queue"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+anchor-lang = "0.31.1"
+anchor-spl = "0.31.1"
+solana-security-txt = "1.1.1"
+# The queue finalizes by CPI into the vault's `redeem_checked`, signing as its
+# own PDA. `cpi` implies `no-entrypoint`, so linking the vault here pulls in its
+# types and CPI helpers without a second entrypoint in this artifact.
+august-vault = { path = "../august-vault", features = ["cpi"] }

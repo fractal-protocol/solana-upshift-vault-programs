@@ -9,20 +9,24 @@ echo "🔄 Syncing IDL files to app directory..."
 mkdir -p frontend/idl
 
 # Copy IDL files
-if [ -f "target/idl/august_vault.json" ]; then
-    cp target/idl/august_vault.json frontend/idl/
-    echo "✅ Copied august_vault.json"
-else
-    echo "❌ target/idl/august_vault.json not found. Run 'anchor build' first."
-    exit 1
-fi
+for program in august_vault august_withdrawal_queue; do
+    if [ -f "target/idl/${program}.json" ]; then
+        cp "target/idl/${program}.json" frontend/idl/
+        echo "✅ Copied ${program}.json"
+    else
+        echo "❌ target/idl/${program}.json not found. Run 'anchor build' first."
+        exit 1
+    fi
+done
 
-if [ -f "target/types/august_vault.ts" ]; then
-    cp target/types/august_vault.ts frontend/idl/
-    echo "✅ Copied august_vault.ts"
-else
-    echo "❌ target/types/august_vault.ts not found. Run 'anchor build' first."
-    exit 1
-fi
+for program in august_vault august_withdrawal_queue; do
+    if [ -f "target/types/${program}.ts" ]; then
+        cp "target/types/${program}.ts" frontend/idl/
+        echo "✅ Copied ${program}.ts"
+    else
+        echo "❌ target/types/${program}.ts not found. Run 'anchor build' first."
+        exit 1
+    fi
+done
 
 echo "🎉 IDL sync complete!"

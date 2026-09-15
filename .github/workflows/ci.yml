@@ -131,10 +131,13 @@ jobs:
                       ~/.cargo/registry/cache/
                       ~/.cargo/git/db/
                       clients/rust/august-vault/target/
-                  key: ${{ runner.os }}-cargo-client-${{ hashFiles('clients/rust/august-vault/Cargo.lock') }}
+                      clients/rust/august-withdrawal-queue/target/
+                  key: ${{ runner.os }}-cargo-client-${{ hashFiles('clients/rust/*/Cargo.lock') }}
                   restore-keys: ${{ runner.os }}-cargo-client-
             - name: cargo check (all features)
-              run: cargo check --all-features --locked --manifest-path clients/rust/august-vault/Cargo.toml
+              run: |
+                  cargo check --all-features --locked --manifest-path clients/rust/august-vault/Cargo.toml
+                  cargo check --all-features --locked --manifest-path clients/rust/august-withdrawal-queue/Cargo.toml
 
     test:
         name: Build & Test
@@ -198,15 +201,25 @@ jobs:
             - name: Build (SBF, committed program ID)
               run: anchor build
 
+            # Every artifact, not `head -1`: with two programs that silently
+            # checked whichever the filesystem listed first and ignored the other.
             - name: Check program size
               run: |
-                  SO=$(find target/deploy -name '*.so' | head -1)
-                  SZ=$(wc -c < "$SO")
-                  echo "Program size: $((SZ / 1024))KB ($SZ bytes)"
-                  [ "$SZ" -le 1400000 ] || echo "::warning::program exceeds 1.4MB ($SZ bytes)"
+                  set -euo pipefail
+                  found=0
+                  for SO in target/deploy/*.so; do
+                    found=$((found + 1))
+                    SZ=$(wc -c < "$SO")
+                    echo "$(basename "$SO"): $((SZ / 1024))KB ($SZ bytes)"
+                    [ "$SZ" -le 1400000 ] || echo "::warning::$(basename "$SO") exceeds 1.4MB ($SZ bytes)"
+                  done
+                  # Fail closed: a glob that matched nothing would otherwise pass.
+                  [ "$found" -ge 2 ] || { echo "expected 2 program artifacts, found $found"; exit 1; }
 
             - name: Rust unit tests (program-side math)
-              run: cargo test -p august-vault --lib
+              run: |
+                  cargo test -p august-vault --lib
+                  cargo test -p august-withdrawal-queue --lib
 
             # These tests `include_bytes!` the on-disk target/deploy artifact, and
             # cargo has no dependency edge to it (integration-tests is a separate
@@ -225,13 +238,16 @@ jobs:
                   solana-keygen new --no-bip39-passphrase -o /tmp/deployer_keypair.json --force
                   mkdir -p target/deploy
                   solana-keygen new --no-bip39-passphrase -o target/deploy/august_vault-keypair.json --force
+                  solana-keygen new --no-bip39-passphrase -o target/deploy/august_withdrawal_queue-keypair.json --force
 
             - name: Sync program key for localnet
               run: |
                   rm -rf target/deploy/*.so target/sbpf-solana-solana target/sbf-solana-solana target/idl target/types
-                  PROGRAM_ID=$(solana-keygen pubkey target/deploy/august_vault-keypair.json)
                   anchor keys sync
-                  sed -i "s/^august_vault = \".*\"/august_vault = \"$PROGRAM_ID\"/" Anchor.toml
+                  for prog in august_vault august_withdrawal_queue; do
+                    PROGRAM_ID=$(solana-keygen pubkey "target/deploy/${prog}-keypair.json")
+                    sed -i "s/^${prog} = \".*\"/${prog} = \"$PROGRAM_ID\"/" Anchor.toml
+                  done
 
             - name: Rebuild with localnet program ID
               run: anchor build
@@ -321,8 +337,13 @@ jobs:
                       fail=1
                     fi
                   done < verified-hashes.txt
-                  if [ "$count" -eq 0 ]; then
-                    echo "::error::verified-hashes.txt yielded no records to verify — nothing was checked."
+                  # Not just "more than zero": with two programs in the workspace, a
+                  # file missing the queue row would verify the vault, report success,
+                  # and let an unpinned queue binary through. Tie the count to what
+                  # actually exists in programs/.
+                  expected=$(ls -d programs/*/ | wc -l | tr -d ' ')
+                  if [ "$count" -ne "$expected" ]; then
+                    echo "::error::verified-hashes.txt yielded $count record(s) but programs/ has $expected — every program needs a row."
                     exit 1
                   fi
                   echo "verified $count program(s)"
