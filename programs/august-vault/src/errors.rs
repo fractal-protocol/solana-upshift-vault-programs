@@ -24,9 +24,8 @@ pub enum ErrorCode {
     // operator's error. It is raised only by the three operator instructions,
     // whose constraint is `vault_state.operator == operator.key()`, so the
     // message named the wrong role and the wrong wallet. On 14 Sep 2026 that
-    // sent ops to the admin key while the vault was waiting on the operator
-    // (AUGUST-7793). The wording below is what `tests/11_multi_vault.ts` has
-    // always expected.
+    // sent ops to the admin key while the vault was waiting on the operator.
+    // The wording below is what `tests/11_multi_vault.ts` has always expected.
     #[msg("Signer must be the operator")]
     NotOperator,
     #[msg("Amount must be > 0")]

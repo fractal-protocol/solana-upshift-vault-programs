@@ -151,7 +151,7 @@ program-wide one: vaults on the same program can differ.
 
 The queue program, the instruction that sets this field, and the request/cooldown
 semantics are none of them implemented yet; this release adds only the field and
-the gate. The design is tracked under AUGUST-7663.
+the gate.
 
 ## Security
 

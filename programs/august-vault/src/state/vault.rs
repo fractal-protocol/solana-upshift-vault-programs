@@ -155,8 +155,9 @@ pub struct VaultState {
     /// is WQ-03 and does not exist yet, so the gate below is dormant on every live
     /// vault. When WQ-03 lands it MUST validate that the key derives as this vault's
     /// queue PDA before storing it, and MUST also accept `Pubkey::default()` to clear
-    /// the field (with the current queue co-signing — AUGUST-7664 records why).
-    /// That derivation check is not tidiness: a key nobody can sign for
+    /// the field — with the current queue co-signing, so a vault cannot leave
+    /// queue mode while requests are still pending against it. That derivation
+    /// check is not tidiness: a key nobody can sign for
     /// freezes every holder's exit on that vault permanently, since `redeem` is the
     /// only path that burns shares and `close_vault` requires a zero supply. Deposits
     /// would keep working, so the vault would take funds it cannot return.
@@ -193,7 +194,8 @@ pub struct VaultState {
 /// bytes are the `jito_*`, `usdc_*` and `offpar_*` fixtures that
 /// `mainnet_fork_compat.rs` runs against. (A fourth `up12` account exists on
 /// mainnet at 454 bytes and has never been deserializable; it predates this
-/// layout and is written off — see AUGUST-7161. Do not read it as a regression.)
+/// layout, was created by a smoke test, and has been written off after
+/// investigation. Do not read it as a regression.)
 /// Growing `VaultState` past that makes every existing vault fail to deserialize
 /// — user funds become unreachable without a migration. Anchor's `init` sizes new
 /// accounts from `INIT_SPACE`, so a new field silently changes this number; the

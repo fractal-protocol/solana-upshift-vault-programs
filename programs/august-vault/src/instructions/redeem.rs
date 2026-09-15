@@ -122,8 +122,9 @@ pub fn handler_checked(ctx: Context<Redeem>, shares: u64, min_assets_out: u64) -
     // this event attributes every gated redemption to the queue rather than to the
     // holder. That is deliberate — the event shape is ABI and stays unchanged for
     // existing indexers, and per-holder attribution comes from the queue program's
-    // own events joined on the enclosing instruction (AUGUST-7664 records the
-    // decision and why the vault event was left alone).
+    // own events, joined on the enclosing instruction. Leaving the vault event
+    // alone is the deliberate half of that: its shape is ABI, and existing
+    // indexers must keep parsing it unchanged.
     emit!(WithdrawEvt {
         caller: ctx.accounts.signer.key(),
         receiver: ctx.accounts.signer.key(),
