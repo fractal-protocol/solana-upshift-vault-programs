@@ -7,27 +7,17 @@
 // governed by version 2.0 of the Apache License.
 
 //! Behaviour of the `withdrawal_queue_authority` gate on `redeem` /
-//! `redeem_checked` (WQ-02).
+//! `redeem_checked`.
 //!
-//! The field is authorization state, so these tests are about who the program
-//! lets through, not about pricing. Three states matter:
+//! Three states matter: **zero** (no queue — what every live vault reads, so
+//! "unchanged" is the property that protects funds), **set with someone else
+//! signing** (refused, and refused having changed nothing), and **set with the
+//! authority signing** (allowed — the path the queue itself takes by CPI).
 //!
-//!   * **zero** — no queue. Every vault on mainnet today reads this, and every
-//!     vault created before the field existed reads it without a migration, so
-//!     "unchanged" is the property that protects live funds. Layout compatibility
-//!     against real dumped mainnet accounts is proved separately in
-//!     `mainnet_fork_compat.rs`; here we prove the *behaviour* is untouched.
-//!   * **set, and the signer is someone else** — refused with
-//!     `WithdrawalQueueRequired`, and refused having changed nothing (CEI).
-//!   * **set, and the signer IS the authority** — allowed, because this is the
-//!     path the queue program itself takes when it finalizes a request by CPI,
-//!     signing as its PDA.
-//!
-//! The authority is written straight into the account here rather than through
-//! an instruction: `set_withdrawal_queue_authority` is WQ-03 and does not exist
-//! yet. That keeps this suite about the gate alone — WQ-03 brings the tests for
-//! how the field may legally be set, and WQ-08 covers the real queue PDA signing
-//! through a CPI.
+//! Layout compatibility against real mainnet bytes lives in
+//! `mainnet_fork_compat.rs`; this file is behaviour only. The authority is
+//! written straight into the account because the admin instruction that sets it
+//! does not exist yet.
 
 use august_vault::errors::ErrorCode;
 use integration_tests::harness::{
@@ -45,9 +35,8 @@ fn vault_with_a_holder() -> VaultCtx {
     ctx
 }
 
-/// Point the vault at `authority`, bypassing the (not yet written) admin
-/// instruction. Returns nothing: read it back through `vault_state_data` if a
-/// test needs to assert on it.
+/// Point the vault at `authority`, bypassing the not-yet-written admin
+/// instruction.
 fn attach_queue(ctx: &mut VaultCtx, authority: Pubkey) {
     let mut state = ctx.vault_state_data();
     state.withdrawal_queue_authority = authority;
@@ -94,10 +83,9 @@ fn a_gated_vault_refuses_a_direct_holder_redeem() {
         .expect_err("a holder must not redeem directly once a queue is attached");
     assert_anchor_err(&err, ErrorCode::WithdrawalQueueRequired);
 
-    // The literal number, not the enum. `assert_anchor_err` derives its expected
-    // value from the same `ErrorCode` the program was built from, so a reordered
-    // enum moves both sides together and every other assertion in this file still
-    // passes. The SDK and the admin UI match on the number, so pin the number.
+    // The literal number: `assert_anchor_err` derives its expectation from the
+    // same enum the program was built from, so a reorder moves both sides
+    // together. Consumers match on the number, so pin the number.
     assert_anchor_framework_err(&err, 6021);
 }
 
@@ -158,17 +146,13 @@ fn the_gate_precedes_the_liquidity_check() {
 
 // ---- set, and the signer is the authority: allowed ----
 
-/// The path the queue program takes when finalizing: the signer equals the
-/// stored authority, so the redemption proceeds normally.
+/// The path the queue takes when finalizing: signer equals the stored authority.
 ///
-/// The authority here is the holder's own key, so `signer`, the share account's
-/// owner and the stored authority are all one pubkey. That means this test alone
-/// cannot separate "signer equals the stored key" from "signer owns the share
-/// account" — the `token::authority = signer` constraints force them equal on
-/// this path anyway. The cross-key case, where the queue PDA signs for shares it
-/// holds itself, is WQ-08's to pin, and it is what will exercise the coupling
-/// this gate creates: a gated vault requires the queue PDA to hold the share
-/// tokens AND own a deposit token account, since both are bound to the signer.
+/// The authority here is the holder's own key, so this cannot separate "signer
+/// equals the stored key" from "signer owns the share account" — the
+/// `token::authority = signer` constraints force them equal anyway. The cross-key
+/// case belongs to the queue's own CPI tests, which will also exercise what this
+/// gate implies: the queue PDA must hold the shares and own a payout account.
 #[test]
 fn the_queue_authority_may_redeem() {
     let mut ctx = vault_with_a_holder();
@@ -185,8 +169,8 @@ fn the_queue_authority_may_redeem() {
     assert!(ctx.token_account_amount(&ctx.user_deposit_ata) > before);
 }
 
-/// Detaching restores direct redemption, which is what `release_vault` does at
-/// the end of a drain (WQ-09).
+/// Detaching restores direct redemption, which is what the queue's release path
+/// does at the end of a drain.
 #[test]
 fn clearing_the_authority_restores_direct_redemption() {
     let mut ctx = vault_with_a_holder();
@@ -205,12 +189,8 @@ fn clearing_the_authority_restores_direct_redemption() {
 
 // ---- the ABI number itself ----
 
-/// Deposits are untouched by the gate.
-///
-/// The gate lives in the redeem handler, but a reader has to take that on trust
-/// unless something proves the other user-facing path still works on a gated
-/// vault — which matters because a vault that takes deposits it cannot return is
-/// the worst state this feature could produce by accident.
+/// Deposits are untouched by the gate — a vault that takes deposits it cannot
+/// return is the worst state this feature could produce by accident.
 #[test]
 fn a_gated_vault_still_accepts_deposits() {
     let mut ctx = vault_with_a_holder();
@@ -227,11 +207,8 @@ fn a_gated_vault_still_accepts_deposits() {
 }
 
 /// Pause is checked before the gate, so a paused AND gated vault reports
-/// `VaultPaused`.
-///
-/// Pinned because the queue program depends on this exact ordering: decision 7
-/// of the design has finalize inherit `VaultPaused` through the CPI, which only
-/// holds while pause wins over the gate.
+/// `VaultPaused`. The queue depends on this: its finalize inherits `VaultPaused`
+/// through the CPI only while pause wins.
 #[test]
 fn pause_is_reported_ahead_of_the_gate() {
     let mut ctx = vault_with_a_holder();

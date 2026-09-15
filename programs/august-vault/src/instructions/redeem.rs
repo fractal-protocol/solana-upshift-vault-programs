@@ -41,24 +41,14 @@ pub fn handler_checked(ctx: Context<Redeem>, shares: u64, min_assets_out: u64) -
     require!(shares > 0, ErrorCode::ZeroAmount);
     require!(!ctx.accounts.vault_state.paused, ErrorCode::VaultPaused);
 
-    // Withdrawal-queue gate. When a queue is attached to this vault, its PDA is
-    // the ONLY key allowed to redeem: holders exit by requesting through the
-    // queue and waiting out the cooldown, and the queue will finalize by CPI back
-    // into this instruction, signing as that PDA (WQ-08; nothing can attach a
-    // queue until WQ-03 ships, so on every live vault this branch is dormant).
+    // Withdrawal-queue gate. When a queue is attached, its PDA is the only key
+    // allowed to redeem; holders exit through the queue instead, and the queue
+    // redeems on their behalf by CPI, signing as that PDA.
     //
-    // In the handler rather than an `Accounts` constraint, and the honest reason
-    // is NOT that a constraint could not express it — `Redeem` already reads
-    // stored state in a constraint (`token::authority = vault_state.fee_recipient`
-    // below). It is that a constraint on `Redeem` would run for both handlers
-    // whether or not they should be gated, and this keeps the rule beside the
-    // other Checks in one readable order. The cost is that a future entry point
-    // reusing `Redeem` with its own handler would NOT inherit the gate — if one is
-    // ever added, gate it here or move this to a constraint.
-    //
-    // `None` means no queue, which is every vault today and every vault created
-    // before the field existed: their padding is zeroed at this offset, so they
-    // take the untouched path below.
+    // In the handler, not an `Accounts` constraint — a constraint could express
+    // it, but would apply to every handler using `Redeem` whether or not it
+    // should be gated. The cost: a future entry point reusing `Redeem` with its
+    // own handler does NOT inherit this, so gate it there too.
     if let Some(queue) = ctx.accounts.vault_state.withdrawal_queue() {
         require_keys_eq!(
             ctx.accounts.signer.key(),
@@ -117,14 +107,10 @@ pub fn handler_checked(ctx: Context<Redeem>, shares: u64, min_assets_out: u64) -
         &ctx.accounts.sender_token_account.to_account_info(),
     )?;
 
-    // All three identity fields are the signer, which was an invariant of `redeem`
-    // until the queue gate above: under a queue the signer IS the queue PDA, so
-    // this event attributes every gated redemption to the queue rather than to the
-    // holder. That is deliberate — the event shape is ABI and stays unchanged for
-    // existing indexers, and per-holder attribution comes from the queue program's
-    // own events, joined on the enclosing instruction. Leaving the vault event
-    // alone is the deliberate half of that: its shape is ABI, and existing
-    // indexers must keep parsing it unchanged.
+    // Under a queue the signer IS the queue PDA, so all three identity fields
+    // become the queue rather than the holder. Deliberate: the event shape is ABI
+    // and existing indexers must keep parsing it. Per-holder attribution comes
+    // from the queue program's own events.
     emit!(WithdrawEvt {
         caller: ctx.accounts.signer.key(),
         receiver: ctx.accounts.signer.key(),

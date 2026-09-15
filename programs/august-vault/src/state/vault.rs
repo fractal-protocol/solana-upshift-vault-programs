@@ -138,64 +138,37 @@ pub struct VaultState {
     /// A raw 0 collapses the pricing to pure pro-rata, which agrees with the
     /// program only while the vault sits exactly at par.
     pub share_offset: u64,
-    /// The only key permitted to redeem from this vault, or the zero key.
+    /// The only key permitted to redeem, or zero for "no queue".
     ///
-    /// `Pubkey::default()` means **no queue**: `redeem` and `redeem_checked` stay
-    /// open to any share holder, which is how every vault behaves today and how
-    /// every vault created before this field existed continues to behave — those
-    /// accounts carry zeroed padding here, so they decode as zero without a
-    /// migration. Pinned by `legacy_zero_padding_decodes_as_no_queue` and, against
-    /// real mainnet state, by `mainnet_fork_compat.rs`.
+    /// Zero is what every live vault reads — their padding is zeroed here, so the
+    /// field arrives without a migration and redemption stays open to any holder.
+    /// When set it holds this vault's withdrawal-queue PDA, and a direct holder
+    /// redeem is refused with `WithdrawalQueueRequired` (6021).
     ///
-    /// When set, it holds the `august_withdrawal_queue` PDA for this vault, and
-    /// direct redemption is refused with `WithdrawalQueueRequired` (6021); holders
-    /// exit by requesting through the queue and waiting out its cooldown.
+    /// **Nothing writes it yet.** The setter must reject any key that does not
+    /// derive as this vault's queue PDA: a key nobody can sign for freezes every
+    /// exit permanently, while deposits keep working.
     ///
-    /// **Nothing writes this field in this release.** `set_withdrawal_queue_authority`
-    /// is WQ-03 and does not exist yet, so the gate below is dormant on every live
-    /// vault. When WQ-03 lands it MUST validate that the key derives as this vault's
-    /// queue PDA before storing it, and MUST also accept `Pubkey::default()` to clear
-    /// the field — with the current queue co-signing, so a vault cannot leave
-    /// queue mode while requests are still pending against it. That derivation
-    /// check is not tidiness: a key nobody can sign for
-    /// freezes every holder's exit on that vault permanently, since `redeem` is the
-    /// only path that burns shares and `close_vault` requires a zero supply. Deposits
-    /// would keep working, so the vault would take funds it cannot return.
-    ///
-    /// Read it through `withdrawal_queue()` rather than comparing the raw field, so
-    /// "is it gated" and "who is the authority" cannot drift apart. On-chain that is
-    /// this type's accessor; off-chain it is the same-named method on the generated
-    /// client.
+    /// Read via [`Self::withdrawal_queue`], never raw.
     pub withdrawal_queue_authority: Pubkey,
-    /// Reserved. New fields must be carved **out of** this array so `LEN` stays
-    /// 455, the size of the live mainnet vault accounts — enforced by the `const`
-    /// assertion below the struct.
+    /// Reserved. Carve new fields **out of** this array so `LEN` stays 455, the
+    /// size of the live mainnet accounts — enforced by the `const` assertion below.
     ///
-    /// **Declare a new field immediately before `padding`, after every field
-    /// already declared.** Inserting one anywhere earlier shifts the fields after
-    /// it, and both of the fields carved out so far fail OPEN or CLOSED in ways
-    /// worth stating:
-    ///
-    /// * `share_offset` off byte 199 — every vault storing a non-default offset
-    ///   silently reads 0 and falls back to the default, re-pricing it. Pinned by
-    ///   `share_offset_stays_at_its_byte_offset`.
-    /// * `withdrawal_queue_authority` off byte 207 — a gated vault reads a
-    ///   different key. If the shift pushes it into untouched padding, it reads
-    ///   ZEROES, `withdrawal_queue()` returns `None`, and **direct redemption
-    ///   silently reopens on a vault that was meant to be gated**. That fail-open
-    ///   is the dangerous direction; a shift that lands on other data instead
-    ///   fails closed, refusing everyone including the queue's own CPI. Pinned by
-    ///   `withdrawal_queue_authority_stays_at_its_byte_offset`.
+    /// **Declare a new field immediately before `padding`.** Anything inserted
+    /// earlier shifts the fields after it, silently: `share_offset` off byte 199
+    /// re-prices every vault that set one, and `withdrawal_queue_authority` off
+    /// byte 207 is worse — shifted into untouched padding it reads zeroes, so a
+    /// gated vault quietly reopens to direct redemption. Pinned by
+    /// `share_offset_stays_at_its_byte_offset`,
+    /// `withdrawal_queue_authority_stays_at_its_byte_offset` and
+    /// `every_field_stays_at_its_byte_offset`.
     pub padding: [u64; 27],
 }
 
-/// **Compile-time layout guard.** Three live mainnet vaults under `up12…` are
-/// 455-byte accounts — jitoSOL, USDC, and the one trading off par; their real
-/// bytes are the `jito_*`, `usdc_*` and `offpar_*` fixtures that
-/// `mainnet_fork_compat.rs` runs against. (A fourth `up12` account exists on
-/// mainnet at 454 bytes and has never been deserializable; it predates this
-/// layout, was created by a smoke test, and has been written off after
-/// investigation. Do not read it as a regression.)
+/// **Compile-time layout guard.** Three live mainnet vaults are 455-byte accounts
+/// — the `jito_*`, `usdc_*` and `offpar_*` fixtures `mainnet_fork_compat.rs` runs
+/// against. (A fourth account is 454 bytes and has never been deserializable; it
+/// predates this layout and is written off, not a regression.)
 /// Growing `VaultState` past that makes every existing vault fail to deserialize
 /// — user funds become unreachable without a migration. Anchor's `init` sizes new
 /// accounts from `INIT_SPACE`, so a new field silently changes this number; the
@@ -235,24 +208,15 @@ impl VaultState {
         self.pda_bump = pda_bump;
         self.vault_version = vault_version;
         self.share_offset = share_offset;
-        // `withdrawal_queue_authority` is deliberately not assigned: a new vault
-        // opens with instant redemption, and a queue is attached afterwards (WQ-03).
-        // Anchor's `#[account(init, ...)]` constraint in `initialize.rs` zeroes the
-        // allocation, so the field is already `Pubkey::default()`. Note this departs
-        // from the explicit `deployed_aum = 0` / `paused = false` writes above, which
-        // restate the same zeroing; the field is the first here to rely on it.
+        // `withdrawal_queue_authority` is left unassigned: a vault opens ungated,
+        // and Anchor's `init` constraint has already zeroed the allocation. Unlike
+        // the explicit zeroing above, this field relies on that.
     }
 
     /// The queue that must handle this vault's redemptions, if any.
     ///
-    /// `None` for every vault that predates the field and for any vault whose admin
-    /// has not attached a queue; `Some(key)` names the only signer `redeem` and
-    /// `redeem_checked` will accept.
-    ///
-    /// Returning the key rather than a bare bool is deliberate: it makes "gated, but
-    /// compared against something else" unrepresentable at the call site. The raw
-    /// field stays a sentinel `Pubkey` forever because the account layout is fixed,
-    /// so an accessor is the only place that sentinel can be interpreted once.
+    /// Returns the key rather than a bool so "gated, but compared against
+    /// something else" cannot be written at a call site.
     pub fn withdrawal_queue(&self) -> Option<Pubkey> {
         (self.withdrawal_queue_authority != Pubkey::default())
             .then_some(self.withdrawal_queue_authority)

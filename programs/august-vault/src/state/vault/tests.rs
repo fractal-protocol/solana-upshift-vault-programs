@@ -606,20 +606,13 @@ fn share_offset_stays_at_its_byte_offset() {
 
 /// Every field's byte offset, in one table.
 ///
-/// The two sentinel tests below pin the two fields carved out of `padding` so
-/// far, and each explains what breaks if that one field moves. Neither notices a
-/// field added, resized, or reordered *elsewhere* in the struct — and the next
-/// author is not obliged to write a third sentinel test.
+/// The sentinel tests below pin the two fields carved out of `padding`; neither
+/// notices a field added, resized or reordered elsewhere. The table must cover
+/// the account contiguously from byte 8 to `LEN`, so an unrecorded field leaves a
+/// gap and fails here with its neighbour named.
 ///
-/// This is that obligation, in a form the compiler cannot skip: the table must
-/// cover the account contiguously from byte 8 to `LEN`, so a new or resized
-/// field leaves a gap or an overrun and fails here with its neighbour named. It
-/// also catches a reordering of two fields that have no sentinel test of their
-/// own, which nothing else does.
-///
-/// **When this fails, do not just re-derive the numbers.** Ask whether the field
-/// you moved is one an existing account already stores at the old offset. If it
-/// is, the change is not safe at any offset.
+/// When it fails, ask whether an existing account already stores that field at
+/// the old offset before re-deriving the numbers.
 #[test]
 fn every_field_stays_at_its_byte_offset() {
     use anchor_lang::AccountSerialize;
@@ -627,8 +620,7 @@ fn every_field_stays_at_its_byte_offset() {
     fn pk(b: u8) -> Pubkey {
         Pubkey::new_from_array([b; 32])
     }
-    // Distinct per field, so a row asserting the wrong slice cannot pass by
-    // matching a neighbour's bytes.
+    // Distinct per field, so a row cannot pass by matching a neighbour.
     const FEE: u32 = 0x1111_1111;
     const LOCAL: u64 = 0x2222_2222_2222_2222;
     const DEPLOYED: u64 = 0x3333_3333_3333_3333;
@@ -682,9 +674,7 @@ fn every_field_stays_at_its_byte_offset() {
         ),
     ];
 
-    // Contiguity is what forces the table to stay complete: an unrecorded field
-    // shifts its successor, and the first row past the change fails naming both
-    // the offset it expected and the one the struct actually produced.
+    // Contiguity is what forces the table to stay complete.
     let mut cursor = 8;
     for (name, at, want) in &layout {
         assert_eq!(
@@ -725,14 +715,12 @@ fn every_field_stays_at_its_byte_offset() {
 fn withdrawal_queue_authority_stays_at_its_byte_offset() {
     use anchor_lang::AccountSerialize;
 
-    // Every OTHER field is `Default`-zero, so a 32-byte run of 0xA7 can only be
-    // this field. (Not because 0xA7.. is off-curve — nothing here validates a
-    // curve point — and not because neighbouring fields are not `Pubkey`s: there
-    // are five other `Pubkey` fields, at bytes 8..168. Zeroing is the reason.)
+    // Every other field is `Default`-zero, so a 32-byte run of 0xA7 can only be
+    // this one. (Zeroing is the reason, not the byte pattern: there are five
+    // other `Pubkey` fields.)
     const SENTINEL: [u8; 32] = [0xA7; 32];
-    // A distinct sentinel in `share_offset` so flushness can be asserted against
-    // where that field ACTUALLY landed, rather than against a hardcoded 199 that
-    // constant-folds into the same literal as the assertion below.
+    // A second sentinel so flushness is asserted against where `share_offset`
+    // actually landed, not a hardcoded 199 that folds into the literal below.
     const OFFSET_SENTINEL: u64 = 0x00B4_C5D6_E7F8_0912;
     let state = VaultState {
         withdrawal_queue_authority: Pubkey::new_from_array(SENTINEL),
@@ -753,10 +741,8 @@ fn withdrawal_queue_authority_stays_at_its_byte_offset() {
          redemption, the queue's own CPI included. Carve new fields from the END \
          of `padding`, after this one."
     );
-    // Flush against `share_offset`, asserted against where that field actually
-    // serialized. This fails independently of the check above: if BOTH fields
-    // shift together the offset assertion fires, and if only one moves — a gap
-    // opening between them — this one does.
+    // Fails independently of the check above: both shifting together fires that
+    // one, a gap opening between them fires this one.
     let offset_at = bytes
         .windows(8)
         .position(|w| w == OFFSET_SENTINEL.to_le_bytes())
@@ -776,11 +762,9 @@ fn withdrawal_queue_authority_stays_at_its_byte_offset() {
 /// If that ever stopped meaning "ungated", the upgrade would silently freeze
 /// redemptions on all three live mainnet vaults at once.
 ///
-/// What this catches is a SIZE change (the 455 assertion) and a legacy account
-/// that no longer deserializes at all. It deliberately does NOT catch a shifted
-/// field: an all-zero buffer decodes to the zero key wherever the field sits —
-/// which is exactly why `withdrawal_queue_authority_stays_at_its_byte_offset`
-/// exists and carries that job alone.
+/// Catches a size change and a legacy account that stops deserializing. It does
+/// NOT catch a shifted field — an all-zero buffer decodes to zero wherever the
+/// field sits — which is what the offset test above is for.
 #[test]
 fn legacy_zero_padding_decodes_as_no_queue() {
     use anchor_lang::{AccountDeserialize, Discriminator};
