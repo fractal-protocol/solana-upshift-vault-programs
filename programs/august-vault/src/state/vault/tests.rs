@@ -604,6 +604,112 @@ fn share_offset_stays_at_its_byte_offset() {
     );
 }
 
+/// Every field's byte offset, in one table.
+///
+/// The two sentinel tests below pin the two fields carved out of `padding` so
+/// far, and each explains what breaks if that one field moves. Neither notices a
+/// field added, resized, or reordered *elsewhere* in the struct — and the next
+/// author is not obliged to write a third sentinel test.
+///
+/// This is that obligation, in a form the compiler cannot skip: the table must
+/// cover the account contiguously from byte 8 to `LEN`, so a new or resized
+/// field leaves a gap or an overrun and fails here with its neighbour named. It
+/// also catches a reordering of two fields that have no sentinel test of their
+/// own, which nothing else does.
+///
+/// **When this fails, do not just re-derive the numbers.** Ask whether the field
+/// you moved is one an existing account already stores at the old offset. If it
+/// is, the change is not safe at any offset.
+#[test]
+fn every_field_stays_at_its_byte_offset() {
+    use anchor_lang::AccountSerialize;
+
+    fn pk(b: u8) -> Pubkey {
+        Pubkey::new_from_array([b; 32])
+    }
+    // Distinct per field, so a row asserting the wrong slice cannot pass by
+    // matching a neighbour's bytes.
+    const FEE: u32 = 0x1111_1111;
+    const LOCAL: u64 = 0x2222_2222_2222_2222;
+    const DEPLOYED: u64 = 0x3333_3333_3333_3333;
+    const INC: u32 = 0x4444_4444;
+    const DEC: u32 = 0x5555_5555;
+    const OFFSET: u64 = 0x8888_8888_8888_8888;
+    const PAD: u64 = 0x9999_9999_9999_9999;
+
+    let state = VaultState {
+        operator: pk(1),
+        admin: pk(2),
+        share_mint: pk(3),
+        deposit_mint: pk(4),
+        fee_recipient: pk(5),
+        withdrawal_fee: FEE,
+        local_aum: LOCAL,
+        deployed_aum: DEPLOYED,
+        aum_increase_limit: INC,
+        aum_decrease_limit: DEC,
+        pda_bump: [0x66],
+        vault_version: [0x77],
+        paused: true,
+        share_offset: OFFSET,
+        withdrawal_queue_authority: pk(9),
+        padding: [PAD; 27],
+    };
+    let mut bytes = Vec::new();
+    state.try_serialize(&mut bytes).expect("serialize");
+
+    // (field, first byte, serialized form). Add a row when you add a field.
+    let layout: Vec<(&str, usize, Vec<u8>)> = vec![
+        ("operator", 8, pk(1).to_bytes().to_vec()),
+        ("admin", 40, pk(2).to_bytes().to_vec()),
+        ("share_mint", 72, pk(3).to_bytes().to_vec()),
+        ("deposit_mint", 104, pk(4).to_bytes().to_vec()),
+        ("fee_recipient", 136, pk(5).to_bytes().to_vec()),
+        ("withdrawal_fee", 168, FEE.to_le_bytes().to_vec()),
+        ("local_aum", 172, LOCAL.to_le_bytes().to_vec()),
+        ("deployed_aum", 180, DEPLOYED.to_le_bytes().to_vec()),
+        ("aum_increase_limit", 188, INC.to_le_bytes().to_vec()),
+        ("aum_decrease_limit", 192, DEC.to_le_bytes().to_vec()),
+        ("pda_bump", 196, vec![0x66]),
+        ("vault_version", 197, vec![0x77]),
+        ("paused", 198, vec![1]),
+        ("share_offset", 199, OFFSET.to_le_bytes().to_vec()),
+        ("withdrawal_queue_authority", 207, pk(9).to_bytes().to_vec()),
+        (
+            "padding",
+            239,
+            [PAD; 27].iter().flat_map(|w| w.to_le_bytes()).collect(),
+        ),
+    ];
+
+    // Contiguity is what forces the table to stay complete: an unrecorded field
+    // shifts its successor, and the first row past the change fails naming both
+    // the offset it expected and the one the struct actually produced.
+    let mut cursor = 8;
+    for (name, at, want) in &layout {
+        assert_eq!(
+            *at, cursor,
+            "`{name}` is recorded at byte {at} but the fields before it end at \
+             {cursor} — a field was added, resized or reordered without updating \
+             this table"
+        );
+        assert_eq!(
+            &bytes[*at..*at + want.len()],
+            want.as_slice(),
+            "`{name}` did not serialize at byte {at}"
+        );
+        cursor = at + want.len();
+    }
+    assert_eq!(
+        cursor,
+        VaultState::LEN,
+        "the table covers bytes 8..{cursor}, but the account is {} bytes — a \
+         field at the end is missing from the table",
+        VaultState::LEN
+    );
+    assert_eq!(bytes.len(), VaultState::LEN, "serialized size must equal LEN");
+}
+
 /// `withdrawal_queue_authority` must stay at byte 207, immediately after
 /// `share_offset`.
 ///
