@@ -134,10 +134,19 @@ jobs:
                       clients/rust/august-withdrawal-queue/target/
                   key: ${{ runner.os }}-cargo-client-${{ hashFiles('clients/rust/*/Cargo.lock') }}
                   restore-keys: ${{ runner.os }}-cargo-client-
-            - name: cargo check (all features)
+            # `cargo test`, not `cargo check`: this crate's only guard against a
+            # VaultState field being added upstream and silently skipped here is a
+            # `#[cfg(test)]` literal that must fail to compile. Plain `cargo check`
+            # never builds test targets, so that guard sat dormant while the crate's
+            # tests were broken — exactly what happened when
+            # `withdrawal_queue_authority` was added. The root clippy job cannot
+            # cover it either: these crates are `exclude`d from the root workspace.
+            # Both client crates run the same way so the queue client inherits the
+            # guarantee as soon as it has a test to dodge.
+            - name: cargo test (all features)
               run: |
-                  cargo check --all-features --locked --manifest-path clients/rust/august-vault/Cargo.toml
-                  cargo check --all-features --locked --manifest-path clients/rust/august-withdrawal-queue/Cargo.toml
+                  cargo test --all-features --locked --manifest-path clients/rust/august-vault/Cargo.toml
+                  cargo test --all-features --locked --manifest-path clients/rust/august-withdrawal-queue/Cargo.toml
 
     test:
         name: Build & Test

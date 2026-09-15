@@ -131,8 +131,24 @@ fn token_amount(svm: &LiteSVM, addr: &Pubkey) -> u64 {
 
 fn read_vault_state(svm: &LiteSVM, addr: &Pubkey) -> VaultState {
     let acct = svm.get_account(addr).unwrap();
-    VaultState::try_deserialize(&mut acct.data.as_slice())
-        .expect("current code must deserialize the real on-chain VaultState")
+    let state = VaultState::try_deserialize(&mut acct.data.as_slice())
+        .expect("current code must deserialize the real on-chain VaultState");
+
+    // Every live vault predates this field, so it must read as the zero key —
+    // the value that keeps direct redemption open.
+    //
+    // Weak as a layout guard: the fixtures are zero from byte 199 on, so this
+    // passes for any misplacement at or after 199. The offset is pinned by the
+    // unit tests. What this adds is that the field decodes as ungated on REAL
+    // bytes, so the upgrade provably does not gate a live vault by accident.
+    assert_eq!(
+        state.withdrawal_queue_authority,
+        Pubkey::default(),
+        "vault state at {addr} decoded a non-zero withdrawal queue authority; a \
+         live vault would refuse every redemption after the upgrade"
+    );
+
+    state
 }
 
 /// The live vaults predate `share_offset`, so its bytes are old padding and must

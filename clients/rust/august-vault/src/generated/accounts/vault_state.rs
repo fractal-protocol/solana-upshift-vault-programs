@@ -49,15 +49,32 @@ pub paused: bool,
 /// A raw 0 collapses the pricing to pure pro-rata, which agrees with the
 /// program only while the vault sits exactly at par.
 pub share_offset: u64,
-/// Reserved. New fields must be carved **out of** this array so `LEN` stays
-/// 455, the size of the live mainnet vault accounts — enforced by the `const`
-/// assertion below the struct.
+/// The only key permitted to redeem, or zero for "no queue".
 /// 
-/// **Declare them AFTER `share_offset`, never before it.** Inserting a field
-/// earlier shifts `share_offset` off byte 199, and every vault storing a
-/// non-default offset would then silently read 0 and fall back to the default.
-/// `share_offset_stays_at_its_byte_offset` fails if that happens.
-pub padding: [u64; 31],
+/// Zero is what every live vault reads — their padding is zeroed here, so the
+/// field arrives without a migration and redemption stays open to any holder.
+/// When set it holds this vault's withdrawal-queue PDA, and a direct holder
+/// redeem is refused with `WithdrawalQueueRequired` (6021).
+/// 
+/// **Nothing writes it yet.** The setter must reject any key that does not
+/// derive as this vault's queue PDA: a key nobody can sign for freezes every
+/// exit permanently, while deposits keep working.
+/// 
+/// Read via [`Self::withdrawal_queue`], never raw.
+#[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::DisplayFromStr>"))]
+pub withdrawal_queue_authority: Pubkey,
+/// Reserved. Carve new fields **out of** this array so `LEN` stays 455, the
+/// size of the live mainnet accounts — enforced by the `const` assertion below.
+/// 
+/// **Declare a new field immediately before `padding`.** Anything inserted
+/// earlier shifts the fields after it, silently: `share_offset` off byte 199
+/// re-prices every vault that set one, and `withdrawal_queue_authority` off
+/// byte 207 is worse — shifted into untouched padding it reads zeroes, so a
+/// gated vault quietly reopens to direct redemption. Pinned by
+/// `share_offset_stays_at_its_byte_offset`,
+/// `withdrawal_queue_authority_stays_at_its_byte_offset` and
+/// `every_field_stays_at_its_byte_offset`.
+pub padding: [u64; 27],
 }
 
 
