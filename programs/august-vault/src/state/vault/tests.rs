@@ -604,6 +604,97 @@ fn share_offset_stays_at_its_byte_offset() {
     );
 }
 
+/// `withdrawal_queue_authority` must stay at byte 207, immediately after
+/// `share_offset`.
+///
+/// The queue gate compares the transaction signer against whatever this offset
+/// decodes to. Shift the field and a gated vault reads a different key there:
+/// every redemption is refused, including the queue's own CPI, so holders of that
+/// vault cannot exit by any path until the program is upgraded again.
+#[test]
+fn withdrawal_queue_authority_stays_at_its_byte_offset() {
+    use anchor_lang::AccountSerialize;
+
+    // Every OTHER field is `Default`-zero, so a 32-byte run of 0xA7 can only be
+    // this field. (Not because 0xA7.. is off-curve — nothing here validates a
+    // curve point — and not because neighbouring fields are not `Pubkey`s: there
+    // are five other `Pubkey` fields, at bytes 8..168. Zeroing is the reason.)
+    const SENTINEL: [u8; 32] = [0xA7; 32];
+    // A distinct sentinel in `share_offset` so flushness can be asserted against
+    // where that field ACTUALLY landed, rather than against a hardcoded 199 that
+    // constant-folds into the same literal as the assertion below.
+    const OFFSET_SENTINEL: u64 = 0x00B4_C5D6_E7F8_0912;
+    let state = VaultState {
+        withdrawal_queue_authority: Pubkey::new_from_array(SENTINEL),
+        share_offset: OFFSET_SENTINEL,
+        ..Default::default()
+    };
+    let mut bytes = Vec::new();
+    state.try_serialize(&mut bytes).expect("serialize");
+
+    let at = bytes
+        .windows(32)
+        .position(|w| w == SENTINEL)
+        .expect("sentinel must appear in the serialized account");
+    assert_eq!(
+        at, 207,
+        "withdrawal_queue_authority moved from byte 207 to {at}. A vault with a \
+         queue attached would read a different key there and refuse every \
+         redemption, the queue's own CPI included. Carve new fields from the END \
+         of `padding`, after this one."
+    );
+    // Flush against `share_offset`, asserted against where that field actually
+    // serialized. This fails independently of the check above: if BOTH fields
+    // shift together the offset assertion fires, and if only one moves — a gap
+    // opening between them — this one does.
+    let offset_at = bytes
+        .windows(8)
+        .position(|w| w == OFFSET_SENTINEL.to_le_bytes())
+        .expect("share_offset sentinel must appear too");
+    assert_eq!(
+        at,
+        offset_at + 8,
+        "a gap opened between share_offset (at {offset_at}) and \
+         withdrawal_queue_authority (at {at})"
+    );
+}
+
+/// A vault created before this field existed must decode as "no queue".
+///
+/// Those accounts are 455 bytes with zeroes across the whole padding region, so
+/// nothing migrates them: the new field simply reads the zeroes already there.
+/// If that ever stopped meaning "ungated", the upgrade would silently freeze
+/// redemptions on all three live mainnet vaults at once.
+///
+/// What this catches is a SIZE change (the 455 assertion) and a legacy account
+/// that no longer deserializes at all. It deliberately does NOT catch a shifted
+/// field: an all-zero buffer decodes to the zero key wherever the field sits —
+/// which is exactly why `withdrawal_queue_authority_stays_at_its_byte_offset`
+/// exists and carries that job alone.
+#[test]
+fn legacy_zero_padding_decodes_as_no_queue() {
+    use anchor_lang::{AccountDeserialize, Discriminator};
+
+    // Exactly what a pre-upgrade account looks like: discriminator, then 447
+    // zero bytes. Every field, not just the new one, is zero here.
+    let mut raw = VaultState::DISCRIMINATOR.to_vec();
+    raw.resize(VaultState::LEN, 0);
+    assert_eq!(raw.len(), 455, "a live vault account is 455 bytes");
+
+    let state = VaultState::try_deserialize(&mut raw.as_slice())
+        .expect("a zero-padded legacy account must still deserialize");
+
+    assert_eq!(
+        state.withdrawal_queue_authority,
+        Pubkey::default(),
+        "zeroed padding must decode as the zero key"
+    );
+    assert!(
+        !state.requires_withdrawal_queue(),
+        "a legacy vault must stay open to direct redemption"
+    );
+}
+
 /// Only powers of ten inside the permitted band may be stored on a vault.
 #[test]
 fn share_offset_validation_is_exact() {

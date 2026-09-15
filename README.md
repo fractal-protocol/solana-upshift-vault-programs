@@ -37,8 +37,8 @@ so each deposit mint has a finite number of vault lifecycles.
 | `initialize`             | Protocol authority | Create vault, share mint, set roles, fix the share offset |
 | `deposit`                | User     | Deposit tokens, receive shares                       |
 | `deposit_checked`        | User     | As `deposit`, reverting below a caller-stated minimum share output |
-| `redeem`                 | User     | Burn shares, receive tokens (minus fee)              |
-| `redeem_checked`         | User     | As `redeem`, reverting below a caller-stated minimum payout (net of fee) |
+| `redeem`                 | User, or the withdrawal queue | Burn shares, receive tokens (minus fee)  |
+| `redeem_checked`         | User, or the withdrawal queue | As `redeem`, reverting below a caller-stated minimum payout (net of fee) |
 | `operator_withdraw`      | Operator | Withdraw tokens for external deployment              |
 | `operator_deposit`       | Operator | Return tokens to vault                               |
 | `operator_update_aum`    | Operator | Update externally deployed AUM (per-vault bps limit) |
@@ -133,6 +133,25 @@ share-burn price manipulation, a smaller one keeps a high unit-value mint
 launchable. For a 6-decimal dollar stablecoin `1000000` gives a 100-token
 minimum; for an 8-decimal asset worth ~$100k that same offset would demand a
 six-figure opening deposit, where `1000` asks roughly a thousandth of that.
+
+### Withdrawal queue (optional, per vault)
+
+`VaultState.withdrawal_queue_authority` decides who may redeem. It is
+**`Pubkey::default()` on every vault today**, which means redemption is instant
+and open to any share holder — the behaviour described above, and the behaviour
+every vault created before this field existed keeps without a migration, since
+those accounts carry zeroes at that offset.
+
+When an admin attaches a withdrawal queue, the field holds that queue's PDA and
+becomes the *only* key `redeem` and `redeem_checked` accept; a direct holder
+redemption is refused with `WithdrawalQueueRequired` (6021). Holders then exit by
+requesting through the queue and waiting out its cooldown, and the queue redeems
+on their behalf by CPI, signing as that PDA. It is a per-vault setting, not a
+program-wide one: vaults on the same program can differ.
+
+The queue program, the instruction that sets this field, and the request/cooldown
+semantics are specified in [docs/WITHDRAWAL_QUEUE.md](docs/WITHDRAWAL_QUEUE.md)
+and are not yet implemented; this release only adds the field and the gate.
 
 ## Security
 

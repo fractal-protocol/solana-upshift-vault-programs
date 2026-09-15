@@ -49,15 +49,55 @@ pub paused: bool,
 /// A raw 0 collapses the pricing to pure pro-rata, which agrees with the
 /// program only while the vault sits exactly at par.
 pub share_offset: u64,
+/// The only key permitted to redeem from this vault, or the zero key.
+/// 
+/// `Pubkey::default()` means **no queue**: `redeem` and `redeem_checked` stay
+/// open to any share holder, which is how every vault behaves today and how
+/// every vault created before this field existed continues to behave — those
+/// accounts carry zeroed padding here, so they decode as zero without a
+/// migration. Pinned by `legacy_zero_padding_decodes_as_no_queue` and, against
+/// real mainnet state, by `mainnet_fork_compat.rs`.
+/// 
+/// When set, it holds the `august_withdrawal_queue` PDA for this vault, and
+/// direct redemption is refused with `WithdrawalQueueRequired` (6021); holders
+/// exit by requesting through the queue and waiting out its cooldown.
+/// 
+/// **Nothing writes this field in this release.** `set_withdrawal_queue_authority`
+/// is WQ-03 and does not exist yet, so the gate below is dormant on every live
+/// vault. When WQ-03 lands it MUST validate that the key derives as this vault's
+/// queue PDA before storing it, and MUST also accept `Pubkey::default()` to clear
+/// the field (with the current queue co-signing — `docs/WITHDRAWAL_QUEUE.md`,
+/// decision 3). That derivation check is not tidiness: a key nobody can sign for
+/// freezes every holder's exit on that vault permanently, since `redeem` is the
+/// only path that burns shares and `close_vault` requires a zero supply. Deposits
+/// would keep working, so the vault would take funds it cannot return.
+/// 
+/// Read it through `withdrawal_queue()` rather than comparing the raw field, so
+/// "is it gated" and "who is the authority" cannot drift apart. On-chain that is
+/// this type's accessor; off-chain it is the same-named method on the generated
+/// client.
+#[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::DisplayFromStr>"))]
+pub withdrawal_queue_authority: Pubkey,
 /// Reserved. New fields must be carved **out of** this array so `LEN` stays
 /// 455, the size of the live mainnet vault accounts — enforced by the `const`
 /// assertion below the struct.
 /// 
-/// **Declare them AFTER `share_offset`, never before it.** Inserting a field
-/// earlier shifts `share_offset` off byte 199, and every vault storing a
-/// non-default offset would then silently read 0 and fall back to the default.
-/// `share_offset_stays_at_its_byte_offset` fails if that happens.
-pub padding: [u64; 31],
+/// **Declare a new field immediately before `padding`, after every field
+/// already declared.** Inserting one anywhere earlier shifts the fields after
+/// it, and both of the fields carved out so far fail OPEN or CLOSED in ways
+/// worth stating:
+/// 
+/// * `share_offset` off byte 199 — every vault storing a non-default offset
+/// silently reads 0 and falls back to the default, re-pricing it. Pinned by
+/// `share_offset_stays_at_its_byte_offset`.
+/// * `withdrawal_queue_authority` off byte 207 — a gated vault reads a
+/// different key. If the shift pushes it into untouched padding, it reads
+/// ZEROES, `withdrawal_queue()` returns `None`, and **direct redemption
+/// silently reopens on a vault that was meant to be gated**. That fail-open
+/// is the dangerous direction; a shift that lands on other data instead
+/// fails closed, refusing everyone including the queue's own CPI. Pinned by
+/// `withdrawal_queue_authority_stays_at_its_byte_offset`.
+pub padding: [u64; 27],
 }
 
 

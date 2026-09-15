@@ -73,6 +73,9 @@ pub enum AugustVaultError {
     /// 6020 - Share offset must be a power of ten within the permitted range
     #[error("Share offset must be a power of ten within the permitted range")]
     InvalidShareOffset = 0x1784,
+    /// 6021 - Signer is not this vault's withdrawal_queue_authority; holders request a withdrawal at the queue instead
+    #[error("Signer is not this vault's withdrawal_queue_authority; holders request a withdrawal at the queue instead")]
+    WithdrawalQueueRequired = 0x1785,
 }
 
 impl From<AugustVaultError> for solana_program_error::ProgramError {

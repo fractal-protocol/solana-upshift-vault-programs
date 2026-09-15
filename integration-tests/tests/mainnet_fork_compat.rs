@@ -131,8 +131,33 @@ fn token_amount(svm: &LiteSVM, addr: &Pubkey) -> u64 {
 
 fn read_vault_state(svm: &LiteSVM, addr: &Pubkey) -> VaultState {
     let acct = svm.get_account(addr).unwrap();
-    VaultState::try_deserialize(&mut acct.data.as_slice())
-        .expect("current code must deserialize the real on-chain VaultState")
+    let state = VaultState::try_deserialize(&mut acct.data.as_slice())
+        .expect("current code must deserialize the real on-chain VaultState");
+
+    // Every live vault predates `withdrawal_queue_authority`, so its bytes are
+    // old padding and must read as the zero key — the value that keeps direct
+    // redemption open.
+    //
+    // Scope honestly: this is a WEAK guard on its own. Every fixture is zero from
+    // byte 199 to the end, so it would also pass for any misplacement at or after
+    // 199. The offset is really pinned by
+    // `withdrawal_queue_authority_stays_at_its_byte_offset` plus the compile-time
+    // `LEN == 455`. What this adds is that the field decodes as ungated on REAL
+    // account bytes, so the upgrade provably does not gate a live vault by
+    // accident — the property that matters for funds, not the layout proof.
+    //
+    // It also applies to any state a test engineers through
+    // `overwrite_vault_state`, not only the dumped fixtures, since every read goes
+    // through here. That is fine today and will need revisiting when a WQ-03 or
+    // WQ-08 fork test deliberately attaches a queue.
+    assert_eq!(
+        state.withdrawal_queue_authority,
+        Pubkey::default(),
+        "vault state at {addr} decoded a non-zero withdrawal queue authority; a \
+         live vault would refuse every redemption after the upgrade"
+    );
+
+    state
 }
 
 /// The live vaults predate `share_offset`, so its bytes are old padding and must

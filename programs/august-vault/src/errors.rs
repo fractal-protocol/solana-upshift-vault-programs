@@ -62,6 +62,8 @@ pub enum ErrorCode {
     SharePriceUndefined,
     #[msg("Share offset must be a power of ten within the permitted range")]
     InvalidShareOffset,
+    #[msg("Signer is not this vault's withdrawal_queue_authority; holders request a withdrawal at the queue instead")]
+    WithdrawalQueueRequired,
 }
 
 /// Compile-time pin of the ABI described above, placed next to the enum it
@@ -133,4 +135,5 @@ pin_error_abi! {
     SlippageExceeded => 18,
     SharePriceUndefined => 19,
     InvalidShareOffset => 20,
+    WithdrawalQueueRequired => 21,
 }
