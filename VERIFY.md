@@ -40,12 +40,23 @@ IMAGE=solanafoundation/solana-verifiable-build@sha256:695f890e620db8c39afe5112e0
 # `august_vault.so`. See integration-tests/build.rs.
 while read -r pkg _; do
   case "$pkg" in ''|\#*) continue ;; esac
+  # Delete the artifact first. A cached compilation makes the build skip its copy
+  # step, leaving the PREVIOUS .so in place — you then hash a stale file and
+  # conclude the bytecode is unchanged. Removing it means a missing file, not a
+  # wrong hash, if the build ever fails to produce one.
+  rm -f "target/deploy/${pkg}.so"
   solana-verify build --library-name "$pkg" --base-image "$IMAGE"
   solana-verify get-executable-hash "target/deploy/${pkg}.so"   # exec_sha256
   shasum -a 256 "target/deploy/${pkg}.so"                       # raw_sha256
   wc -c "target/deploy/${pkg}.so"                               # size (bytes)
 done < verified-hashes.txt
 ```
+
+**Re-pinning after a source change.** Any edit to a program crate can change its
+bytecode — doc comments included, since they can reach the artifact. Do not assume
+a comment-only change is hash-neutral: clear the artifact as above, rebuild, and
+compare. CI rebuilds from a clean checkout, so a stale local artifact is the one
+way to convince yourself a pin is current when it is not.
 
 At the commit these hashes were recorded, all three columns match every row of
 [`verified-hashes.txt`](verified-hashes.txt). That file is the single source of

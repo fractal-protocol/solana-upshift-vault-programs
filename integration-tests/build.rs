@@ -214,7 +214,10 @@ fn main() {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         // Anything else leaves artifacts behind that the per-program existence
         // check below would happily accept as this invocation's output.
-        Err(e) => panic!("clear the SBF staging directory {}: {e}", staging_root.display()),
+        Err(e) => panic!(
+            "clear the SBF staging directory {}: {e}",
+            staging_root.display()
+        ),
     }
 
     for (manifest, artifact) in PROGRAMS {
