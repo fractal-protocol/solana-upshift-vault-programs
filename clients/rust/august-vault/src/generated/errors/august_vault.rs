@@ -10,8 +10,8 @@ use thiserror::Error;
 
 #[derive(Clone, Debug, Eq, Error, FromPrimitive, PartialEq)]
 pub enum AugustVaultError {
-    /// 6000 - Signer must be the admin
-    #[error("Signer must be the admin")]
+    /// 6000 - Signer must be the operator
+    #[error("Signer must be the operator")]
     NotOperator = 0x1770,
     /// 6001 - Amount must be > 0
     #[error("Amount must be > 0")]
