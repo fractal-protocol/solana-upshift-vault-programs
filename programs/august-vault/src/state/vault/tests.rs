@@ -707,7 +707,11 @@ fn every_field_stays_at_its_byte_offset() {
          field at the end is missing from the table",
         VaultState::LEN
     );
-    assert_eq!(bytes.len(), VaultState::LEN, "serialized size must equal LEN");
+    assert_eq!(
+        bytes.len(),
+        VaultState::LEN,
+        "serialized size must equal LEN"
+    );
 }
 
 /// `withdrawal_queue_authority` must stay at byte 207, immediately after
