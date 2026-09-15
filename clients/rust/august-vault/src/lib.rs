@@ -63,6 +63,30 @@ impl VaultState {
         self.withdrawal_queue().is_some()
     }
 
+    /// Where this vault's operator transfers go: the `operator_subaccount` if
+    /// it has one, else the operator's own ATA.
+    ///
+    /// **Off-chain consumers must use this, not the raw field.** A raw zero is
+    /// the legacy sentinel, and deriving an ATA for the zero key yields an
+    /// address nothing can sign for — every live mainnet vault reads zero here.
+    pub fn operator_destination(&self) -> Pubkey {
+        self.operator_subaccount().unwrap_or(self.operator)
+    }
+
+    /// This vault's designated operator subaccount, if it has one. `None` means
+    /// operator transfers still use the operator's own ATA.
+    pub fn operator_subaccount(&self) -> Option<Pubkey> {
+        (self.operator_subaccount != Pubkey::default()).then_some(self.operator_subaccount)
+    }
+
+    /// Whether a return through `operator_deposit` needs an SPL delegation from
+    /// the subaccount to the vault PDA. True exactly when a subaccount is set:
+    /// the source account is then not the operator's, so the operator cannot
+    /// authorize the transfer and the vault pulls against an allowance instead.
+    pub fn operator_returns_need_delegation(&self) -> bool {
+        self.operator_subaccount().is_some()
+    }
+
     /// Smallest first deposit this vault accepts, mirroring the program's
     /// `min_first_deposit_for`. Returns base units of the deposit mint.
     pub fn min_first_deposit(&self, decimals: u8) -> u64 {
@@ -105,7 +129,9 @@ mod tests {
             paused: false,
             share_offset: 0,
             withdrawal_queue_authority: zero,
-            padding: [0; 27],
+            operator_subaccount: zero,
+            deployed_principal: 0,
+            padding: [0; 22],
         };
         assert_eq!(vs.resolved_share_offset(), EXTRA_SHARES);
         assert_eq!(vs.min_first_deposit(6), 100_000_000);
@@ -113,5 +139,42 @@ mod tests {
         vs.share_offset = 1_000;
         assert_eq!(vs.resolved_share_offset(), 1_000);
         assert_eq!(vs.min_first_deposit(6), 100_000);
+    }
+
+    /// The legacy zero must resolve to the operator off-chain too. An SDK that
+    /// read the field raw would derive the zero key's ATA and build operator
+    /// transactions that cannot be signed, against all three live vaults.
+    #[test]
+    fn a_zero_subaccount_resolves_to_the_operator() {
+        let operator = Pubkey::new_from_array([3; 32]);
+        let subaccount = Pubkey::new_from_array([4; 32]);
+        let mut vs = VaultState {
+            discriminator: [0; 8],
+            operator,
+            admin: Pubkey::default(),
+            share_mint: Pubkey::default(),
+            deposit_mint: Pubkey::default(),
+            fee_recipient: Pubkey::default(),
+            withdrawal_fee: 0,
+            local_aum: 0,
+            deployed_aum: 0,
+            aum_increase_limit: 0,
+            aum_decrease_limit: 0,
+            pda_bump: [0; 1],
+            vault_version: [0; 1],
+            paused: false,
+            share_offset: 0,
+            withdrawal_queue_authority: Pubkey::default(),
+            operator_subaccount: Pubkey::default(),
+            deployed_principal: 0,
+            padding: [0; 22],
+        };
+        assert_eq!(vs.operator_subaccount(), None);
+        assert_eq!(vs.operator_destination(), operator);
+        assert!(!vs.operator_returns_need_delegation());
+
+        vs.operator_subaccount = subaccount;
+        assert_eq!(vs.operator_destination(), subaccount);
+        assert!(vs.operator_returns_need_delegation());
     }
 }

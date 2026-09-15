@@ -628,6 +628,7 @@ fn every_field_stays_at_its_byte_offset() {
     const DEC: u32 = 0x5555_5555;
     const OFFSET: u64 = 0x8888_8888_8888_8888;
     const PAD: u64 = 0x9999_9999_9999_9999;
+    const PRINCIPAL: u64 = 0x0A0B_0C0D_0E0F_1011;
 
     let state = VaultState {
         operator: pk(1),
@@ -645,7 +646,9 @@ fn every_field_stays_at_its_byte_offset() {
         paused: true,
         share_offset: OFFSET,
         withdrawal_queue_authority: pk(9),
-        padding: [PAD; 27],
+        operator_subaccount: pk(10),
+        deployed_principal: PRINCIPAL,
+        padding: [PAD; 22],
     };
     let mut bytes = Vec::new();
     state.try_serialize(&mut bytes).expect("serialize");
@@ -667,10 +670,12 @@ fn every_field_stays_at_its_byte_offset() {
         ("paused", 198, vec![1]),
         ("share_offset", 199, OFFSET.to_le_bytes().to_vec()),
         ("withdrawal_queue_authority", 207, pk(9).to_bytes().to_vec()),
+        ("operator_subaccount", 239, pk(10).to_bytes().to_vec()),
+        ("deployed_principal", 271, PRINCIPAL.to_le_bytes().to_vec()),
         (
             "padding",
-            239,
-            [PAD; 27].iter().flat_map(|w| w.to_le_bytes()).collect(),
+            279,
+            [PAD; 22].iter().flat_map(|w| w.to_le_bytes()).collect(),
         ),
     ];
 
@@ -789,6 +794,108 @@ fn legacy_zero_padding_decodes_as_no_queue() {
     );
 }
 
+/// `operator_subaccount` must stay at byte 239, immediately after
+/// `withdrawal_queue_authority`.
+///
+/// Zero is not inert here — it is the sentinel for "pay the operator's own ATA".
+/// So a field shifted into untouched padding makes a vault pointed at custody
+/// silently resume paying the operator, which is the failure this field exists
+/// to prevent.
+#[test]
+fn operator_subaccount_stays_at_its_byte_offset() {
+    use anchor_lang::AccountSerialize;
+
+    // Every other field is `Default`-zero, so this run can only be this field.
+    const SENTINEL: [u8; 32] = [0x5C; 32];
+    // Second sentinel: assert flushness against where the queue field actually
+    // landed, not a hardcoded 207 that folds into the literal below.
+    const QUEUE_SENTINEL: [u8; 32] = [0x3D; 32];
+    let state = VaultState {
+        operator_subaccount: Pubkey::new_from_array(SENTINEL),
+        withdrawal_queue_authority: Pubkey::new_from_array(QUEUE_SENTINEL),
+        ..Default::default()
+    };
+    let mut bytes = Vec::new();
+    state.try_serialize(&mut bytes).expect("serialize");
+
+    let at = bytes
+        .windows(32)
+        .position(|w| w == SENTINEL)
+        .expect("sentinel must appear in the serialized account");
+    assert_eq!(
+        at, 239,
+        "operator_subaccount moved from byte 239 to {at}. A vault pointed at \
+         custody would read zero there and pay the operator's own ATA again. \
+         Carve new fields from the END of `padding`, after this one."
+    );
+    // Fails independently of the check above: both shifting together fires that
+    // one, a gap opening between them fires this one.
+    let queue_at = bytes
+        .windows(32)
+        .position(|w| w == QUEUE_SENTINEL)
+        .expect("withdrawal_queue_authority sentinel must appear too");
+    assert_eq!(
+        at,
+        queue_at + 32,
+        "a gap opened between withdrawal_queue_authority (at {queue_at}) and \
+         operator_subaccount (at {at})"
+    );
+}
+
+/// A vault created before this field existed must pay the operator's own ATA.
+///
+/// The three live vaults are zero across the padding region, so nothing migrates
+/// them. If that stopped resolving to the operator, `operator_withdraw` would
+/// derive an ATA for the zero key and no live vault could deploy or recall.
+#[test]
+fn legacy_zero_padding_decodes_as_the_operator_ata() {
+    use anchor_lang::{AccountDeserialize, Discriminator};
+
+    let mut raw = VaultState::DISCRIMINATOR.to_vec();
+    raw.resize(VaultState::LEN, 0);
+    let state = VaultState::try_deserialize(&mut raw.as_slice())
+        .expect("a zero-padded legacy account must still deserialize");
+
+    assert_eq!(state.operator_subaccount, Pubkey::default());
+    assert_eq!(
+        state.operator_subaccount(),
+        None,
+        "zeroed padding must decode as 'no subaccount'"
+    );
+    assert_eq!(
+        state.operator_destination(),
+        state.operator,
+        "a legacy vault must keep paying the operator's own ATA"
+    );
+}
+
+/// Once set, the destination is the subaccount and not the operator — the
+/// companion to the test above, since a resolution bug routes funds wrongly in
+/// both directions at once.
+#[test]
+fn a_set_subaccount_becomes_the_destination() {
+    let operator = Pubkey::new_from_array([7; 32]);
+    let subaccount = Pubkey::new_from_array([8; 32]);
+
+    let mut state = VaultState {
+        operator,
+        ..Default::default()
+    };
+    assert_eq!(state.operator_destination(), operator);
+
+    state.operator_subaccount = subaccount;
+    assert_eq!(state.operator_subaccount(), Some(subaccount));
+    assert_eq!(
+        state.operator_destination(),
+        subaccount,
+        "a set subaccount must displace the operator as the destination"
+    );
+
+    // The rollback path `set_operator_subaccount` permits.
+    state.operator_subaccount = Pubkey::default();
+    assert_eq!(state.operator_destination(), operator);
+}
+
 /// Only powers of ten inside the permitted band may be stored on a vault.
 #[test]
 fn share_offset_validation_is_exact() {
@@ -849,4 +956,62 @@ fn min_first_deposit_dominates_the_offsets() {
             );
         }
     }
+}
+
+/// `deployed_principal` must stay at byte 271, immediately after
+/// `operator_subaccount`.
+///
+/// The withdrawal coverage rule reads it. Shifted into untouched padding it
+/// reads zero, so every deployment would look like the first one and the
+/// allowance would stop bounding cumulative outflow.
+#[test]
+fn deployed_principal_stays_at_its_byte_offset() {
+    use anchor_lang::AccountSerialize;
+
+    const SENTINEL: u64 = 0x00C1_D2E3_F405_1627;
+    const SUB_SENTINEL: [u8; 32] = [0x6B; 32];
+    let state = VaultState {
+        deployed_principal: SENTINEL,
+        operator_subaccount: Pubkey::new_from_array(SUB_SENTINEL),
+        ..Default::default()
+    };
+    let mut bytes = Vec::new();
+    state.try_serialize(&mut bytes).expect("serialize");
+
+    let at = bytes
+        .windows(8)
+        .position(|w| w == SENTINEL.to_le_bytes())
+        .expect("sentinel must appear in the serialized account");
+    assert_eq!(
+        at, 271,
+        "deployed_principal moved from byte 271 to {at}. Reading zero there \
+         makes the withdrawal allowance stop bounding cumulative outflow. Carve \
+         new fields from the END of `padding`."
+    );
+    let sub_at = bytes
+        .windows(32)
+        .position(|w| w == SUB_SENTINEL)
+        .expect("operator_subaccount sentinel must appear too");
+    assert_eq!(
+        at,
+        sub_at + 32,
+        "a gap opened between operator_subaccount (at {sub_at}) and \
+         deployed_principal (at {at})"
+    );
+}
+
+/// A vault created before this field existed owes nothing by this measure.
+///
+/// Safe because the coverage rule is only consulted once a subaccount is set,
+/// and setting one requires a fresh delegation — so the legacy zero cannot
+/// weaken a vault actually using the gate.
+#[test]
+fn legacy_zero_padding_decodes_as_no_outstanding_principal() {
+    use anchor_lang::{AccountDeserialize, Discriminator};
+
+    let mut raw = VaultState::DISCRIMINATOR.to_vec();
+    raw.resize(VaultState::LEN, 0);
+    let state = VaultState::try_deserialize(&mut raw.as_slice())
+        .expect("a zero-padded legacy account must still deserialize");
+    assert_eq!(state.deployed_principal, 0);
 }

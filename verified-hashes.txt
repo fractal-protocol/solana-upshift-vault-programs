@@ -28,4 +28,4 @@
 # "Line numbers are part of the bytecode" note in VERIFY.md.
 #
 # program       exec_sha256                                                       raw_sha256                                                        size
-august_vault    c1ddd20380a82e46db38b8fa8d0f7db5ba229d342e14fcd5b8fda84953d9ffb5  66d6f72b81cbc66bce196c3d4a2f56d2517adfd2d2b1d82803a5bf5576f49a6a  609000
+august_vault    5dc60d168001ef0b4d4ab82d2eaaaf0aad5685e697664f266d37f88e93d76b6a  3ff6b56de67e01bc6111e45160a78196c7f29248d5beacee5649fae95702b27b  625576

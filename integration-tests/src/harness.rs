@@ -479,6 +479,188 @@ impl VaultCtx {
         self.send_as(signer, ix)
     }
 
+    /// `set_operator_subaccount` signed by an arbitrary keypair.
+    ///
+    /// Derives the named address's ATA and passes it, except for the zero
+    /// rollback. The ATA need not exist for the call to be *built* — a missing
+    /// one fails inside the program, which is what the negative tests want.
+    pub fn set_operator_subaccount_as(
+        &mut self,
+        signer: &Keypair,
+        new_subaccount: Pubkey,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let ata =
+            (new_subaccount != Pubkey::default()).then(|| self.deposit_ata_for(&new_subaccount));
+        self.set_operator_subaccount_with(signer, new_subaccount, ata)
+    }
+
+    /// As [`Self::set_operator_subaccount_as`], but with the passed ATA named
+    /// independently of the argument — so a test can try to desync them.
+    pub fn set_operator_subaccount_with(
+        &mut self,
+        signer: &Keypair,
+        new_subaccount: Pubkey,
+        subaccount_ata: Option<Pubkey>,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts: ix_accounts::SetOperatorSubaccount {
+                vault_state: self.vault_state,
+                deposit_mint: self.deposit_mint,
+                subaccount_ata,
+                token_program: self.token_program.id(),
+                admin: signer.pubkey(),
+            }
+            .to_account_metas(None),
+            data: ix_data::SetOperatorSubaccount { new_subaccount }.data(),
+        };
+        self.send_as(signer, ix)
+    }
+
+    /// `set_operator_subaccount` signed by the configured admin.
+    pub fn set_operator_subaccount(
+        &mut self,
+        new_subaccount: Pubkey,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let admin = self.admin.insecure_clone();
+        self.set_operator_subaccount_as(&admin, new_subaccount)
+    }
+
+    /// A lamport-funded custody keypair with a deposit-mint ATA, holding
+    /// `mint_amount` of the deposit token. No delegation, so it cannot yet be
+    /// named — see [`Self::new_delegated_subaccount`] for the usual case.
+    pub fn new_subaccount(&mut self, mint_amount: u64) -> Subaccount {
+        let keypair = airdrop_keypair(&mut self.svm, 1_000_000_000);
+        let payer = self.payer.insecure_clone();
+        let (deposit_mint, token_program) = (self.deposit_mint, self.token_program);
+        let deposit_ata = create_ata(
+            &mut self.svm,
+            &payer,
+            &keypair.pubkey(),
+            &deposit_mint,
+            token_program,
+        );
+        if mint_amount > 0 {
+            let ix = mint_to_ix(
+                token_program,
+                &deposit_mint,
+                &deposit_ata,
+                &payer.pubkey(),
+                mint_amount,
+            );
+            send_tx(&mut self.svm, &payer, &[ix], &[&payer]).expect("mint to subaccount");
+        }
+        Subaccount {
+            keypair,
+            deposit_ata,
+        }
+    }
+
+    /// A custody address that has already delegated to the vault, which is what
+    /// `set_operator_subaccount` now requires. The common setup: without the
+    /// delegation the address cannot be named at all.
+    pub fn new_delegated_subaccount(&mut self, allowance: u64) -> Subaccount {
+        let sub = self.new_subaccount(0);
+        self.approve_vault_as_delegate(&sub, allowance);
+        sub
+    }
+
+    /// Have `subaccount` approve the vault PDA as delegate over its ATA for
+    /// `amount`, which is what lets `operator_deposit` pull funds back from
+    /// custody the operator cannot sign for. Spent down by each return, and SPL
+    /// clears it at zero.
+    pub fn approve_vault_as_delegate(&mut self, subaccount: &Subaccount, amount: u64) {
+        let vault_state = self.vault_state;
+        self.approve_delegate_as(subaccount, &vault_state, amount);
+    }
+
+    /// A plain owner-signed token transfer between two ATAs — used to simulate
+    /// an unrelated party donating into a subaccount's ATA.
+    pub fn transfer_tokens_as(&mut self, owner: &Keypair, from: &Pubkey, to: &Pubkey, amount: u64) {
+        let ix = match self.token_program {
+            TokenProgramKind::Spl => spl_token::instruction::transfer(
+                &spl_token::ID,
+                from,
+                to,
+                &owner.pubkey(),
+                &[],
+                amount,
+            ),
+            TokenProgramKind::Token2022 => spl_token_2022::instruction::transfer_checked(
+                &spl_token_2022::ID,
+                from,
+                &self.deposit_mint,
+                to,
+                &owner.pubkey(),
+                &[],
+                amount,
+                DEPOSIT_DECIMALS,
+            ),
+        }
+        .unwrap();
+        let signer = owner.insecure_clone();
+        send_tx(&mut self.svm, &signer, &[ix], &[&signer]).expect("token transfer");
+    }
+
+    /// Have `subaccount` revoke whatever delegation its ATA carries.
+    pub fn revoke_delegate(&mut self, subaccount: &Subaccount) {
+        let ix = revoke_ix(
+            self.token_program,
+            &subaccount.deposit_ata,
+            &subaccount.keypair.pubkey(),
+        );
+        let signer = subaccount.keypair.insecure_clone();
+        send_tx(&mut self.svm, &signer, &[ix], &[&signer]).expect("revoke");
+    }
+
+    /// The delegation currently recorded on a token account, for tests that
+    /// assert a delegation is still present after the vault stops honouring it.
+    pub fn token_account_delegate(&self, pubkey: &Pubkey) -> Option<Pubkey> {
+        let acct = self.svm.get_account(pubkey).expect("token account exists");
+        let parsed = SplAccount::unpack(&acct.data[..SplAccount::LEN]).expect("unpack");
+        parsed.delegate.into()
+    }
+
+    /// As [`Self::approve_vault_as_delegate`], but naming the delegate, so a
+    /// test can grant one to the wrong party. Always signed by the subaccount:
+    /// nobody else can grant it.
+    pub fn approve_delegate_as(&mut self, subaccount: &Subaccount, delegate: &Pubkey, amount: u64) {
+        let owner = subaccount.keypair.insecure_clone();
+        let ata = subaccount.deposit_ata;
+        self.approve_from(&owner, &ata, delegate, amount);
+    }
+
+    /// The underlying primitive: `owner` approves `delegate` over `source_ata`.
+    /// Takes a bare keypair so a test can delegate an ATA that is not a
+    /// `Subaccount` fixture — the operator's own, for instance.
+    pub fn approve_from(
+        &mut self,
+        owner: &Keypair,
+        source_ata: &Pubkey,
+        delegate: &Pubkey,
+        amount: u64,
+    ) {
+        let ix = approve_ix(
+            self.token_program,
+            source_ata,
+            delegate,
+            &owner.pubkey(),
+            amount,
+        );
+        let signer = owner.insecure_clone();
+        send_tx(&mut self.svm, &signer, &[ix], &[&signer]).expect("approve delegate");
+    }
+
+    /// The deposit-mint ATA for an arbitrary owner, derived the same way the
+    /// program's `associated_token::authority` constraint derives it.
+    pub fn deposit_ata_for(&self, owner: &Pubkey) -> Pubkey {
+        get_associated_token_address_with_program_id(
+            owner,
+            &self.deposit_mint,
+            &self.token_program.id(),
+        )
+    }
+
     /// `set_fee_recipient` signed by an arbitrary keypair.
     pub fn set_fee_recipient_as(
         &mut self,
@@ -1070,7 +1252,9 @@ impl VaultCtx {
 
     /// Create an ATA for `owner` on the vault's deposit mint, returning its
     /// address. Impostor operator tests need this so the ATA-derivation
-    /// constraint resolves and the access-control check is what fires.
+    /// constraint resolves and the access-control check is what fires. Also the
+    /// way any third party can create one on mainnet — no signature from
+    /// `owner` is required.
     pub fn create_deposit_ata_for(&mut self, owner: &Pubkey) -> Pubkey {
         let payer = self.payer.insecure_clone();
         let deposit_mint = self.deposit_mint;
@@ -1230,6 +1414,21 @@ pub struct Depositor {
     pub keypair: Keypair,
     pub deposit_ata: Pubkey,
     pub share_ata: Pubkey,
+}
+
+/// A stand-in for the custody address an `operator_subaccount` points at. A
+/// plain keypair where production wants Fordefi or a multisig; what the tests
+/// need is the part the program can see — an ATA the operator does not own, and
+/// a delegation it cannot grant itself.
+pub struct Subaccount {
+    pub keypair: Keypair,
+    pub deposit_ata: Pubkey,
+}
+
+impl Subaccount {
+    pub fn key(&self) -> Pubkey {
+        self.keypair.pubkey()
+    }
 }
 
 /// A fresh SVM with the program loaded and a `ProgramData` fixture installed,
@@ -1495,6 +1694,52 @@ fn create_ata(
     let ix = create_associated_token_account(&payer.pubkey(), owner, mint, &token_program.id());
     send_tx(svm, payer, &[ix], &[payer]).expect("create ATA");
     ata
+}
+
+/// SPL `approve` — what makes `operator_deposit` work once a vault has a
+/// subaccount: the owner delegates its ATA to the vault PDA, which pulls against
+/// that allowance.
+fn approve_ix(
+    token_program: TokenProgramKind,
+    source_ata: &Pubkey,
+    delegate: &Pubkey,
+    owner: &Pubkey,
+    amount: u64,
+) -> Instruction {
+    match token_program {
+        TokenProgramKind::Spl => spl_token::instruction::approve(
+            &spl_token::ID,
+            source_ata,
+            delegate,
+            owner,
+            &[],
+            amount,
+        )
+        .unwrap(),
+        TokenProgramKind::Token2022 => spl_token_2022::instruction::approve(
+            &spl_token_2022::ID,
+            source_ata,
+            delegate,
+            owner,
+            &[],
+            amount,
+        )
+        .unwrap(),
+    }
+}
+
+/// SPL `revoke` — custody withdrawing the delegation. The incident-response
+/// counterpart to `approve_ix`.
+fn revoke_ix(token_program: TokenProgramKind, source_ata: &Pubkey, owner: &Pubkey) -> Instruction {
+    match token_program {
+        TokenProgramKind::Spl => {
+            spl_token::instruction::revoke(&spl_token::ID, source_ata, owner, &[]).unwrap()
+        }
+        TokenProgramKind::Token2022 => {
+            spl_token_2022::instruction::revoke(&spl_token_2022::ID, source_ata, owner, &[])
+                .unwrap()
+        }
+    }
 }
 
 fn mint_to_ix(

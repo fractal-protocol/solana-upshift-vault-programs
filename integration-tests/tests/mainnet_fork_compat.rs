@@ -148,6 +148,23 @@ fn read_vault_state(svm: &LiteSVM, addr: &Pubkey) -> VaultState {
          live vault would refuse every redemption after the upgrade"
     );
 
+    // Same shape and caveat, different consequence: a non-zero value here would
+    // mean the upgrade itself had redirected a live vault's operator transfers,
+    // and since the destination ATA must exist and have delegated to the vault,
+    // that vault could neither deploy nor recall funds.
+    assert_eq!(
+        state.operator_subaccount,
+        Pubkey::default(),
+        "vault state at {addr} decoded a non-zero operator_subaccount; a live \
+         vault's operator transfers would be redirected by the upgrade itself"
+    );
+    assert_eq!(
+        state.operator_destination(),
+        state.operator,
+        "vault state at {addr} must still resolve operator transfers to the \
+         operator's own ATA"
+    );
+
     state
 }
 

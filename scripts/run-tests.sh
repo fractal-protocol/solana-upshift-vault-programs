@@ -165,7 +165,7 @@ prepare_local_program() {
 # line (passing files positionally APPENDS to the configured suite). Restored on exit.
 run_focused() {
     local files="$1"
-    awk -v f="$files" '/^test = /{print "test = \"yarn run ts-mocha -p ./tsconfig.json -t 1000000 " f "\""; next} {print}' \
+    awk -v f="$files" '/^test = /{print "test = \"pnpm exec ts-mocha -p ./tsconfig.json -t 1000000 " f "\""; next} {print}' \
         Anchor.toml > Anchor.toml.tmp && mv Anchor.toml.tmp Anchor.toml
     anchor test $SKIP_VALIDATOR
 }

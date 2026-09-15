@@ -19,13 +19,18 @@ pub struct OperatorDeposit {
           
               
           pub vault_deposit_ata: solana_pubkey::Pubkey,
-          
+                /// Source: the vault's `operator_subaccount` if set, else the operator's
+/// own ATA.
+
+    
               
           pub operator_token_account: solana_pubkey::Pubkey,
           
               
           pub deposit_mint: solana_pubkey::Pubkey,
-          
+                /// Still the operator: the destination changed, not who may move funds.
+
+    
               
           pub operator: solana_pubkey::Pubkey,
           
@@ -151,7 +156,9 @@ impl OperatorDepositBuilder {
                         self.vault_deposit_ata = Some(vault_deposit_ata);
                     self
     }
-            #[inline(always)]
+            /// Source: the vault's `operator_subaccount` if set, else the operator's
+/// own ATA.
+#[inline(always)]
     pub fn operator_token_account(&mut self, operator_token_account: solana_pubkey::Pubkey) -> &mut Self {
                         self.operator_token_account = Some(operator_token_account);
                     self
@@ -161,7 +168,8 @@ impl OperatorDepositBuilder {
                         self.deposit_mint = Some(deposit_mint);
                     self
     }
-            #[inline(always)]
+            /// Still the operator: the destination changed, not who may move funds.
+#[inline(always)]
     pub fn operator(&mut self, operator: solana_pubkey::Pubkey) -> &mut Self {
                         self.operator = Some(operator);
                     self
@@ -215,13 +223,18 @@ impl OperatorDepositBuilder {
                 
                     
               pub vault_deposit_ata: &'b solana_account_info::AccountInfo<'a>,
-                
+                        /// Source: the vault's `operator_subaccount` if set, else the operator's
+/// own ATA.
+
+      
                     
               pub operator_token_account: &'b solana_account_info::AccountInfo<'a>,
                 
                     
               pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
-                
+                        /// Still the operator: the destination changed, not who may move funds.
+
+      
                     
               pub operator: &'b solana_account_info::AccountInfo<'a>,
                 
@@ -239,13 +252,18 @@ pub struct OperatorDepositCpi<'a, 'b> {
           
               
           pub vault_deposit_ata: &'b solana_account_info::AccountInfo<'a>,
-          
+                /// Source: the vault's `operator_subaccount` if set, else the operator's
+/// own ATA.
+
+    
               
           pub operator_token_account: &'b solana_account_info::AccountInfo<'a>,
           
               
           pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
-          
+                /// Still the operator: the destination changed, not who may move funds.
+
+    
               
           pub operator: &'b solana_account_info::AccountInfo<'a>,
           
@@ -391,7 +409,9 @@ impl<'a, 'b> OperatorDepositCpiBuilder<'a, 'b> {
                         self.instruction.vault_deposit_ata = Some(vault_deposit_ata);
                     self
     }
-      #[inline(always)]
+      /// Source: the vault's `operator_subaccount` if set, else the operator's
+/// own ATA.
+#[inline(always)]
     pub fn operator_token_account(&mut self, operator_token_account: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
                         self.instruction.operator_token_account = Some(operator_token_account);
                     self
@@ -401,7 +421,8 @@ impl<'a, 'b> OperatorDepositCpiBuilder<'a, 'b> {
                         self.instruction.deposit_mint = Some(deposit_mint);
                     self
     }
-      #[inline(always)]
+      /// Still the operator: the destination changed, not who may move funds.
+#[inline(always)]
     pub fn operator(&mut self, operator: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
                         self.instruction.operator = Some(operator);
                     self

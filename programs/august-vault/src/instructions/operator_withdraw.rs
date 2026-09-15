@@ -9,6 +9,7 @@
 use crate::errors::ErrorCode;
 use crate::state::vault::*;
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::program_option::COption;
 use anchor_spl::token_interface::{
     transfer_checked, Mint, TokenAccount, TokenInterface, TransferChecked,
 };
@@ -17,6 +18,37 @@ pub fn handler(ctx: Context<OperatorWithdraw>, amount: u64) -> Result<()> {
     require!(amount > 0, ErrorCode::ZeroAmount);
 
     let state = &mut ctx.accounts.vault_state;
+
+    // Everything the vault has sent to a subaccount must stay covered by a live
+    // delegation.
+    //
+    // Without this the config-time proof guarantees nothing: it shows the
+    // address can return one base unit, while this instruction could push out
+    // the whole reserve. The asymmetry only surfaced later, as a refused return
+    // with the funds already gone.
+    //
+    // Measured against `deployed_principal` — what the vault has physically sent
+    // and not got back — and NOT against `deployed_aum` or the destination ATA's
+    // balance. `deployed_aum` is *reported* value, so an `operator_update_aum`
+    // mark-down would reopen capacity a further deployment could spend, leaving
+    // principal at custody with nothing behind it. The ATA balance is externally
+    // mutable, so a one-unit donation would push an allowance sized to the
+    // planned deployment out of range, and returning the donation would not
+    // restore it, since a return decrements balance and allowance together.
+    //
+    // Cumulative outflow is bounded because only returns reduce
+    // `deployed_principal`, and returns spend the allowance down in step — so
+    // `delegated_amount >= deployed_principal` holds throughout. That is also
+    // why re-naming a funded subaccount always re-passes the setter's proof.
+    if state.operator_subaccount().is_some() {
+        let dest = &ctx.accounts.operator_token_account;
+        require!(
+            dest.delegate == COption::Some(state.key())
+                && dest.delegated_amount >= state.deployed_principal.saturating_add(amount),
+            ErrorCode::SubaccountDelegationMissing
+        );
+    }
+
     let signer_seeds: &[&[&[u8]]] = &[&state.seeds()];
 
     transfer_checked(
@@ -44,6 +76,12 @@ pub fn handler(ctx: Context<OperatorWithdraw>, amount: u64) -> Result<()> {
     };
 
     state.deployed_aum += amount;
+    // Principal owed back. Unlike `deployed_aum` this is never marked, so a
+    // report cannot reopen the coverage capacity checked above.
+    state.deployed_principal = state
+        .deployed_principal
+        .checked_add(amount)
+        .ok_or(ErrorCode::NumberOverflow)?;
     Ok(())
 }
 
@@ -61,10 +99,12 @@ pub struct OperatorWithdraw<'info> {
     )]
     pub vault_deposit_ata: InterfaceAccount<'info, TokenAccount>,
 
+    /// Destination: the vault's `operator_subaccount` if set, else the
+    /// operator's own ATA.
     #[account(
         mut,
         associated_token::mint = deposit_mint,
-        associated_token::authority = operator,
+        associated_token::authority = vault_state.destination_for_signer(operator.key()),
         associated_token::token_program = token_program,
     )]
     pub operator_token_account: InterfaceAccount<'info, TokenAccount>,

@@ -23,6 +23,7 @@ pub mod set_aum_limits;
 pub mod set_config_authority;
 pub mod set_fee_recipient;
 pub mod set_operator;
+pub mod set_operator_subaccount;
 pub mod set_withdrawal_fee;
 pub mod unpause;
 pub mod update_metadata;

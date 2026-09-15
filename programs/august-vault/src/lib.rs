@@ -25,6 +25,7 @@ use instructions::set_aum_limits::*;
 use instructions::set_config_authority::*;
 use instructions::set_fee_recipient::*;
 use instructions::set_operator::*;
+use instructions::set_operator_subaccount::*;
 use instructions::set_withdrawal_fee::*;
 use instructions::unpause::*;
 use instructions::update_metadata::*;
@@ -179,7 +180,14 @@ pub mod august_vault {
     }
     /// Operator withdraw funds from the Vault
     ///
-    /// Get tokens out
+    /// Get tokens out. Sends to this vault's `operator_subaccount` if one is
+    /// set, otherwise to the operator's own ATA; that account must already
+    /// exist. With a subaccount set, the destination's delegation to this vault
+    /// must also cover the outstanding principal plus `amount`, so that what the
+    /// vault is owed stays recallable — otherwise `SubaccountDelegationMissing` (6023).
+    /// Another party's ATA fails `ConstraintTokenOwner` (2015); a token account
+    /// that is not the derived ATA fails `ConstraintAssociated` (2009).
+    ///
     /// ### Parameters
     /// - `amount` - The amount of tokens to get out of the Vault
     pub fn operator_withdraw(ctx: Context<OperatorWithdraw>, amount: u64) -> Result<()> {
@@ -187,7 +195,12 @@ pub mod august_vault {
     }
     /// Operator deposit funds in the Vault
     ///
-    /// Get tokens in
+    /// Get tokens in. Pulls from this vault's `operator_subaccount` if one is
+    /// set, otherwise from the operator's own ATA. With a subaccount the vault
+    /// PDA — not the operator — authorizes the transfer, against an SPL
+    /// delegation the subaccount granted over its ATA; a missing or exhausted
+    /// allowance fails with `SubaccountDelegationMissing` (6023).
+    ///
     /// ### Parameters
     /// - `amount` - The amount of tokens to get in the Vault
     pub fn operator_deposit(ctx: Context<OperatorDeposit>, amount: u64) -> Result<()> {
@@ -202,6 +215,42 @@ pub mod august_vault {
     /// - `new_aum` - The new deployed AUM value
     pub fn operator_update_aum(ctx: Context<OperatorUpdateAum>, new_aum: u64) -> Result<()> {
         return instructions::operator_update_aum::handler(ctx, new_aum);
+    }
+
+    /// Name the address that receives operator withdrawals and funds operator
+    /// returns, separating "who may move vault funds" from "where they go".
+    ///
+    /// Admin only. Zero restores the legacy behaviour, in which both sides are
+    /// the operator's own ATA; pass no `subaccount_ata` for that and the
+    /// address's own ATA otherwise.
+    ///
+    /// **The address must already have delegated.** Its deposit-mint ATA has to
+    /// carry this vault's PDA as SPL delegate with a nonzero allowance, which is
+    /// the only on-chain proof that it can return funds — an address cannot be
+    /// named before custody has run `approve(subaccount_ata, vault_state, n)`.
+    ///
+    /// `n` then bounds deployments too: `operator_withdraw` requires the
+    /// allowance to cover outstanding principal plus the amount, so size it
+    /// to the cycle you intend to deploy. Returns spend it down and SPL clears
+    /// the delegation at zero, so it needs re-granting per cycle; a lapsed one
+    /// fails `SubaccountDelegationMissing` (6023).
+    ///
+    /// Once set, `operator_withdraw` sends only to that ATA and
+    /// `operator_deposit` pulls only from it, with the vault PDA — not the
+    /// operator — authorizing the transfer. The operator still signs.
+    ///
+    /// Only as good as the address: it must be custody the operator cannot
+    /// sweep, and on admin being a different *party* than the operator — not
+    /// enforced, and where they are the same key the separation buys nothing.
+    ///
+    /// ### Parameters
+    /// - `new_subaccount` - The receiving address, or zero to revert to the
+    ///   operator's own ATA
+    pub fn set_operator_subaccount(
+        ctx: Context<SetOperatorSubaccount>,
+        new_subaccount: Pubkey,
+    ) -> Result<()> {
+        return instructions::set_operator_subaccount::handler(ctx, new_subaccount);
     }
 
     /// Admin Updates the Withdrawal Fee

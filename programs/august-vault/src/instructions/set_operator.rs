@@ -13,6 +13,23 @@ use anchor_spl::token_interface::Mint;
 
 pub fn handler(ctx: Context<SetOperator>, new_operator: Pubkey) -> Result<()> {
     let state = &mut ctx.accounts.vault_state;
+
+    // Otherwise the `subaccount != operator` rule `set_operator_subaccount`
+    // enforces is one call away from being undone, with nothing in the account
+    // to show it. Rotating onto any other key is unaffected.
+    require!(
+        state.operator_subaccount() != Some(new_operator),
+        ErrorCode::InvalidOperatorSubaccount
+    );
+
+    // The three config-authority setters all refuse the zero key; this one did
+    // not, and with a subaccount set nobody can sign as the operator, so both
+    // operator handlers become uncallable while funds sit at custody.
+    require!(
+        new_operator != Pubkey::default(),
+        ErrorCode::InvalidAuthority
+    );
+
     state.operator = new_operator;
     Ok(())
 }

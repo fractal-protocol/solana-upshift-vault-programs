@@ -17,7 +17,7 @@ A share-based vault on Solana built with Anchor. Users deposit an SPL token and 
 |------------------------|---------------------------------------------------------------------|
 | **User**               | Deposit tokens, redeem shares                                       |
 | **Operator**           | Withdraw/deposit funds, report deployed AUM                         |
-| **Admin**              | Update fees, operator, admin (two-step), fee recipient, pause/unpause |
+| **Admin**              | Update fees, operator, operator subaccount, admin (two-step), fee recipient, pause/unpause |
 | **Protocol authority** | Create vaults. Program-wide (not per-vault), stored in `ProgramConfig`. Rotatable by itself, resettable by the upgrade authority. |
 | **Upgrade authority**  | Upgrade the program; create `ProgramConfig`; reset the protocol authority |
 
@@ -39,13 +39,14 @@ so each deposit mint has a finite number of vault lifecycles.
 | `deposit_checked`        | User     | As `deposit`, reverting below a caller-stated minimum share output |
 | `redeem`                 | User, or the withdrawal queue | Burn shares, receive tokens (minus fee)  |
 | `redeem_checked`         | User, or the withdrawal queue | As `redeem`, reverting below a caller-stated minimum payout (net of fee) |
-| `operator_withdraw`      | Operator | Withdraw tokens for external deployment              |
-| `operator_deposit`       | Operator | Return tokens to vault                               |
+| `operator_withdraw`      | Operator | Withdraw tokens for external deployment, to the operator subaccount if set |
+| `operator_deposit`       | Operator | Return tokens to vault, from the operator subaccount if set |
 | `operator_update_aum`    | Operator | Update externally deployed AUM (per-vault bps limit) |
 | `set_withdrawal_fee`     | Admin    | Set withdrawal fee (max 10%)                         |
 | `nominate_admin`         | Admin    | Nominate new admin (two-step transfer)               |
 | `accept_admin_nomination`| Nominee  | Accept admin role                                    |
 | `set_operator`           | Admin    | Assign new operator                                  |
+| `set_operator_subaccount`| Admin    | Name where operator funds go, or zero for the operator's own ATA |
 | `set_fee_recipient`      | Admin    | Change fee recipient                                 |
 | `set_aum_limits`         | Admin    | Configure AUM limits                                 |
 | `pause` / `unpause`      | Admin    | Emergency pause/unpause                              |
@@ -153,9 +154,83 @@ The queue program, the instruction that sets this field, and the request/cooldow
 semantics are none of them implemented yet; this release adds only the field and
 the gate.
 
+### Operator subaccount (optional, per vault)
+
+`VaultState.operator_subaccount` decides where operator funds go, separating the
+power to *move* vault funds from the address that *receives* them. It is
+zero on every vault created before this field existed — which is what the fork
+fixtures pin — so both operator transfers use the operator's own ATA and the
+field arrives without a migration.
+
+When an admin sets it, `operator_withdraw` sends only to that address's ATA and
+`operator_deposit` accepts only from it; the operator's own ATA is refused. The
+setter is admin-only, so an operator cannot redirect its own payout.
+
+**The address must prove it can return funds before it can be named.** Its
+deposit-mint ATA must already carry the vault PDA as SPL delegate with a nonzero
+allowance, granted by the subaccount itself — so the rollout is *custody
+approves, then admin switches*. That is the only proof available on-chain, and
+it needs the owner's signature, unlike ATA existence, which
+`create_associated_token_account` lets any third party manufacture. Judging the
+address by shape instead would miss an uncreated ATA address (System-owned and
+empty, so it reads as an ordinary wallet) and would wrongly refuse an SPL token
+multisig, which can sign.
+
+**The allowance bounds deployments, not just returns.** `operator_withdraw`
+requires the destination's delegation to cover the outstanding principal plus
+the amount being sent, so whatever the vault is owed stays recallable at all
+times. It is measured against principal actually sent and not returned — not
+against reported AUM, since `operator_update_aum` marks value with no tokens
+moving and a mark-down would otherwise reopen capacity; and not against the
+destination ATA's balance, which anyone can inflate with a donation. Size the
+grant to the cycle you intend to deploy. Returns spend it down and SPL clears
+the delegation once it reaches zero, so it must be re-granted per cycle; a
+lapsed or short one fails with `SubaccountDelegationMissing` (6023). Note the
+program's check covers the delegation only — a short *balance* or a frozen
+source ATA still surface as the token program's own errors.
+
+**The allowance is also the compromise radius.** A compromised *operator* needs
+no admin involvement to pull the whole standing allowance into the vault; a
+compromised admin can additionally rotate the operator to itself, roll the
+subaccount back and withdraw to its own ATA. Because the same number now bounds
+what can be deployed, keeping it to one cycle bounds both at once — a
+compromised key reaches roughly what is already deployed, which it could reach
+via the reserve anyway.
+
+**Rolling back to zero stops this vault honouring the delegation — it does not
+revoke it.** The subaccount's ATA stops being an accepted source, so the vault
+cannot pull; but the allowance stands, and an admin can re-name the same address
+and resume without any new approval from custody. It is therefore a lever
+against a compromised *operator*, or against custody gone unreachable — not
+against a compromised admin. Only custody's `revoke` ends the exposure.
+
+Rolling back also recovers funds left in the *operator's own* ATA from before a
+switch-over. It does **not** recover funds sitting at a subaccount: for those,
+re-name that subaccount and return through it, which the coverage rule above
+guarantees will work while it still holds a balance.
+
+**Token-2022 CPI Guard.** The return transfer is the shape the guard permits: it
+blocks CPI transfers authorized by the account's *owner*, not by a delegate. The
+guard also blocks `Approve` inside a CPI, so on such an ATA the delegation must
+be granted as a top-level instruction — which a wallet or MPC signer does
+anyway, and a PDA-owned ATA cannot enable the extension in the first place. A
+PDA-based multisig therefore cannot combine CPI Guard with this feature, since
+it can only issue `Approve` via CPI.
+
+The field is **only as good as the address**: it must be custody the operator
+cannot unilaterally sweep — an MPC wallet such as Fordefi, which is an ordinary
+System-owned account signing directly, or a multisig such as Squads, whose vault
+is a PDA owned by its own program — and it depends on admin being a different
+*party* than the operator, which is not enforced and not checkable on-chain.
+
 ## Security
 
-- **Operator Trust**: The operator can withdraw funds and report off-chain balances. Trust assumptions are critical.
+- **Operator Trust**: The operator can move funds out of the vault and report
+  off-chain balances. Trust assumptions are critical. `operator_subaccount`
+  narrows this where set — the operator still moves funds, but only to an
+  address the admin named — and does nothing where it is zero or where admin and
+  operator are the same key. See the operator-subaccount section for what
+  rolling back to zero does and does not neutralise.
 - **Withdrawal Fee**: Protects against front-running of AUM updates.
 - **Emergency Pause**: Disables all user operations.
 - **Upgrade Authority**: Should be transferred to an admin multisig after production deployment.
