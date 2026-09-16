@@ -618,3 +618,104 @@ fn the_subaccount_flow_works_on_token_2022() {
     ctx.operator_deposit_from(&sub, DEPLOYED).expect("return");
     assert_eq!(ctx.vault_state_data().deployed_principal, 0);
 }
+
+// ---- upgrade compatibility ----
+
+/// A client that has not been updated still works on an unconfigured vault.
+///
+/// The optional registry account is appended, not inserted, and may be omitted
+/// entirely. Inserting it mid-struct would shift `deposit_mint` and have it
+/// deserialized as a `Subaccount`, breaking every existing operator integration
+/// the moment the program was upgraded — before any admin opted in.
+#[test]
+fn the_pre_registry_account_list_still_works() {
+    let mut ctx = funded_vault();
+    assert!(!ctx.vault_state_data().requires_subaccount());
+
+    ctx.operator_withdraw_legacy_layout(DEPLOYED)
+        .expect("a six-account call must still work with no registrations");
+    assert_eq!(
+        ctx.token_account_amount(&ctx.operator_deposit_ata),
+        DEPLOYED
+    );
+}
+
+/// And once registered, the old call shape is refused rather than silently
+/// paying the operator.
+#[test]
+fn the_pre_registry_account_list_is_refused_once_registered() {
+    let mut ctx = funded_vault();
+    let _sub = ctx.new_registered_subaccount(DEPLOYED);
+
+    let err = ctx
+        .operator_withdraw_legacy_layout(DEPLOYED)
+        .expect_err("a configured vault must not accept the old call shape");
+    assert_anchor_err(&err, ErrorCode::InvalidSubaccount);
+}
+
+/// Returning more than a destination owes must not erase what other
+/// destinations owe.
+#[test]
+fn an_over_return_does_not_erase_another_destinations_exposure() {
+    let mut ctx = funded_vault();
+    let a = ctx.new_registered_subaccount(DEPLOYED * 4);
+    let b = ctx.new_registered_subaccount(DEPLOYED * 4);
+    ctx.operator_withdraw_to(&a, DEPLOYED).expect("to A");
+    ctx.operator_withdraw_to(&b, DEPLOYED).expect("to B");
+    assert_eq!(ctx.vault_state_data().deployed_principal, DEPLOYED * 2);
+
+    // Fund A beyond what it owes, then return the lot through A.
+    let donor = ctx.new_subaccount(DEPLOYED);
+    let (from, to) = (donor.deposit_ata, a.deposit_ata);
+    let donor_key = donor.keypair.insecure_clone();
+    ctx.transfer_tokens_as(&donor_key, &from, &to, DEPLOYED);
+    ctx.operator_deposit_from(&a, DEPLOYED * 2)
+        .expect("returning more than A owes is recapitalisation");
+
+    assert_eq!(ctx.subaccount_data(&a).principal, 0);
+    assert_eq!(
+        ctx.vault_state_data().deployed_principal,
+        DEPLOYED,
+        "B's exposure must survive an over-return through A"
+    );
+    assert_eq!(ctx.subaccount_data(&b).principal, DEPLOYED);
+}
+
+/// The first registration inherits the vault's outstanding principal, so its
+/// allowance must cover it — otherwise registration creates principal the
+/// operator cannot return and deregistration cannot clear.
+#[test]
+fn the_first_registration_must_cover_the_principal_it_inherits() {
+    let mut ctx = funded_vault();
+    ctx.operator_withdraw(DEPLOYED)
+        .expect("deploy pre-registry");
+
+    let thin = ctx.new_delegated_subaccount(1);
+    let err = ctx
+        .register_subaccount(&thin)
+        .expect_err("a one-unit allowance must not adopt DEPLOYED of principal");
+    assert_anchor_err(&err, ErrorCode::SubaccountDelegationMissing);
+    assert_eq!(ctx.vault_state_data().subaccount_count, 0);
+
+    // Covering it exactly is enough.
+    let ok = ctx.new_delegated_subaccount(DEPLOYED);
+    ctx.register_subaccount(&ok).expect("an exact cover works");
+    assert_eq!(ctx.subaccount_data(&ok).principal, DEPLOYED);
+}
+
+/// Closing a vault with registry entries would leave their rent permanently
+/// unreclaimable, since deregistration needs the vault account and the share
+/// mint survives a close.
+#[test]
+fn a_vault_with_registrations_cannot_be_closed() {
+    let mut ctx = VaultCtx::fresh();
+    let sub = ctx.new_registered_subaccount(DEPLOYED);
+
+    let err = ctx
+        .close_vault()
+        .expect_err("registrations must be removed before closing");
+    assert_anchor_err(&err, ErrorCode::VaultNotEmpty);
+
+    ctx.deregister_subaccount(&sub).expect("deregister");
+    ctx.close_vault().expect("now closable");
+}

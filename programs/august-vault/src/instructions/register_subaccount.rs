@@ -20,9 +20,20 @@ pub fn handler(ctx: Context<RegisterSubaccount>, address: Pubkey) -> Result<()> 
     // owner's signature, unlike ATA existence, which anyone can create.
     // Program-owned addresses are excluded only because this program issues no
     // `Approve` CPI. See README.
+    // The first registration adopts the vault's outstanding principal, so the
+    // allowance has to cover it — otherwise registration immediately creates
+    // uncovered principal the operator cannot return (the funds are at its own
+    // ATA, no longer an accepted source) and that blocks deregistration too.
+    let inherited = if state.subaccount_count == 0 {
+        state.deployed_principal
+    } else {
+        0
+    };
     let ata = &ctx.accounts.subaccount_ata;
     require!(
-        ata.delegate == COption::Some(state.key()) && ata.delegated_amount > 0,
+        ata.delegate == COption::Some(state.key())
+            && ata.delegated_amount > 0
+            && ata.delegated_amount >= inherited,
         ErrorCode::SubaccountDelegationMissing
     );
 
@@ -39,11 +50,7 @@ pub fn handler(ctx: Context<RegisterSubaccount>, address: Pubkey) -> Result<()> 
     // The first registration adopts the vault's existing outstanding principal,
     // so a vault that already has funds out keeps them covered rather than
     // starting from a clean slate that under-states what is owed.
-    sub.principal = if state.subaccount_count == 0 {
-        state.deployed_principal
-    } else {
-        0
-    };
+    sub.principal = inherited;
 
     state.subaccount_count = state
         .subaccount_count

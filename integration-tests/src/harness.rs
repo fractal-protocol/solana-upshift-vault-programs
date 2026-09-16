@@ -289,6 +289,33 @@ impl VaultCtx {
         self.operator_withdraw_with(&operator, ata, Some(pda), amount)
     }
 
+    /// `operator_withdraw` built with the **pre-registry account list** — six
+    /// accounts, no optional slot at all. What an un-updated client sends.
+    pub fn operator_withdraw_legacy_layout(
+        &mut self,
+        amount: u64,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let operator = self.operator.insecure_clone();
+        let mut metas = ix_accounts::OperatorWithdraw {
+            vault_state: self.vault_state,
+            vault_deposit_ata: self.vault_token_pda,
+            operator_token_account: self.operator_deposit_ata,
+            subaccount: None,
+            deposit_mint: self.deposit_mint,
+            operator: operator.pubkey(),
+            token_program: self.token_program.id(),
+        }
+        .to_account_metas(None);
+        // Drop the trailing optional sentinel entirely.
+        metas.pop();
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts: metas,
+            data: ix_data::OperatorWithdraw { amount }.data(),
+        };
+        self.send_as(&operator, ix)
+    }
+
     /// The general form: the ATA and the registry PDA are named independently,
     /// so a test can omit the PDA or pass a mismatched one.
     pub fn operator_withdraw_with(

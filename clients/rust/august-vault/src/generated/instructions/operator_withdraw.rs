@@ -25,12 +25,6 @@ pub struct OperatorWithdraw {
     
               
           pub operator_token_account: solana_pubkey::Pubkey,
-                /// The destination's registry entry, required exactly when the vault has
-/// registrations. Its PDA binds it to this vault.
-
-    
-              
-          pub subaccount: Option<solana_pubkey::Pubkey>,
           
               
           pub deposit_mint: solana_pubkey::Pubkey,
@@ -40,6 +34,19 @@ pub struct OperatorWithdraw {
           
               
           pub token_program: solana_pubkey::Pubkey,
+                /// The destination's registry entry, required exactly when the vault has
+/// registrations. Its PDA binds it to this vault.
+/// 
+/// **Last, and omittable.** Inserting it mid-struct would shift every
+/// account after it, so a caller sending the pre-registry account list would
+/// have its `deposit_mint` deserialized as a `Subaccount` — breaking every
+/// existing operator integration on upgrade, before any admin opted in.
+/// Appended plus `allow-missing-optionals`, the old six-account call still
+/// works and resolves to the operator's own ATA.
+
+    
+              
+          pub subaccount: Option<solana_pubkey::Pubkey>,
       }
 
 impl OperatorWithdraw {
@@ -62,18 +69,7 @@ impl OperatorWithdraw {
             self.operator_token_account,
             false
           ));
-                                                      if let Some(subaccount) = self.subaccount {
-              accounts.push(solana_instruction::AccountMeta::new(
-                subaccount,
-                false,
-              ));
-            } else {
-              accounts.push(solana_instruction::AccountMeta::new_readonly(
-                crate::AUGUST_VAULT_ID,
-                false,
-              ));
-            }
-                                                    accounts.push(solana_instruction::AccountMeta::new(
+                                          accounts.push(solana_instruction::AccountMeta::new(
             self.deposit_mint,
             false
           ));
@@ -85,7 +81,18 @@ impl OperatorWithdraw {
             self.token_program,
             false
           ));
-                      accounts.extend_from_slice(remaining_accounts);
+                                                      if let Some(subaccount) = self.subaccount {
+              accounts.push(solana_instruction::AccountMeta::new(
+                subaccount,
+                false,
+              ));
+            } else {
+              accounts.push(solana_instruction::AccountMeta::new_readonly(
+                crate::AUGUST_VAULT_ID,
+                false,
+              ));
+            }
+                                accounts.extend_from_slice(remaining_accounts);
     let mut data = OperatorWithdrawInstructionData::new().try_to_vec().unwrap();
           let mut args = args.try_to_vec().unwrap();
       data.append(&mut args);
@@ -142,19 +149,19 @@ impl OperatorWithdrawInstructionArgs {
                 ///   0. `[writable]` vault_state
                 ///   1. `[writable]` vault_deposit_ata
                 ///   2. `[writable]` operator_token_account
-                      ///   3. `[writable, optional]` subaccount
-                ///   4. `[writable]` deposit_mint
-                ///   5. `[signer]` operator
-                ///   6. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
+                ///   3. `[writable]` deposit_mint
+                ///   4. `[signer]` operator
+                ///   5. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
+                      ///   6. `[writable, optional]` subaccount
 #[derive(Clone, Debug, Default)]
 pub struct OperatorWithdrawBuilder {
             vault_state: Option<solana_pubkey::Pubkey>,
                 vault_deposit_ata: Option<solana_pubkey::Pubkey>,
                 operator_token_account: Option<solana_pubkey::Pubkey>,
-                subaccount: Option<solana_pubkey::Pubkey>,
                 deposit_mint: Option<solana_pubkey::Pubkey>,
                 operator: Option<solana_pubkey::Pubkey>,
                 token_program: Option<solana_pubkey::Pubkey>,
+                subaccount: Option<solana_pubkey::Pubkey>,
                         amount: Option<u64>,
         __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
@@ -180,14 +187,6 @@ impl OperatorWithdrawBuilder {
                         self.operator_token_account = Some(operator_token_account);
                     self
     }
-            /// `[optional account]`
-/// The destination's registry entry, required exactly when the vault has
-/// registrations. Its PDA binds it to this vault.
-#[inline(always)]
-    pub fn subaccount(&mut self, subaccount: Option<solana_pubkey::Pubkey>) -> &mut Self {
-                        self.subaccount = subaccount;
-                    self
-    }
             #[inline(always)]
     pub fn deposit_mint(&mut self, deposit_mint: solana_pubkey::Pubkey) -> &mut Self {
                         self.deposit_mint = Some(deposit_mint);
@@ -202,6 +201,21 @@ impl OperatorWithdrawBuilder {
 #[inline(always)]
     pub fn token_program(&mut self, token_program: solana_pubkey::Pubkey) -> &mut Self {
                         self.token_program = Some(token_program);
+                    self
+    }
+            /// `[optional account]`
+/// The destination's registry entry, required exactly when the vault has
+/// registrations. Its PDA binds it to this vault.
+/// 
+/// **Last, and omittable.** Inserting it mid-struct would shift every
+/// account after it, so a caller sending the pre-registry account list would
+/// have its `deposit_mint` deserialized as a `Subaccount` — breaking every
+/// existing operator integration on upgrade, before any admin opted in.
+/// Appended plus `allow-missing-optionals`, the old six-account call still
+/// works and resolves to the operator's own ATA.
+#[inline(always)]
+    pub fn subaccount(&mut self, subaccount: Option<solana_pubkey::Pubkey>) -> &mut Self {
+                        self.subaccount = subaccount;
                     self
     }
                     #[inline(always)]
@@ -227,10 +241,10 @@ impl OperatorWithdrawBuilder {
                               vault_state: self.vault_state.expect("vault_state is not set"),
                                         vault_deposit_ata: self.vault_deposit_ata.expect("vault_deposit_ata is not set"),
                                         operator_token_account: self.operator_token_account.expect("operator_token_account is not set"),
-                                        subaccount: self.subaccount,
                                         deposit_mint: self.deposit_mint.expect("deposit_mint is not set"),
                                         operator: self.operator.expect("operator is not set"),
                                         token_program: self.token_program.unwrap_or(solana_pubkey::pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")),
+                                        subaccount: self.subaccount,
                       };
           let args = OperatorWithdrawInstructionArgs {
                                                               amount: self.amount.clone().expect("amount is not set"),
@@ -254,12 +268,6 @@ impl OperatorWithdrawBuilder {
       
                     
               pub operator_token_account: &'b solana_account_info::AccountInfo<'a>,
-                        /// The destination's registry entry, required exactly when the vault has
-/// registrations. Its PDA binds it to this vault.
-
-      
-                    
-              pub subaccount: Option<&'b solana_account_info::AccountInfo<'a>>,
                 
                     
               pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
@@ -269,6 +277,19 @@ impl OperatorWithdrawBuilder {
                 
                     
               pub token_program: &'b solana_account_info::AccountInfo<'a>,
+                        /// The destination's registry entry, required exactly when the vault has
+/// registrations. Its PDA binds it to this vault.
+/// 
+/// **Last, and omittable.** Inserting it mid-struct would shift every
+/// account after it, so a caller sending the pre-registry account list would
+/// have its `deposit_mint` deserialized as a `Subaccount` — breaking every
+/// existing operator integration on upgrade, before any admin opted in.
+/// Appended plus `allow-missing-optionals`, the old six-account call still
+/// works and resolves to the operator's own ATA.
+
+      
+                    
+              pub subaccount: Option<&'b solana_account_info::AccountInfo<'a>>,
             }
 
 /// `operator_withdraw` CPI instruction.
@@ -287,12 +308,6 @@ pub struct OperatorWithdrawCpi<'a, 'b> {
     
               
           pub operator_token_account: &'b solana_account_info::AccountInfo<'a>,
-                /// The destination's registry entry, required exactly when the vault has
-/// registrations. Its PDA binds it to this vault.
-
-    
-              
-          pub subaccount: Option<&'b solana_account_info::AccountInfo<'a>>,
           
               
           pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
@@ -302,6 +317,19 @@ pub struct OperatorWithdrawCpi<'a, 'b> {
           
               
           pub token_program: &'b solana_account_info::AccountInfo<'a>,
+                /// The destination's registry entry, required exactly when the vault has
+/// registrations. Its PDA binds it to this vault.
+/// 
+/// **Last, and omittable.** Inserting it mid-struct would shift every
+/// account after it, so a caller sending the pre-registry account list would
+/// have its `deposit_mint` deserialized as a `Subaccount` — breaking every
+/// existing operator integration on upgrade, before any admin opted in.
+/// Appended plus `allow-missing-optionals`, the old six-account call still
+/// works and resolves to the operator's own ATA.
+
+    
+              
+          pub subaccount: Option<&'b solana_account_info::AccountInfo<'a>>,
             /// The arguments for the instruction.
     pub __args: OperatorWithdrawInstructionArgs,
   }
@@ -317,10 +345,10 @@ impl<'a, 'b> OperatorWithdrawCpi<'a, 'b> {
               vault_state: accounts.vault_state,
               vault_deposit_ata: accounts.vault_deposit_ata,
               operator_token_account: accounts.operator_token_account,
-              subaccount: accounts.subaccount,
               deposit_mint: accounts.deposit_mint,
               operator: accounts.operator,
               token_program: accounts.token_program,
+              subaccount: accounts.subaccount,
                     __args: args,
           }
   }
@@ -357,17 +385,6 @@ impl<'a, 'b> OperatorWithdrawCpi<'a, 'b> {
             *self.operator_token_account.key,
             false
           ));
-                                          if let Some(subaccount) = self.subaccount {
-            accounts.push(solana_instruction::AccountMeta::new(
-              *subaccount.key,
-              false,
-            ));
-          } else {
-            accounts.push(solana_instruction::AccountMeta::new_readonly(
-              crate::AUGUST_VAULT_ID,
-              false,
-            ));
-          }
                                           accounts.push(solana_instruction::AccountMeta::new(
             *self.deposit_mint.key,
             false
@@ -380,6 +397,17 @@ impl<'a, 'b> OperatorWithdrawCpi<'a, 'b> {
             *self.token_program.key,
             false
           ));
+                                          if let Some(subaccount) = self.subaccount {
+            accounts.push(solana_instruction::AccountMeta::new(
+              *subaccount.key,
+              false,
+            ));
+          } else {
+            accounts.push(solana_instruction::AccountMeta::new_readonly(
+              crate::AUGUST_VAULT_ID,
+              false,
+            ));
+          }
                       remaining_accounts.iter().for_each(|remaining_account| {
       accounts.push(solana_instruction::AccountMeta {
           pubkey: *remaining_account.0.key,
@@ -401,12 +429,12 @@ impl<'a, 'b> OperatorWithdrawCpi<'a, 'b> {
                   account_infos.push(self.vault_state.clone());
                         account_infos.push(self.vault_deposit_ata.clone());
                         account_infos.push(self.operator_token_account.clone());
-                        if let Some(subaccount) = self.subaccount {
-          account_infos.push(subaccount.clone());
-        }
                         account_infos.push(self.deposit_mint.clone());
                         account_infos.push(self.operator.clone());
                         account_infos.push(self.token_program.clone());
+                        if let Some(subaccount) = self.subaccount {
+          account_infos.push(subaccount.clone());
+        }
               remaining_accounts.iter().for_each(|remaining_account| account_infos.push(remaining_account.0.clone()));
 
     if signers_seeds.is_empty() {
@@ -424,10 +452,10 @@ impl<'a, 'b> OperatorWithdrawCpi<'a, 'b> {
                 ///   0. `[writable]` vault_state
                 ///   1. `[writable]` vault_deposit_ata
                 ///   2. `[writable]` operator_token_account
-                      ///   3. `[writable, optional]` subaccount
-                ///   4. `[writable]` deposit_mint
-                ///   5. `[signer]` operator
-          ///   6. `[]` token_program
+                ///   3. `[writable]` deposit_mint
+                ///   4. `[signer]` operator
+          ///   5. `[]` token_program
+                      ///   6. `[writable, optional]` subaccount
 #[derive(Clone, Debug)]
 pub struct OperatorWithdrawCpiBuilder<'a, 'b> {
   instruction: Box<OperatorWithdrawCpiBuilderInstruction<'a, 'b>>,
@@ -440,10 +468,10 @@ impl<'a, 'b> OperatorWithdrawCpiBuilder<'a, 'b> {
               vault_state: None,
               vault_deposit_ata: None,
               operator_token_account: None,
-              subaccount: None,
               deposit_mint: None,
               operator: None,
               token_program: None,
+              subaccount: None,
                                             amount: None,
                     __remaining_accounts: Vec::new(),
     });
@@ -466,14 +494,6 @@ impl<'a, 'b> OperatorWithdrawCpiBuilder<'a, 'b> {
                         self.instruction.operator_token_account = Some(operator_token_account);
                     self
     }
-      /// `[optional account]`
-/// The destination's registry entry, required exactly when the vault has
-/// registrations. Its PDA binds it to this vault.
-#[inline(always)]
-    pub fn subaccount(&mut self, subaccount: Option<&'b solana_account_info::AccountInfo<'a>>) -> &mut Self {
-                        self.instruction.subaccount = subaccount;
-                    self
-    }
       #[inline(always)]
     pub fn deposit_mint(&mut self, deposit_mint: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
                         self.instruction.deposit_mint = Some(deposit_mint);
@@ -487,6 +507,21 @@ impl<'a, 'b> OperatorWithdrawCpiBuilder<'a, 'b> {
       #[inline(always)]
     pub fn token_program(&mut self, token_program: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
                         self.instruction.token_program = Some(token_program);
+                    self
+    }
+      /// `[optional account]`
+/// The destination's registry entry, required exactly when the vault has
+/// registrations. Its PDA binds it to this vault.
+/// 
+/// **Last, and omittable.** Inserting it mid-struct would shift every
+/// account after it, so a caller sending the pre-registry account list would
+/// have its `deposit_mint` deserialized as a `Subaccount` — breaking every
+/// existing operator integration on upgrade, before any admin opted in.
+/// Appended plus `allow-missing-optionals`, the old six-account call still
+/// works and resolves to the operator's own ATA.
+#[inline(always)]
+    pub fn subaccount(&mut self, subaccount: Option<&'b solana_account_info::AccountInfo<'a>>) -> &mut Self {
+                        self.instruction.subaccount = subaccount;
                     self
     }
                     #[inline(always)]
@@ -528,13 +563,13 @@ impl<'a, 'b> OperatorWithdrawCpiBuilder<'a, 'b> {
                   
           operator_token_account: self.instruction.operator_token_account.expect("operator_token_account is not set"),
                   
-          subaccount: self.instruction.subaccount,
-                  
           deposit_mint: self.instruction.deposit_mint.expect("deposit_mint is not set"),
                   
           operator: self.instruction.operator.expect("operator is not set"),
                   
           token_program: self.instruction.token_program.expect("token_program is not set"),
+                  
+          subaccount: self.instruction.subaccount,
                           __args: args,
             };
     instruction.invoke_signed_with_remaining_accounts(signers_seeds, &self.instruction.__remaining_accounts)
@@ -547,10 +582,10 @@ struct OperatorWithdrawCpiBuilderInstruction<'a, 'b> {
             vault_state: Option<&'b solana_account_info::AccountInfo<'a>>,
                 vault_deposit_ata: Option<&'b solana_account_info::AccountInfo<'a>>,
                 operator_token_account: Option<&'b solana_account_info::AccountInfo<'a>>,
-                subaccount: Option<&'b solana_account_info::AccountInfo<'a>>,
                 deposit_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
                 operator: Option<&'b solana_account_info::AccountInfo<'a>>,
                 token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
+                subaccount: Option<&'b solana_account_info::AccountInfo<'a>>,
                         amount: Option<u64>,
         /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
   __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,

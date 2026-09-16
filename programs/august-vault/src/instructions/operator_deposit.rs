@@ -69,8 +69,16 @@ pub fn handler(ctx: Context<OperatorDeposit>, amount: u64) -> Result<()> {
 
     state.local_aum += amount;
 
-    // A return beyond the outstanding principal is recapitalisation, not repayment.
-    state.deployed_principal = state.deployed_principal.saturating_sub(amount);
+    // A return beyond the outstanding principal is recapitalisation, not
+    // repayment — so the total drops only by what this destination actually
+    // owed. Subtracting the full amount would erase other destinations'
+    // exposure: return 200 from A when A and B each owe 100, and the total
+    // reads zero while B still owes 100.
+    let repaid = match &ctx.accounts.subaccount {
+        Some(sub) => amount.min(sub.principal),
+        None => amount,
+    };
+    state.deployed_principal = state.deployed_principal.saturating_sub(repaid);
     if let Some(sub) = &mut ctx.accounts.subaccount {
         sub.principal = sub.principal.saturating_sub(amount);
     }
@@ -102,15 +110,6 @@ pub struct OperatorDeposit<'info> {
     )]
     pub operator_token_account: InterfaceAccount<'info, TokenAccount>,
 
-    /// The source's registry entry, required exactly when the vault has
-    /// registrations. Its PDA binds it to this vault.
-    #[account(
-        mut,
-        seeds = [SUBACCOUNT_SEED, vault_state.key().as_ref(), subaccount.address.as_ref()],
-        bump = subaccount.bump,
-    )]
-    pub subaccount: Option<Account<'info, Subaccount>>,
-
     #[account(mut)]
     pub deposit_mint: InterfaceAccount<'info, Mint>,
 
@@ -120,4 +119,20 @@ pub struct OperatorDeposit<'info> {
     )]
     pub operator: Signer<'info>,
     pub token_program: Interface<'info, TokenInterface>,
+
+    /// The source's registry entry, required exactly when the vault has
+    /// registrations. Its PDA binds it to this vault.
+    ///
+    /// **Last, and omittable.** Inserting it mid-struct would shift every
+    /// account after it, so a caller sending the pre-registry account list would
+    /// have its `deposit_mint` deserialized as a `Subaccount` — breaking every
+    /// existing operator integration on upgrade, before any admin opted in.
+    /// Appended plus `allow-missing-optionals`, the old six-account call still
+    /// works and resolves to the operator's own ATA.
+    #[account(
+        mut,
+        seeds = [SUBACCOUNT_SEED, vault_state.key().as_ref(), subaccount.address.as_ref()],
+        bump = subaccount.bump,
+    )]
+    pub subaccount: Option<Account<'info, Subaccount>>,
 }

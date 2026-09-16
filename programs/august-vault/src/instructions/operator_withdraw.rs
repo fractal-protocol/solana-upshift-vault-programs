@@ -107,15 +107,6 @@ pub struct OperatorWithdraw<'info> {
     )]
     pub operator_token_account: InterfaceAccount<'info, TokenAccount>,
 
-    /// The destination's registry entry, required exactly when the vault has
-    /// registrations. Its PDA binds it to this vault.
-    #[account(
-        mut,
-        seeds = [SUBACCOUNT_SEED, vault_state.key().as_ref(), subaccount.address.as_ref()],
-        bump = subaccount.bump,
-    )]
-    pub subaccount: Option<Account<'info, Subaccount>>,
-
     #[account(mut)]
     pub deposit_mint: InterfaceAccount<'info, Mint>,
 
@@ -124,4 +115,20 @@ pub struct OperatorWithdraw<'info> {
     )]
     pub operator: Signer<'info>,
     pub token_program: Interface<'info, TokenInterface>,
+
+    /// The destination's registry entry, required exactly when the vault has
+    /// registrations. Its PDA binds it to this vault.
+    ///
+    /// **Last, and omittable.** Inserting it mid-struct would shift every
+    /// account after it, so a caller sending the pre-registry account list would
+    /// have its `deposit_mint` deserialized as a `Subaccount` — breaking every
+    /// existing operator integration on upgrade, before any admin opted in.
+    /// Appended plus `allow-missing-optionals`, the old six-account call still
+    /// works and resolves to the operator's own ATA.
+    #[account(
+        mut,
+        seeds = [SUBACCOUNT_SEED, vault_state.key().as_ref(), subaccount.address.as_ref()],
+        bump = subaccount.bump,
+    )]
+    pub subaccount: Option<Account<'info, Subaccount>>,
 }
