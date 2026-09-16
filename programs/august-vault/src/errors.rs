@@ -76,6 +76,8 @@ pub enum ErrorCode {
     SubaccountDelegationMissing,
     #[msg("A subaccount still holds outstanding principal and cannot be deregistered")]
     SubaccountNotEmpty,
+    #[msg("A loss settlement may not exceed the principal that is not sitting at the destination")]
+    LossExceedsShortfall,
 }
 
 /// Compile-time pin of the ABI described above, placed next to the enum it
@@ -151,4 +153,5 @@ pin_error_abi! {
     InvalidSubaccount => 22,
     SubaccountDelegationMissing => 23,
     SubaccountNotEmpty => 24,
+    LossExceedsShortfall => 25,
 }

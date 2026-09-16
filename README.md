@@ -72,6 +72,7 @@ so each deposit mint has a finite number of vault lifecycles.
 | `set_operator`           | Admin    | Assign new operator                                  |
 | `register_subaccount`    | Admin    | Register a permitted operator destination             |
 | `deregister_subaccount`  | Admin    | Remove one, once its outstanding principal is zero    |
+| `settle_subaccount_loss` | Admin    | Write down principal a destination will never return  |
 | `set_fee_recipient`      | Admin    | Change fee recipient                                 |
 | `set_aum_limits`         | Admin    | Configure AUM limits                                 |
 | `pause` / `unpause`      | Admin    | Emergency pause/unpause                              |
@@ -246,7 +247,14 @@ compromised *operator*, or against custody gone unreachable — not against a
 compromised admin. Only custody's `revoke` ends the exposure.
 
 A destination cannot be deregistered while the vault is still owed principal
-there, so funds cannot be stranded by removing the record of them. Removing the
+there, so funds cannot be stranded by removing the record of them. After a
+realized loss that principal will never return in tokens, so
+`settle_subaccount_loss` writes it down — admin only, since the operator
+reducing principal is the capacity-reopening move the coverage rule exists to
+prevent, and bounded by the principal *not* sitting at the destination's ATA, so
+a live obligation cannot be written off. It leaves `deployed_aum` alone; reported
+value stays the operator's to move under its bps limits. Without it a vault that
+took a loss could never be closed. Removing the
 last registration returns the vault to paying the operator's own ATA, which also
 recovers funds left there from before the first registration. The first
 registration adopts the vault's existing `deployed_principal`, so a vault with

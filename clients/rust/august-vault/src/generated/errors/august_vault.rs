@@ -85,6 +85,9 @@ pub enum AugustVaultError {
     /// 6024 - A subaccount still holds outstanding principal and cannot be deregistered
     #[error("A subaccount still holds outstanding principal and cannot be deregistered")]
     SubaccountNotEmpty = 0x1788,
+    /// 6025 - A loss settlement may not exceed the principal that is not sitting at the destination
+    #[error("A loss settlement may not exceed the principal that is not sitting at the destination")]
+    LossExceedsShortfall = 0x1789,
 }
 
 impl From<AugustVaultError> for solana_program_error::ProgramError {

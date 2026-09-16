@@ -26,6 +26,7 @@
   pub(crate) mod r#set_config_authority;
   pub(crate) mod r#set_fee_recipient;
   pub(crate) mod r#set_operator;
+  pub(crate) mod r#settle_subaccount_loss;
   pub(crate) mod r#set_withdrawal_fee;
   pub(crate) mod r#unpause;
   pub(crate) mod r#update_share_token_metadata;
@@ -51,6 +52,7 @@
   pub use self::r#set_config_authority::*;
   pub use self::r#set_fee_recipient::*;
   pub use self::r#set_operator::*;
+  pub use self::r#settle_subaccount_loss::*;
   pub use self::r#set_withdrawal_fee::*;
   pub use self::r#unpause::*;
   pub use self::r#update_share_token_metadata::*;

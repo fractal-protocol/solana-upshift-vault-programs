@@ -28,6 +28,7 @@ use instructions::set_config_authority::*;
 use instructions::set_fee_recipient::*;
 use instructions::set_operator::*;
 use instructions::set_withdrawal_fee::*;
+use instructions::settle_subaccount_loss::*;
 use instructions::unpause::*;
 use instructions::update_metadata::*;
 pub mod instructions;
@@ -237,6 +238,26 @@ pub mod august_vault {
     /// - `address` - The receiving address. Must not be the operator
     pub fn register_subaccount(ctx: Context<RegisterSubaccount>, address: Pubkey) -> Result<()> {
         return instructions::register_subaccount::handler(ctx, address);
+    }
+
+    /// Recognize a realized loss at one destination, writing down principal it
+    /// will never return.
+    ///
+    /// Admin only: the operator reducing principal is the capacity-reopening
+    /// move the coverage rule exists to prevent. Bounded by the principal that
+    /// is *not* sitting at the destination's ATA, so a live obligation cannot be
+    /// erased — if the tokens are there, return them instead. `deployed_aum` is
+    /// untouched; reported value stays the operator's to move under its bps
+    /// limits.
+    ///
+    /// Without this, a destination that took a real loss can never be
+    /// deregistered and the vault can never be closed, since only token returns
+    /// reduce principal.
+    ///
+    /// ### Parameters
+    /// - `amount` - Principal to write down, at most `principal - ata.amount`
+    pub fn settle_subaccount_loss(ctx: Context<SettleSubaccountLoss>, amount: u64) -> Result<()> {
+        return instructions::settle_subaccount_loss::handler(ctx, amount);
     }
 
     /// Remove a registered destination, refunding its rent to the admin.

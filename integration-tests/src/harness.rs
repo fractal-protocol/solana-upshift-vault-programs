@@ -620,6 +620,38 @@ impl VaultCtx {
         self.send_as(signer, ix)
     }
 
+    /// `settle_subaccount_loss` signed by the configured admin.
+    pub fn settle_subaccount_loss(
+        &mut self,
+        sub: &Subaccount,
+        amount: u64,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let admin = self.admin.insecure_clone();
+        self.settle_subaccount_loss_as(&admin, sub, amount)
+    }
+
+    pub fn settle_subaccount_loss_as(
+        &mut self,
+        signer: &Keypair,
+        sub: &Subaccount,
+        amount: u64,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts: ix_accounts::SettleSubaccountLoss {
+                vault_state: self.vault_state,
+                subaccount: sub.pda,
+                deposit_mint: self.deposit_mint,
+                subaccount_ata: sub.deposit_ata,
+                token_program: self.token_program.id(),
+                admin: signer.pubkey(),
+            }
+            .to_account_metas(None),
+            data: ix_data::SettleSubaccountLoss { amount }.data(),
+        };
+        self.send_as(signer, ix)
+    }
+
     /// `deregister_subaccount` signed by the configured admin.
     pub fn deregister_subaccount(
         &mut self,

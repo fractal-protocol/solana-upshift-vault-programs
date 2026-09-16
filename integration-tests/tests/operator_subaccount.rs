@@ -719,3 +719,132 @@ fn a_vault_with_registrations_cannot_be_closed() {
     ctx.deregister_subaccount(&sub).expect("deregister");
     ctx.close_vault().expect("now closable");
 }
+
+// ---- realized losses ----
+
+/// The lifecycle a loss leaves behind, end to end.
+///
+/// Only token returns reduce principal, so after a real loss the destination
+/// carries principal that will never come back — blocking deregistration, and
+/// through that blocking `close_vault`. Settlement is the way out.
+#[test]
+fn a_realized_loss_can_be_settled_and_the_vault_retired() {
+    let mut ctx = funded_vault();
+    let sub = ctx.new_registered_subaccount(DEPLOYED * 4);
+    ctx.operator_withdraw_to(&sub, DEPLOYED).expect("deploy");
+
+    // A real loss: the venue consumes part of the capital, so those tokens
+    // leave the destination's ATA and never come back.
+    let kept = DEPLOYED - (DEPLOYED / 500);
+    let lost = DEPLOYED - kept;
+    let venue = ctx.new_subaccount(0);
+    let sub_key = sub.keypair.insecure_clone();
+    let (from, to) = (sub.deposit_ata, venue.deposit_ata);
+    ctx.transfer_tokens_as(&sub_key, &from, &to, lost);
+
+    ctx.operator_update_aum(kept).expect("report the loss");
+    ctx.operator_deposit_from(&sub, kept)
+        .expect("return the rest");
+    assert_eq!(ctx.subaccount_data(&sub).principal, lost);
+    assert_eq!(ctx.token_account_amount(&sub.deposit_ata), 0);
+
+    // Stuck: no tokens left to return, so neither path is open.
+    let err = ctx
+        .deregister_subaccount(&sub)
+        .expect_err("outstanding principal blocks deregistration");
+    assert_anchor_err(&err, ErrorCode::SubaccountNotEmpty);
+
+    ctx.settle_subaccount_loss(&sub, lost).expect("settle");
+    assert_eq!(ctx.subaccount_data(&sub).principal, 0);
+    assert_eq!(ctx.vault_state_data().deployed_principal, 0);
+
+    ctx.deregister_subaccount(&sub).expect("now removable");
+
+    // And the vault can be retired once the user is out.
+    let shares = ctx.token_account_amount(&ctx.user_share_ata);
+    ctx.redeem(shares).expect("redeem everything");
+    ctx.close_vault().expect("close");
+}
+
+/// Settlement may not erase a live obligation: what is sitting at the
+/// destination has to be returned, not written off.
+#[test]
+fn settlement_cannot_write_off_funds_still_at_the_destination() {
+    let mut ctx = funded_vault();
+    let sub = ctx.new_registered_subaccount(DEPLOYED * 4);
+    ctx.operator_withdraw_to(&sub, DEPLOYED).expect("deploy");
+    assert_eq!(ctx.token_account_amount(&sub.deposit_ata), DEPLOYED);
+
+    let err = ctx
+        .settle_subaccount_loss(&sub, DEPLOYED)
+        .expect_err("the funds are right there; return them instead");
+    assert_anchor_err(&err, ErrorCode::LossExceedsShortfall);
+    assert_eq!(ctx.subaccount_data(&sub).principal, DEPLOYED);
+}
+
+/// The bound is the shortfall exactly, from both sides.
+#[test]
+fn settlement_is_bounded_by_the_shortfall() {
+    let mut ctx = funded_vault();
+    let sub = ctx.new_registered_subaccount(DEPLOYED * 4);
+    ctx.operator_withdraw_to(&sub, DEPLOYED).expect("deploy");
+
+    // Return half, so half is the shortfall.
+    let half = DEPLOYED / 2;
+    ctx.operator_deposit_from(&sub, half).expect("return half");
+    assert_eq!(ctx.subaccount_data(&sub).principal, DEPLOYED - half);
+    assert_eq!(ctx.token_account_amount(&sub.deposit_ata), half);
+
+    let shortfall = (DEPLOYED - half) - half;
+    let err = ctx
+        .settle_subaccount_loss(&sub, shortfall + 1)
+        .expect_err("one above the shortfall must be refused");
+    assert_anchor_err(&err, ErrorCode::LossExceedsShortfall);
+
+    if shortfall > 0 {
+        ctx.settle_subaccount_loss(&sub, shortfall)
+            .expect("the exact shortfall settles");
+    }
+}
+
+/// The operator must not be able to write down principal — that is the
+/// capacity-reopening move the coverage rule exists to prevent.
+#[test]
+fn the_operator_cannot_settle_a_loss() {
+    let mut ctx = funded_vault();
+    let sub = ctx.new_registered_subaccount(DEPLOYED * 4);
+    ctx.operator_withdraw_to(&sub, DEPLOYED).expect("deploy");
+    ctx.operator_deposit_from(&sub, DEPLOYED).expect("return");
+    ctx.operator_withdraw_to(&sub, DEPLOYED)
+        .expect("deploy again");
+    // Move the tokens out from under the vault so a shortfall exists.
+    let sink = ctx.new_subaccount(0);
+    let sub_key = sub.keypair.insecure_clone();
+    let (from, to) = (sub.deposit_ata, sink.deposit_ata);
+    ctx.transfer_tokens_as(&sub_key, &from, &to, DEPLOYED);
+
+    let operator = ctx.operator.insecure_clone();
+    let err = ctx
+        .settle_subaccount_loss_as(&operator, &sub, DEPLOYED)
+        .expect_err("only the admin may settle");
+    assert_anchor_err(&err, ErrorCode::NotAdmin);
+    assert_eq!(ctx.subaccount_data(&sub).principal, DEPLOYED);
+}
+
+/// Settlement reconciles principal only; reported AUM stays the operator's to
+/// move, under its own bps limits.
+#[test]
+fn settlement_does_not_touch_reported_aum() {
+    let mut ctx = funded_vault();
+    let sub = ctx.new_registered_subaccount(DEPLOYED * 4);
+    ctx.operator_withdraw_to(&sub, DEPLOYED).expect("deploy");
+    let sink = ctx.new_subaccount(0);
+    let sub_key = sub.keypair.insecure_clone();
+    let (from, to) = (sub.deposit_ata, sink.deposit_ata);
+    ctx.transfer_tokens_as(&sub_key, &from, &to, DEPLOYED);
+
+    let aum_before = ctx.vault_state_data().deployed_aum;
+    ctx.settle_subaccount_loss(&sub, DEPLOYED).expect("settle");
+    assert_eq!(ctx.vault_state_data().deployed_aum, aum_before);
+    assert_eq!(ctx.subaccount_data(&sub).principal, 0);
+}
