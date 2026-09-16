@@ -76,12 +76,15 @@ pub enum AugustVaultError {
     /// 6021 - Signer is not this vault's withdrawal_queue_authority; holders request a withdrawal at the queue instead
     #[error("Signer is not this vault's withdrawal_queue_authority; holders request a withdrawal at the queue instead")]
     WithdrawalQueueRequired = 0x1785,
-    /// 6022 - operator and operator_subaccount must differ, and a non-zero subaccount must be passed with its ATA
-    #[error("operator and operator_subaccount must differ, and a non-zero subaccount must be passed with its ATA")]
-    InvalidOperatorSubaccount = 0x1786,
+    /// 6022 - A subaccount must differ from the operator, belong to this vault, and be passed whenever the vault has any registered
+    #[error("A subaccount must differ from the operator, belong to this vault, and be passed whenever the vault has any registered")]
+    InvalidSubaccount = 0x1786,
     /// 6023 - The named address's ATA must have this vault approved as delegate, with an allowance covering the transfer
     #[error("The named address's ATA must have this vault approved as delegate, with an allowance covering the transfer")]
     SubaccountDelegationMissing = 0x1787,
+    /// 6024 - A subaccount still holds outstanding principal and cannot be deregistered
+    #[error("A subaccount still holds outstanding principal and cannot be deregistered")]
+    SubaccountNotEmpty = 0x1788,
 }
 
 impl From<AugustVaultError> for solana_program_error::ProgramError {

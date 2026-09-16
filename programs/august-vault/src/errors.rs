@@ -70,10 +70,12 @@ pub enum ErrorCode {
     InvalidShareOffset,
     #[msg("Signer is not this vault's withdrawal_queue_authority; holders request a withdrawal at the queue instead")]
     WithdrawalQueueRequired,
-    #[msg("operator and operator_subaccount must differ, and a non-zero subaccount must be passed with its ATA")]
-    InvalidOperatorSubaccount,
+    #[msg("A subaccount must differ from the operator, belong to this vault, and be passed whenever the vault has any registered")]
+    InvalidSubaccount,
     #[msg("The named address's ATA must have this vault approved as delegate, with an allowance covering the transfer")]
     SubaccountDelegationMissing,
+    #[msg("A subaccount still holds outstanding principal and cannot be deregistered")]
+    SubaccountNotEmpty,
 }
 
 /// Compile-time pin of the ABI described above, placed next to the enum it
@@ -146,6 +148,7 @@ pin_error_abi! {
     SharePriceUndefined => 19,
     InvalidShareOffset => 20,
     WithdrawalQueueRequired => 21,
-    InvalidOperatorSubaccount => 22,
+    InvalidSubaccount => 22,
     SubaccountDelegationMissing => 23,
+    SubaccountNotEmpty => 24,
 }

@@ -274,12 +274,37 @@ impl VaultCtx {
         operator_token_account: Pubkey,
         amount: u64,
     ) -> Result<(), FailedTransactionMetadata> {
+        self.operator_withdraw_with(signer, operator_token_account, None, amount)
+    }
+
+    /// `operator_withdraw` to a registered destination, passing both its ATA
+    /// and its registry PDA.
+    pub fn operator_withdraw_to(
+        &mut self,
+        sub: &Subaccount,
+        amount: u64,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let operator = self.operator.insecure_clone();
+        let (ata, pda) = (sub.deposit_ata, sub.pda);
+        self.operator_withdraw_with(&operator, ata, Some(pda), amount)
+    }
+
+    /// The general form: the ATA and the registry PDA are named independently,
+    /// so a test can omit the PDA or pass a mismatched one.
+    pub fn operator_withdraw_with(
+        &mut self,
+        signer: &Keypair,
+        operator_token_account: Pubkey,
+        subaccount: Option<Pubkey>,
+        amount: u64,
+    ) -> Result<(), FailedTransactionMetadata> {
         let ix = Instruction {
             program_id: august_vault::ID,
             accounts: ix_accounts::OperatorWithdraw {
                 vault_state: self.vault_state,
                 vault_deposit_ata: self.vault_token_pda,
                 operator_token_account,
+                subaccount,
                 deposit_mint: self.deposit_mint,
                 operator: signer.pubkey(),
                 token_program: self.token_program.id(),
@@ -304,12 +329,34 @@ impl VaultCtx {
         operator_token_account: Pubkey,
         amount: u64,
     ) -> Result<(), FailedTransactionMetadata> {
+        self.operator_deposit_with(signer, operator_token_account, None, amount)
+    }
+
+    /// `operator_deposit` from a registered destination.
+    pub fn operator_deposit_from(
+        &mut self,
+        sub: &Subaccount,
+        amount: u64,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let operator = self.operator.insecure_clone();
+        let (ata, pda) = (sub.deposit_ata, sub.pda);
+        self.operator_deposit_with(&operator, ata, Some(pda), amount)
+    }
+
+    pub fn operator_deposit_with(
+        &mut self,
+        signer: &Keypair,
+        operator_token_account: Pubkey,
+        subaccount: Option<Pubkey>,
+        amount: u64,
+    ) -> Result<(), FailedTransactionMetadata> {
         let ix = Instruction {
             program_id: august_vault::ID,
             accounts: ix_accounts::OperatorDeposit {
                 vault_state: self.vault_state,
                 vault_deposit_ata: self.vault_token_pda,
                 operator_token_account,
+                subaccount,
                 deposit_mint: self.deposit_mint,
                 operator: signer.pubkey(),
                 token_program: self.token_program.id(),
@@ -488,56 +535,106 @@ impl VaultCtx {
         self.send_as(signer, ix)
     }
 
-    /// `set_operator_subaccount` signed by an arbitrary keypair.
-    ///
-    /// Derives the named address's ATA and passes it, except for the zero
-    /// rollback. The ATA need not exist for the call to be *built* — a missing
-    /// one fails inside the program, which is what the negative tests want.
-    pub fn set_operator_subaccount_as(
-        &mut self,
-        signer: &Keypair,
-        new_subaccount: Pubkey,
-    ) -> Result<(), FailedTransactionMetadata> {
-        let ata =
-            (new_subaccount != Pubkey::default()).then(|| self.deposit_ata_for(&new_subaccount));
-        self.set_operator_subaccount_with(signer, new_subaccount, ata)
+    /// The registry PDA for `address` on this vault.
+    pub fn subaccount_pda(&self, address: &Pubkey) -> Pubkey {
+        Pubkey::find_program_address(
+            &[
+                august_vault::state::subaccount::SUBACCOUNT_SEED,
+                self.vault_state.as_ref(),
+                address.as_ref(),
+            ],
+            &august_vault::ID,
+        )
+        .0
     }
 
-    /// As [`Self::set_operator_subaccount_as`], but with the passed ATA named
-    /// independently of the argument — so a test can try to desync them.
-    pub fn set_operator_subaccount_with(
+    /// `register_subaccount` signed by the configured admin.
+    pub fn register_subaccount(
+        &mut self,
+        sub: &Subaccount,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let admin = self.admin.insecure_clone();
+        self.register_subaccount_as(&admin, sub)
+    }
+
+    /// `register_subaccount` signed by an arbitrary keypair.
+    pub fn register_subaccount_as(
         &mut self,
         signer: &Keypair,
-        new_subaccount: Pubkey,
-        subaccount_ata: Option<Pubkey>,
+        sub: &Subaccount,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let address = sub.key();
+        self.register_address_as(signer, address, sub.pda, sub.deposit_ata)
+    }
+
+    /// The general form: address, PDA and ATA are named independently so a test
+    /// can mismatch them.
+    pub fn register_address_as(
+        &mut self,
+        signer: &Keypair,
+        address: Pubkey,
+        pda: Pubkey,
+        ata: Pubkey,
     ) -> Result<(), FailedTransactionMetadata> {
         let ix = Instruction {
             program_id: august_vault::ID,
-            accounts: ix_accounts::SetOperatorSubaccount {
+            accounts: ix_accounts::RegisterSubaccount {
                 vault_state: self.vault_state,
+                subaccount: pda,
                 deposit_mint: self.deposit_mint,
-                subaccount_ata,
+                subaccount_ata: ata,
                 token_program: self.token_program.id(),
                 admin: signer.pubkey(),
+                system_program: solana_sdk::system_program::ID,
             }
             .to_account_metas(None),
-            data: ix_data::SetOperatorSubaccount { new_subaccount }.data(),
+            data: ix_data::RegisterSubaccount { address }.data(),
         };
         self.send_as(signer, ix)
     }
 
-    /// `set_operator_subaccount` signed by the configured admin.
-    pub fn set_operator_subaccount(
+    /// `deregister_subaccount` signed by the configured admin.
+    pub fn deregister_subaccount(
         &mut self,
-        new_subaccount: Pubkey,
+        sub: &Subaccount,
     ) -> Result<(), FailedTransactionMetadata> {
         let admin = self.admin.insecure_clone();
-        self.set_operator_subaccount_as(&admin, new_subaccount)
+        self.deregister_subaccount_as(&admin, sub)
+    }
+
+    pub fn deregister_subaccount_as(
+        &mut self,
+        signer: &Keypair,
+        sub: &Subaccount,
+    ) -> Result<(), FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts: ix_accounts::DeregisterSubaccount {
+                vault_state: self.vault_state,
+                subaccount: sub.pda,
+                deposit_mint: self.deposit_mint,
+                admin: signer.pubkey(),
+            }
+            .to_account_metas(None),
+            data: ix_data::DeregisterSubaccount {}.data(),
+        };
+        self.send_as(signer, ix)
+    }
+
+    /// The registry entry for `sub`, deserialized.
+    pub fn subaccount_data(&self, sub: &Subaccount) -> august_vault::state::subaccount::Subaccount {
+        use anchor_lang::AccountDeserialize;
+        let acct = self
+            .svm
+            .get_account(&sub.pda)
+            .expect("registry entry exists");
+        august_vault::state::subaccount::Subaccount::try_deserialize(&mut acct.data.as_slice())
+            .expect("deserialize registry entry")
     }
 
     /// A lamport-funded custody keypair with a deposit-mint ATA, holding
-    /// `mint_amount` of the deposit token. No delegation, so it cannot yet be
-    /// named — see [`Self::new_delegated_subaccount`] for the usual case.
+    /// `mint_amount` of the deposit token. Neither delegated nor registered —
+    /// see [`Self::new_registered_subaccount`] for the usual case.
     pub fn new_subaccount(&mut self, mint_amount: u64) -> Subaccount {
         let keypair = airdrop_keypair(&mut self.svm, 1_000_000_000);
         let payer = self.payer.insecure_clone();
@@ -559,18 +656,27 @@ impl VaultCtx {
             );
             send_tx(&mut self.svm, &payer, &[ix], &[&payer]).expect("mint to subaccount");
         }
+        let pda = self.subaccount_pda(&keypair.pubkey());
         Subaccount {
             keypair,
             deposit_ata,
+            pda,
         }
     }
 
-    /// A custody address that has already delegated to the vault, which is what
-    /// `set_operator_subaccount` now requires. The common setup: without the
-    /// delegation the address cannot be named at all.
+    /// A custody address that has delegated to the vault but is not yet
+    /// registered, so it cannot receive funds.
     pub fn new_delegated_subaccount(&mut self, allowance: u64) -> Subaccount {
         let sub = self.new_subaccount(0);
         self.approve_vault_as_delegate(&sub, allowance);
+        sub
+    }
+
+    /// A delegated custody address already registered on the vault — the state
+    /// most tests start from.
+    pub fn new_registered_subaccount(&mut self, allowance: u64) -> Subaccount {
+        let sub = self.new_delegated_subaccount(allowance);
+        self.register_subaccount(&sub).expect("register");
         sub
     }
 
@@ -1432,6 +1538,8 @@ pub struct Depositor {
 pub struct Subaccount {
     pub keypair: Keypair,
     pub deposit_ata: Pubkey,
+    /// The registry PDA for this address on the vault it was created against.
+    pub pda: Pubkey,
 }
 
 impl Subaccount {

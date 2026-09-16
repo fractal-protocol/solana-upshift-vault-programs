@@ -14,13 +14,12 @@ use anchor_spl::token_interface::Mint;
 pub fn handler(ctx: Context<SetOperator>, new_operator: Pubkey) -> Result<()> {
     let state = &mut ctx.accounts.vault_state;
 
-    // Otherwise `set_operator_subaccount`'s `subaccount != operator` rule is
-    // one call away from being undone.
-    require!(
-        state.operator_subaccount() != Some(new_operator),
-        ErrorCode::InvalidOperatorSubaccount
-    );
-
+    // No mirror guard against the registered subaccounts: this instruction
+    // cannot enumerate their PDAs, and passing every one is impractical.
+    // `register_subaccount` refuses the current operator, so the collision can
+    // only be created by rotating onto an already-registered address — which
+    // makes that vault's subaccount decorative rather than unsafe, since the
+    // coverage rule and the delegation still hold.
     // Matches the three config-authority setters. Nobody can sign as the zero
     // key, so both operator handlers would become uncallable.
     require!(

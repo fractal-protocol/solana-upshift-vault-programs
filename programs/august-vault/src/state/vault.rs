@@ -151,24 +151,34 @@ pub struct VaultState {
     ///
     /// Read via [`Self::withdrawal_queue`], never raw.
     pub withdrawal_queue_authority: Pubkey,
-    /// Where operator transfers go, or zero for "the operator's own ATA".
+    /// How many operator subaccounts are registered. Nonzero means operator
+    /// transfers must name one; zero means the operator's own ATA.
     ///
     /// Separates moving vault funds from receiving them. Zero on every vault
     /// created before this field existed, so it arrives without a migration.
-    /// Admin-only. Never read raw: use `destination_for_signer()` for the ATA
-    /// constraints, `operator_subaccount()` for the gate.
+    /// Maintained by `register_subaccount` / `deregister_subaccount`.
     ///
-    /// Only as good as the address, which must be custody the operator cannot
+    /// A count rather than an address because the destination is always passed
+    /// as a `Subaccount` PDA, validated by seed derivation — this only answers
+    /// "must one be passed". Drift from the registry is benign: the PDA is
+    /// authoritative for *which* address, this only decides *whether*.
+    ///
+    /// Only as good as the addresses, which must be custody the operator cannot
     /// sweep, and on admin being a different party than the operator. Neither
     /// is visible here. One address per vault per deposit mint: the ATA's single
     /// delegate slot cannot serve two vaults.
-    pub operator_subaccount: Pubkey,
-    /// Principal the operator has taken out and not returned, in base units.
+    pub subaccount_count: u64,
+    /// Total principal the operator has taken out and not returned, in base
+    /// units, across every destination.
     ///
     /// Distinct from `deployed_aum`, which is *reported* value that
     /// `operator_update_aum` marks with no tokens moving. Only the two operator
-    /// transfers touch this, which is why the withdrawal coverage rule uses it.
-    /// Zero on pre-existing vaults, meaning nothing owed.
+    /// transfers touch this.
+    ///
+    /// Informational: the coverage rule reads the destination's own
+    /// `Subaccount::principal`, so nothing on-chain trusts this. It exists so
+    /// monitoring can read total exposure in one fetch rather than sweeping
+    /// every registered PDA.
     pub deployed_principal: u64,
     /// Reserved. Carve new fields **out of** this array so `LEN` stays 455, the
     /// size of the live mainnet accounts — enforced by the `const` assertion below.
@@ -176,13 +186,14 @@ pub struct VaultState {
     /// **Declare a new field immediately before `padding`.** Anything inserted
     /// earlier shifts the fields after it silently, and each then reads zero:
     /// `share_offset` (199) re-prices the vault, `withdrawal_queue_authority`
-    /// (207) reopens a gated vault, `operator_subaccount` (239) pays the
-    /// operator again, `deployed_principal` (271) reads as nothing owed. Pinned
+    /// (207) reopens a gated vault, `subaccount_count` (239) reads as no
+    /// subaccounts and pays the operator again, `deployed_principal` (247) reads
+    /// as nothing owed. Pinned
     /// by the per-field `*_stays_at_its_byte_offset` tests plus
     /// `every_field_stays_at_its_byte_offset`.
     ///
     /// Shrinks in 8-byte steps only.
-    pub padding: [u64; 22],
+    pub padding: [u64; 25],
 }
 
 /// **Compile-time layout guard.** Three live mainnet vaults are 455-byte accounts
@@ -228,10 +239,11 @@ impl VaultState {
         self.pda_bump = pda_bump;
         self.vault_version = vault_version;
         self.share_offset = share_offset;
-        // `withdrawal_queue_authority` and `operator_subaccount` are left
-        // unassigned: a vault opens ungated and paying the operator's own ATA,
+        // `withdrawal_queue_authority`, `subaccount_count` and
+        // `deployed_principal` are left unassigned: a vault opens ungated and
+        // paying the operator's own ATA,
         // and Anchor's `init` constraint has already zeroed the allocation.
-        // Unlike the explicit zeroing above, these two rely on that.
+        // Unlike the explicit zeroing above, these rely on that.
     }
 
     /// The queue that must handle this vault's redemptions, if any.
@@ -249,30 +261,9 @@ impl VaultState {
         self.withdrawal_queue().is_some()
     }
 
-    /// This vault's designated operator subaccount, if it has one. Returns the
-    /// key rather than a bool, as [`Self::withdrawal_queue`] does, so "has one"
-    /// and "which" cannot drift.
-    pub fn operator_subaccount(&self) -> Option<Pubkey> {
-        (self.operator_subaccount != Pubkey::default()).then_some(self.operator_subaccount)
-    }
-
-    /// Where operator transfers go, resolved against the stored operator. The
-    /// reference the fork suite asserts against; handlers use
-    /// [`Self::destination_for_signer`].
-    pub fn operator_destination(&self) -> Pubkey {
-        self.destination_for_signer(self.operator)
-    }
-
-    /// The destination, falling back to the **signing** key rather than the
-    /// stored operator. Used by both operator handlers' ATA constraints.
-    ///
-    /// The two agree wherever a call succeeds. Resolving against the stored
-    /// operator instead makes a stranger's ATA mismatch, so Anchor raises
-    /// `ConstraintTokenOwner` (2015) before the access check and a wrong-key
-    /// call reports token ownership instead of `NotOperator`. Pinned by
-    /// `operator_withdraw_rejects_non_operator`; do not fold it back.
-    pub fn destination_for_signer(&self, signer: Pubkey) -> Pubkey {
-        self.operator_subaccount().unwrap_or(signer)
+    /// Whether operator transfers must name a registered subaccount.
+    pub fn requires_subaccount(&self) -> bool {
+        self.subaccount_count > 0
     }
 
     /// Get the seed for the vault state PDA

@@ -7,6 +7,7 @@
 // governed by version 2.0 of the Apache License.
 
 use crate::errors::ErrorCode;
+use crate::state::subaccount::*;
 use crate::state::vault::*;
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::program_option::COption;
@@ -19,15 +20,23 @@ pub fn handler(ctx: Context<OperatorWithdraw>, amount: u64) -> Result<()> {
 
     let state = &mut ctx.accounts.vault_state;
 
-    // Keep what the vault is owed covered by a live delegation, so it stays
-    // recallable. Measured against `deployed_principal`, not `deployed_aum`
-    // (a report would reopen capacity) and not the destination's balance
-    // (anyone can inflate it with a donation).
-    if state.operator_subaccount().is_some() {
+    // A vault with registered subaccounts must name one; a vault without must
+    // not. Without this pairing the operator could omit the account and pay
+    // itself, which is the whole point of the registry.
+    require!(
+        state.requires_subaccount() == ctx.accounts.subaccount.is_some(),
+        ErrorCode::InvalidSubaccount
+    );
+
+    // Keep what the vault is owed at this destination covered by a live
+    // delegation, so it stays recallable. Measured against the destination's
+    // own principal, not reported AUM (a report would reopen capacity) and not
+    // the ATA's balance (anyone can inflate it with a donation).
+    if let Some(sub) = &ctx.accounts.subaccount {
         let dest = &ctx.accounts.operator_token_account;
         require!(
             dest.delegate == COption::Some(state.key())
-                && dest.delegated_amount >= state.deployed_principal.saturating_add(amount),
+                && dest.delegated_amount >= sub.principal.saturating_add(amount),
             ErrorCode::SubaccountDelegationMissing
         );
     }
@@ -59,12 +68,18 @@ pub fn handler(ctx: Context<OperatorWithdraw>, amount: u64) -> Result<()> {
     };
 
     state.deployed_aum += amount;
-    // Principal owed back. Unlike `deployed_aum` this is never marked, so a
-    // report cannot reopen the coverage capacity checked above.
+    // Principal owed back. Never marked, unlike `deployed_aum`, so a report
+    // cannot reopen the coverage capacity checked above.
     state.deployed_principal = state
         .deployed_principal
         .checked_add(amount)
         .ok_or(ErrorCode::NumberOverflow)?;
+    if let Some(sub) = &mut ctx.accounts.subaccount {
+        sub.principal = sub
+            .principal
+            .checked_add(amount)
+            .ok_or(ErrorCode::NumberOverflow)?;
+    }
     Ok(())
 }
 
@@ -82,15 +97,24 @@ pub struct OperatorWithdraw<'info> {
     )]
     pub vault_deposit_ata: InterfaceAccount<'info, TokenAccount>,
 
-    /// Destination: the vault's `operator_subaccount` if set, else the
-    /// operator's own ATA.
+    /// Destination: the named subaccount's ATA if the vault has any registered,
+    /// else the operator's own. Keeps the old name for wire compatibility.
     #[account(
         mut,
         associated_token::mint = deposit_mint,
-        associated_token::authority = vault_state.destination_for_signer(operator.key()),
+        associated_token::authority = subaccount.as_ref().map(|s| s.address).unwrap_or_else(|| operator.key()),
         associated_token::token_program = token_program,
     )]
     pub operator_token_account: InterfaceAccount<'info, TokenAccount>,
+
+    /// The destination's registry entry, required exactly when the vault has
+    /// registrations. Its PDA binds it to this vault.
+    #[account(
+        mut,
+        seeds = [SUBACCOUNT_SEED, vault_state.key().as_ref(), subaccount.address.as_ref()],
+        bump = subaccount.bump,
+    )]
+    pub subaccount: Option<Account<'info, Subaccount>>,
 
     #[account(mut)]
     pub deposit_mint: InterfaceAccount<'info, Mint>,

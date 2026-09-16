@@ -10,6 +10,7 @@
   pub(crate) mod r#create_share_token_metadata;
   pub(crate) mod r#deposit;
   pub(crate) mod r#deposit_checked;
+  pub(crate) mod r#deregister_subaccount;
   pub(crate) mod r#initialize;
   pub(crate) mod r#initialize_config;
   pub(crate) mod r#nominate_admin;
@@ -20,11 +21,11 @@
   pub(crate) mod r#pause;
   pub(crate) mod r#redeem;
   pub(crate) mod r#redeem_checked;
+  pub(crate) mod r#register_subaccount;
   pub(crate) mod r#set_aum_limits;
   pub(crate) mod r#set_config_authority;
   pub(crate) mod r#set_fee_recipient;
   pub(crate) mod r#set_operator;
-  pub(crate) mod r#set_operator_subaccount;
   pub(crate) mod r#set_withdrawal_fee;
   pub(crate) mod r#unpause;
   pub(crate) mod r#update_share_token_metadata;
@@ -34,6 +35,7 @@
   pub use self::r#create_share_token_metadata::*;
   pub use self::r#deposit::*;
   pub use self::r#deposit_checked::*;
+  pub use self::r#deregister_subaccount::*;
   pub use self::r#initialize::*;
   pub use self::r#initialize_config::*;
   pub use self::r#nominate_admin::*;
@@ -44,11 +46,11 @@
   pub use self::r#pause::*;
   pub use self::r#redeem::*;
   pub use self::r#redeem_checked::*;
+  pub use self::r#register_subaccount::*;
   pub use self::r#set_aum_limits::*;
   pub use self::r#set_config_authority::*;
   pub use self::r#set_fee_recipient::*;
   pub use self::r#set_operator::*;
-  pub use self::r#set_operator_subaccount::*;
   pub use self::r#set_withdrawal_fee::*;
   pub use self::r#unpause::*;
   pub use self::r#update_share_token_metadata::*;

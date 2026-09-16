@@ -41,7 +41,7 @@ and the size floor in CI's program-size step.
 |------------------------|---------------------------------------------------------------------|
 | **User**               | Deposit tokens, redeem shares                                       |
 | **Operator**           | Withdraw/deposit funds, report deployed AUM                         |
-| **Admin**              | Update fees, operator, operator subaccount, admin (two-step), fee recipient, pause/unpause |
+| **Admin**              | Update fees, operator, operator subaccounts, admin (two-step), fee recipient, pause/unpause |
 | **Protocol authority** | Create vaults. Program-wide (not per-vault), stored in `ProgramConfig`. Rotatable by itself, resettable by the upgrade authority. |
 | **Upgrade authority**  | Upgrade the program; create `ProgramConfig`; reset the protocol authority |
 
@@ -63,14 +63,15 @@ so each deposit mint has a finite number of vault lifecycles.
 | `deposit_checked`        | User     | As `deposit`, reverting below a caller-stated minimum share output |
 | `redeem`                 | User, or the withdrawal queue | Burn shares, receive tokens (minus fee)  |
 | `redeem_checked`         | User, or the withdrawal queue | As `redeem`, reverting below a caller-stated minimum payout (net of fee) |
-| `operator_withdraw`      | Operator | Withdraw tokens for external deployment, to the operator subaccount if set |
-| `operator_deposit`       | Operator | Return tokens to vault, from the operator subaccount if set |
+| `operator_withdraw`      | Operator | Withdraw tokens for external deployment, to a registered subaccount if any |
+| `operator_deposit`       | Operator | Return tokens to vault, from a registered subaccount if any |
 | `operator_update_aum`    | Operator | Update externally deployed AUM (per-vault bps limit) |
 | `set_withdrawal_fee`     | Admin    | Set withdrawal fee (max 10%)                         |
 | `nominate_admin`         | Admin    | Nominate new admin (two-step transfer)               |
 | `accept_admin_nomination`| Nominee  | Accept admin role                                    |
 | `set_operator`           | Admin    | Assign new operator                                  |
-| `set_operator_subaccount`| Admin    | Name where operator funds go, or zero for the operator's own ATA |
+| `register_subaccount`    | Admin    | Register a permitted operator destination             |
+| `deregister_subaccount`  | Admin    | Remove one, once its outstanding principal is zero    |
 | `set_fee_recipient`      | Admin    | Change fee recipient                                 |
 | `set_aum_limits`         | Admin    | Configure AUM limits                                 |
 | `pause` / `unpause`      | Admin    | Emergency pause/unpause                              |
@@ -178,17 +179,19 @@ The queue program, the instruction that sets this field, and the request/cooldow
 semantics are none of them implemented yet; this release adds only the field and
 the gate.
 
-### Operator subaccount (optional, per vault)
+### Operator subaccounts (optional, per vault)
 
-`VaultState.operator_subaccount` decides where operator funds go, separating the
-power to *move* vault funds from the address that *receives* them. It is
-zero on every vault created before this field existed — which is what the fork
-fixtures pin — so both operator transfers use the operator's own ATA and the
-field arrives without a migration.
+`VaultState.subaccount_count` decides whether operator funds go to a registered
+destination, separating the power to *move* vault funds from the addresses that
+*receive* them. It is **zero on every vault created before the registry existed**
+— which is what the fork fixtures pin — so both operator transfers use the
+operator's own ATA and the feature arrives without a migration.
 
-When an admin sets it, `operator_withdraw` sends only to that address's ATA and
-`operator_deposit` accepts only from it; the operator's own ATA is refused. The
-setter is admin-only, so an operator cannot redirect its own payout.
+Each permitted destination is a PDA seeded `["SUBACCOUNT", vault_state, address]`,
+created by `register_subaccount`. Membership is therefore a seed derivation
+rather than a list: no scan, no cap, and rent paid per address instead of charged
+to every vault. Once any is registered, `operator_withdraw` and
+`operator_deposit` must name one and the operator's own ATA is refused.
 
 **The address must prove it can return funds before it can be named.** Its
 deposit-mint ATA must already carry the vault PDA as SPL delegate with a nonzero
@@ -201,12 +204,16 @@ empty, so it reads as an ordinary wallet) and would wrongly refuse an SPL token
 multisig, which can sign.
 
 **The allowance bounds deployments, not just returns.** `operator_withdraw`
-requires the destination's delegation to cover the outstanding principal plus
-the amount being sent, so whatever the vault is owed stays recallable at all
-times. It is measured against principal actually sent and not returned — not
-against reported AUM, since `operator_update_aum` marks value with no tokens
-moving and a mark-down would otherwise reopen capacity; and not against the
-destination ATA's balance, which anyone can inflate with a donation. Size the
+requires the destination's delegation to cover **that destination's** outstanding
+principal plus the amount being sent, so whatever the vault is owed there stays
+recallable at all times. Principal is tracked per destination, on its registry
+PDA — a vault-wide figure would make every destination's custody cover every
+other's exposure. It is measured against principal actually sent and not
+returned: not against reported AUM, since `operator_update_aum` marks value with
+no tokens moving and a mark-down would otherwise reopen capacity; and not against
+the destination ATA's balance, which anyone can inflate with a donation.
+`VaultState.deployed_principal` carries the total for monitoring only — nothing
+on-chain trusts it. Size the
 grant to the cycle you intend to deploy. Returns spend it down and SPL clears
 the delegation once it reaches zero, so it must be re-granted per cycle; a
 lapsed or short one fails with `SubaccountDelegationMissing` (6023). Note the
@@ -231,17 +238,19 @@ what can be deployed, keeping it to one cycle bounds both at once — a
 compromised key reaches roughly what is already deployed, which it could reach
 via the reserve anyway.
 
-**Rolling back to zero stops this vault honouring the delegation — it does not
-revoke it.** The subaccount's ATA stops being an accepted source, so the vault
-cannot pull; but the allowance stands, and an admin can re-name the same address
-and resume without any new approval from custody. It is therefore a lever
-against a compromised *operator*, or against custody gone unreachable — not
-against a compromised admin. Only custody's `revoke` ends the exposure.
+**Deregistering stops this vault honouring the delegation — it does not revoke
+it.** The destination's ATA stops being accepted, so the vault cannot pull; but
+the allowance stands, and an admin can re-register the same address and resume
+without any new approval from custody. It is therefore a lever against a
+compromised *operator*, or against custody gone unreachable — not against a
+compromised admin. Only custody's `revoke` ends the exposure.
 
-Rolling back also recovers funds left in the *operator's own* ATA from before a
-switch-over. It does **not** recover funds sitting at a subaccount: for those,
-re-name that subaccount and return through it, which the coverage rule above
-guarantees will work while it still holds a balance.
+A destination cannot be deregistered while the vault is still owed principal
+there, so funds cannot be stranded by removing the record of them. Removing the
+last registration returns the vault to paying the operator's own ATA, which also
+recovers funds left there from before the first registration. The first
+registration adopts the vault's existing `deployed_principal`, so a vault with
+funds already out stays covered.
 
 **Token-2022 CPI Guard.** The return transfer is the shape the guard permits: it
 blocks CPI transfers authorized by the account's *owner*, not by a delegate. The

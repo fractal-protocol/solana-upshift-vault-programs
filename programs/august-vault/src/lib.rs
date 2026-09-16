@@ -12,6 +12,7 @@ use instructions::accept_admin_nomination::*;
 use instructions::close_vault::*;
 use instructions::create_metadata::*;
 use instructions::deposit::*;
+use instructions::deregister_subaccount::*;
 use instructions::initialize::*;
 use instructions::initialize_config::*;
 use instructions::nominate_admin::*;
@@ -21,11 +22,11 @@ use instructions::operator_withdraw::*;
 use instructions::override_config_authority::*;
 use instructions::pause::*;
 use instructions::redeem::*;
+use instructions::register_subaccount::*;
 use instructions::set_aum_limits::*;
 use instructions::set_config_authority::*;
 use instructions::set_fee_recipient::*;
 use instructions::set_operator::*;
-use instructions::set_operator_subaccount::*;
 use instructions::set_withdrawal_fee::*;
 use instructions::unpause::*;
 use instructions::update_metadata::*;
@@ -214,32 +215,37 @@ pub mod august_vault {
         return instructions::operator_update_aum::handler(ctx, new_aum);
     }
 
-    /// Name the address that receives operator withdrawals and funds operator
-    /// returns, separating "who may move vault funds" from "where they go".
+    /// Register an address as a permitted operator destination, separating "who
+    /// may move vault funds" from "where they go".
     ///
-    /// Admin only. Zero restores the legacy behaviour (both sides the operator's
-    /// own ATA); pass no `subaccount_ata` for that, the address's own otherwise.
+    /// Admin only. Once any is registered, `operator_withdraw` and
+    /// `operator_deposit` must name one and the operator's own ATA is refused.
     ///
     /// **The address must already have delegated.** Its ATA must carry this
     /// vault's PDA as SPL delegate with a nonzero allowance — the only on-chain
     /// proof it can return funds — so custody runs
     /// `approve(subaccount_ata, vault_state, n)` first. `n` also bounds
-    /// deployments: `operator_withdraw` requires it to cover outstanding
-    /// principal plus the amount. Returns spend it down and SPL clears it at
-    /// zero, so it needs re-granting per cycle; a lapsed one fails
+    /// deployments: `operator_withdraw` requires it to cover that destination's
+    /// outstanding principal plus the amount. Returns spend it down and SPL
+    /// clears it at zero, so it needs re-granting per cycle; a lapsed one fails
     /// `SubaccountDelegationMissing` (6023).
     ///
-    /// Once set, the vault PDA — not the operator — authorizes the return
-    /// transfer. The operator still signs the instruction.
+    /// The first registration adopts the vault's existing `deployed_principal`,
+    /// so a vault with funds already out stays covered.
     ///
     /// ### Parameters
-    /// - `new_subaccount` - The receiving address, or zero to revert to the
-    ///   operator's own ATA
-    pub fn set_operator_subaccount(
-        ctx: Context<SetOperatorSubaccount>,
-        new_subaccount: Pubkey,
-    ) -> Result<()> {
-        return instructions::set_operator_subaccount::handler(ctx, new_subaccount);
+    /// - `address` - The receiving address. Must not be the operator
+    pub fn register_subaccount(ctx: Context<RegisterSubaccount>, address: Pubkey) -> Result<()> {
+        return instructions::register_subaccount::handler(ctx, address);
+    }
+
+    /// Remove a registered destination, refunding its rent to the admin.
+    ///
+    /// Admin only, and only once that destination's outstanding principal is
+    /// zero — otherwise the vault would lose the record of what it is owed.
+    /// Removing the last one returns the vault to paying the operator's own ATA.
+    pub fn deregister_subaccount(ctx: Context<DeregisterSubaccount>) -> Result<()> {
+        return instructions::deregister_subaccount::handler(ctx);
     }
 
     /// Admin Updates the Withdrawal Fee

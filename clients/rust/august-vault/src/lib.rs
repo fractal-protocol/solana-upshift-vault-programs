@@ -63,28 +63,24 @@ impl VaultState {
         self.withdrawal_queue().is_some()
     }
 
-    /// Where this vault's operator transfers go: the `operator_subaccount` if
-    /// it has one, else the operator's own ATA.
+    /// Whether operator transfers on this vault must name a registered
+    /// subaccount.
     ///
-    /// **Off-chain consumers must use this, not the raw field.** A raw zero is
-    /// the legacy sentinel, and deriving an ATA for the zero key yields an
-    /// address nothing can sign for — every live mainnet vault reads zero here.
-    pub fn operator_destination(&self) -> Pubkey {
-        self.operator_subaccount().unwrap_or(self.operator)
-    }
-
-    /// This vault's designated operator subaccount, if it has one. `None` means
-    /// operator transfers still use the operator's own ATA.
-    pub fn operator_subaccount(&self) -> Option<Pubkey> {
-        (self.operator_subaccount != Pubkey::default()).then_some(self.operator_subaccount)
+    /// **Off-chain consumers must branch on this, not on a raw field.** False
+    /// means both operator transfers use the operator's own ATA — the state
+    /// every vault created before the registry existed is in. True means an SDK
+    /// building an operator transfer has to supply the destination's registry
+    /// PDA, seeded `["SUBACCOUNT", vault_state, address]`, and its ATA.
+    pub fn requires_subaccount(&self) -> bool {
+        self.subaccount_count > 0
     }
 
     /// Whether a return through `operator_deposit` needs an SPL delegation from
-    /// the subaccount to the vault PDA. True exactly when a subaccount is set:
-    /// the source account is then not the operator's, so the operator cannot
-    /// authorize the transfer and the vault pulls against an allowance instead.
+    /// the destination to the vault PDA. True exactly when a subaccount is
+    /// required: the source is then not the operator's account, so the operator
+    /// cannot authorize the transfer and the vault pulls against an allowance.
     pub fn operator_returns_need_delegation(&self) -> bool {
-        self.operator_subaccount().is_some()
+        self.requires_subaccount()
     }
 
     /// Smallest first deposit this vault accepts, mirroring the program's
@@ -129,9 +125,9 @@ mod tests {
             paused: false,
             share_offset: 0,
             withdrawal_queue_authority: zero,
-            operator_subaccount: zero,
+            subaccount_count: 0,
             deployed_principal: 0,
-            padding: [0; 22],
+            padding: [0; 25],
         };
         assert_eq!(vs.resolved_share_offset(), EXTRA_SHARES);
         assert_eq!(vs.min_first_deposit(6), 100_000_000);
@@ -141,20 +137,20 @@ mod tests {
         assert_eq!(vs.min_first_deposit(6), 100_000);
     }
 
-    /// The legacy zero must resolve to the operator off-chain too. An SDK that
-    /// read the field raw would derive the zero key's ATA and build operator
-    /// transactions that cannot be signed, against all three live vaults.
+    /// A vault with no registrations must read as using the operator's own ATA
+    /// off-chain too. An SDK that got this wrong would omit the registry PDA
+    /// from operator transactions against a configured vault, or demand one
+    /// against all three live vaults.
     #[test]
-    fn a_zero_subaccount_resolves_to_the_operator() {
-        let operator = Pubkey::new_from_array([3; 32]);
-        let subaccount = Pubkey::new_from_array([4; 32]);
+    fn the_count_decides_whether_a_destination_is_required() {
+        let zero = Pubkey::default();
         let mut vs = VaultState {
             discriminator: [0; 8],
-            operator,
-            admin: Pubkey::default(),
-            share_mint: Pubkey::default(),
-            deposit_mint: Pubkey::default(),
-            fee_recipient: Pubkey::default(),
+            operator: zero,
+            admin: zero,
+            share_mint: zero,
+            deposit_mint: zero,
+            fee_recipient: zero,
             withdrawal_fee: 0,
             local_aum: 0,
             deployed_aum: 0,
@@ -164,17 +160,16 @@ mod tests {
             vault_version: [0; 1],
             paused: false,
             share_offset: 0,
-            withdrawal_queue_authority: Pubkey::default(),
-            operator_subaccount: Pubkey::default(),
+            withdrawal_queue_authority: zero,
+            subaccount_count: 0,
             deployed_principal: 0,
-            padding: [0; 22],
+            padding: [0; 25],
         };
-        assert_eq!(vs.operator_subaccount(), None);
-        assert_eq!(vs.operator_destination(), operator);
+        assert!(!vs.requires_subaccount());
         assert!(!vs.operator_returns_need_delegation());
 
-        vs.operator_subaccount = subaccount;
-        assert_eq!(vs.operator_destination(), subaccount);
+        vs.subaccount_count = 2;
+        assert!(vs.requires_subaccount());
         assert!(vs.operator_returns_need_delegation());
     }
 }

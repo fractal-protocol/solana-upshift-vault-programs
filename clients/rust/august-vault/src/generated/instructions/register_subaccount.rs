@@ -9,73 +9,78 @@ use solana_pubkey::Pubkey;
 use borsh::BorshSerialize;
 use borsh::BorshDeserialize;
 
-pub const SET_OPERATOR_SUBACCOUNT_DISCRIMINATOR: [u8; 8] = [20, 114, 203, 180, 35, 46, 180, 152];
+pub const REGISTER_SUBACCOUNT_DISCRIMINATOR: [u8; 8] = [12, 219, 227, 235, 28, 220, 20, 220];
 
 /// Accounts.
 #[derive(Debug)]
-pub struct SetOperatorSubaccount {
+pub struct RegisterSubaccount {
       
               
           pub vault_state: solana_pubkey::Pubkey,
           
               
+          pub subaccount: solana_pubkey::Pubkey,
+          
+              
           pub deposit_mint: solana_pubkey::Pubkey,
-                /// The named address's deposit-mint ATA, carrying the delegation that proves
-/// the address can return funds. Anchor derives it from `new_subaccount`, so
-/// the account cannot disagree with the argument. Omitted only for the zero
-/// rollback.
+                /// The address's deposit-mint ATA, carrying the delegation. Anchor derives
+/// it from `address`, so the account cannot disagree with the argument.
 
     
               
-          pub subaccount_ata: Option<solana_pubkey::Pubkey>,
+          pub subaccount_ata: solana_pubkey::Pubkey,
           
               
           pub token_program: solana_pubkey::Pubkey,
                 /// The admin's signature, not the operator's. Where admin and operator are
-/// the same key this buys nothing; see the note on the field.
+/// the same key this buys nothing; see the note on `subaccount_count`.
 
     
               
           pub admin: solana_pubkey::Pubkey,
+          
+              
+          pub system_program: solana_pubkey::Pubkey,
       }
 
-impl SetOperatorSubaccount {
-  pub fn instruction(&self, args: SetOperatorSubaccountInstructionArgs) -> solana_instruction::Instruction {
+impl RegisterSubaccount {
+  pub fn instruction(&self, args: RegisterSubaccountInstructionArgs) -> solana_instruction::Instruction {
     self.instruction_with_remaining_accounts(args, &[])
   }
   #[allow(clippy::arithmetic_side_effects)]
   #[allow(clippy::vec_init_then_push)]
-  pub fn instruction_with_remaining_accounts(&self, args: SetOperatorSubaccountInstructionArgs, remaining_accounts: &[solana_instruction::AccountMeta]) -> solana_instruction::Instruction {
-    let mut accounts = Vec::with_capacity(5+ remaining_accounts.len());
+  pub fn instruction_with_remaining_accounts(&self, args: RegisterSubaccountInstructionArgs, remaining_accounts: &[solana_instruction::AccountMeta]) -> solana_instruction::Instruction {
+    let mut accounts = Vec::with_capacity(7+ remaining_accounts.len());
                             accounts.push(solana_instruction::AccountMeta::new(
             self.vault_state,
+            false
+          ));
+                                          accounts.push(solana_instruction::AccountMeta::new(
+            self.subaccount,
             false
           ));
                                           accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.deposit_mint,
             false
           ));
-                                                      if let Some(subaccount_ata) = self.subaccount_ata {
-              accounts.push(solana_instruction::AccountMeta::new_readonly(
-                subaccount_ata,
-                false,
-              ));
-            } else {
-              accounts.push(solana_instruction::AccountMeta::new_readonly(
-                crate::AUGUST_VAULT_ID,
-                false,
-              ));
-            }
-                                                    accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.token_program,
+                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.subaccount_ata,
             false
           ));
                                           accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.token_program,
+            false
+          ));
+                                          accounts.push(solana_instruction::AccountMeta::new(
             self.admin,
             true
           ));
+                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.system_program,
+            false
+          ));
                       accounts.extend_from_slice(remaining_accounts);
-    let mut data = SetOperatorSubaccountInstructionData::new().try_to_vec().unwrap();
+    let mut data = RegisterSubaccountInstructionData::new().try_to_vec().unwrap();
           let mut args = args.try_to_vec().unwrap();
       data.append(&mut args);
     
@@ -89,14 +94,14 @@ impl SetOperatorSubaccount {
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
- pub struct SetOperatorSubaccountInstructionData {
+ pub struct RegisterSubaccountInstructionData {
             discriminator: [u8; 8],
             }
 
-impl SetOperatorSubaccountInstructionData {
+impl RegisterSubaccountInstructionData {
   pub fn new() -> Self {
     Self {
-                        discriminator: [20, 114, 203, 180, 35, 46, 180, 152],
+                        discriminator: [12, 219, 227, 235, 28, 220, 20, 220],
                                 }
   }
 
@@ -105,7 +110,7 @@ impl SetOperatorSubaccountInstructionData {
   }
   }
 
-impl Default for SetOperatorSubaccountInstructionData {
+impl Default for RegisterSubaccountInstructionData {
   fn default() -> Self {
     Self::new()
   }
@@ -113,38 +118,42 @@ impl Default for SetOperatorSubaccountInstructionData {
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
- pub struct SetOperatorSubaccountInstructionArgs {
-                  pub new_subaccount: Pubkey,
+ pub struct RegisterSubaccountInstructionArgs {
+                  pub address: Pubkey,
       }
 
-impl SetOperatorSubaccountInstructionArgs {
+impl RegisterSubaccountInstructionArgs {
   pub(crate) fn try_to_vec(&self) -> Result<Vec<u8>, std::io::Error> {
     borsh::to_vec(self)
   }
 }
 
 
-/// Instruction builder for `SetOperatorSubaccount`.
+/// Instruction builder for `RegisterSubaccount`.
 ///
 /// ### Accounts:
 ///
                 ///   0. `[writable]` vault_state
-          ///   1. `[]` deposit_mint
-                ///   2. `[optional]` subaccount_ata
-                ///   3. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
-                ///   4. `[signer]` admin
+                ///   1. `[writable]` subaccount
+          ///   2. `[]` deposit_mint
+          ///   3. `[]` subaccount_ata
+                ///   4. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
+                      ///   5. `[writable, signer]` admin
+                ///   6. `[optional]` system_program (default to `11111111111111111111111111111111`)
 #[derive(Clone, Debug, Default)]
-pub struct SetOperatorSubaccountBuilder {
+pub struct RegisterSubaccountBuilder {
             vault_state: Option<solana_pubkey::Pubkey>,
+                subaccount: Option<solana_pubkey::Pubkey>,
                 deposit_mint: Option<solana_pubkey::Pubkey>,
                 subaccount_ata: Option<solana_pubkey::Pubkey>,
                 token_program: Option<solana_pubkey::Pubkey>,
                 admin: Option<solana_pubkey::Pubkey>,
-                        new_subaccount: Option<Pubkey>,
+                system_program: Option<solana_pubkey::Pubkey>,
+                        address: Option<Pubkey>,
         __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
-impl SetOperatorSubaccountBuilder {
+impl RegisterSubaccountBuilder {
   pub fn new() -> Self {
     Self::default()
   }
@@ -154,18 +163,20 @@ impl SetOperatorSubaccountBuilder {
                     self
     }
             #[inline(always)]
+    pub fn subaccount(&mut self, subaccount: solana_pubkey::Pubkey) -> &mut Self {
+                        self.subaccount = Some(subaccount);
+                    self
+    }
+            #[inline(always)]
     pub fn deposit_mint(&mut self, deposit_mint: solana_pubkey::Pubkey) -> &mut Self {
                         self.deposit_mint = Some(deposit_mint);
                     self
     }
-            /// `[optional account]`
-/// The named address's deposit-mint ATA, carrying the delegation that proves
-/// the address can return funds. Anchor derives it from `new_subaccount`, so
-/// the account cannot disagree with the argument. Omitted only for the zero
-/// rollback.
+            /// The address's deposit-mint ATA, carrying the delegation. Anchor derives
+/// it from `address`, so the account cannot disagree with the argument.
 #[inline(always)]
-    pub fn subaccount_ata(&mut self, subaccount_ata: Option<solana_pubkey::Pubkey>) -> &mut Self {
-                        self.subaccount_ata = subaccount_ata;
+    pub fn subaccount_ata(&mut self, subaccount_ata: solana_pubkey::Pubkey) -> &mut Self {
+                        self.subaccount_ata = Some(subaccount_ata);
                     self
     }
             /// `[optional account, default to 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA']`
@@ -175,15 +186,21 @@ impl SetOperatorSubaccountBuilder {
                     self
     }
             /// The admin's signature, not the operator's. Where admin and operator are
-/// the same key this buys nothing; see the note on the field.
+/// the same key this buys nothing; see the note on `subaccount_count`.
 #[inline(always)]
     pub fn admin(&mut self, admin: solana_pubkey::Pubkey) -> &mut Self {
                         self.admin = Some(admin);
                     self
     }
+            /// `[optional account, default to '11111111111111111111111111111111']`
+#[inline(always)]
+    pub fn system_program(&mut self, system_program: solana_pubkey::Pubkey) -> &mut Self {
+                        self.system_program = Some(system_program);
+                    self
+    }
                     #[inline(always)]
-      pub fn new_subaccount(&mut self, new_subaccount: Pubkey) -> &mut Self {
-        self.new_subaccount = Some(new_subaccount);
+      pub fn address(&mut self, address: Pubkey) -> &mut Self {
+        self.address = Some(address);
         self
       }
         /// Add an additional account to the instruction.
@@ -200,50 +217,56 @@ impl SetOperatorSubaccountBuilder {
   }
   #[allow(clippy::clone_on_copy)]
   pub fn instruction(&self) -> solana_instruction::Instruction {
-    let accounts = SetOperatorSubaccount {
+    let accounts = RegisterSubaccount {
                               vault_state: self.vault_state.expect("vault_state is not set"),
+                                        subaccount: self.subaccount.expect("subaccount is not set"),
                                         deposit_mint: self.deposit_mint.expect("deposit_mint is not set"),
-                                        subaccount_ata: self.subaccount_ata,
+                                        subaccount_ata: self.subaccount_ata.expect("subaccount_ata is not set"),
                                         token_program: self.token_program.unwrap_or(solana_pubkey::pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")),
                                         admin: self.admin.expect("admin is not set"),
+                                        system_program: self.system_program.unwrap_or(solana_pubkey::pubkey!("11111111111111111111111111111111")),
                       };
-          let args = SetOperatorSubaccountInstructionArgs {
-                                                              new_subaccount: self.new_subaccount.clone().expect("new_subaccount is not set"),
+          let args = RegisterSubaccountInstructionArgs {
+                                                              address: self.address.clone().expect("address is not set"),
                                     };
     
     accounts.instruction_with_remaining_accounts(args, &self.__remaining_accounts)
   }
 }
 
-  /// `set_operator_subaccount` CPI accounts.
-  pub struct SetOperatorSubaccountCpiAccounts<'a, 'b> {
+  /// `register_subaccount` CPI accounts.
+  pub struct RegisterSubaccountCpiAccounts<'a, 'b> {
           
                     
               pub vault_state: &'b solana_account_info::AccountInfo<'a>,
                 
                     
+              pub subaccount: &'b solana_account_info::AccountInfo<'a>,
+                
+                    
               pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
-                        /// The named address's deposit-mint ATA, carrying the delegation that proves
-/// the address can return funds. Anchor derives it from `new_subaccount`, so
-/// the account cannot disagree with the argument. Omitted only for the zero
-/// rollback.
+                        /// The address's deposit-mint ATA, carrying the delegation. Anchor derives
+/// it from `address`, so the account cannot disagree with the argument.
 
       
                     
-              pub subaccount_ata: Option<&'b solana_account_info::AccountInfo<'a>>,
+              pub subaccount_ata: &'b solana_account_info::AccountInfo<'a>,
                 
                     
               pub token_program: &'b solana_account_info::AccountInfo<'a>,
                         /// The admin's signature, not the operator's. Where admin and operator are
-/// the same key this buys nothing; see the note on the field.
+/// the same key this buys nothing; see the note on `subaccount_count`.
 
       
                     
               pub admin: &'b solana_account_info::AccountInfo<'a>,
+                
+                    
+              pub system_program: &'b solana_account_info::AccountInfo<'a>,
             }
 
-/// `set_operator_subaccount` CPI instruction.
-pub struct SetOperatorSubaccountCpi<'a, 'b> {
+/// `register_subaccount` CPI instruction.
+pub struct RegisterSubaccountCpi<'a, 'b> {
   /// The program to invoke.
   pub __program: &'b solana_account_info::AccountInfo<'a>,
       
@@ -251,41 +274,47 @@ pub struct SetOperatorSubaccountCpi<'a, 'b> {
           pub vault_state: &'b solana_account_info::AccountInfo<'a>,
           
               
+          pub subaccount: &'b solana_account_info::AccountInfo<'a>,
+          
+              
           pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
-                /// The named address's deposit-mint ATA, carrying the delegation that proves
-/// the address can return funds. Anchor derives it from `new_subaccount`, so
-/// the account cannot disagree with the argument. Omitted only for the zero
-/// rollback.
+                /// The address's deposit-mint ATA, carrying the delegation. Anchor derives
+/// it from `address`, so the account cannot disagree with the argument.
 
     
               
-          pub subaccount_ata: Option<&'b solana_account_info::AccountInfo<'a>>,
+          pub subaccount_ata: &'b solana_account_info::AccountInfo<'a>,
           
               
           pub token_program: &'b solana_account_info::AccountInfo<'a>,
                 /// The admin's signature, not the operator's. Where admin and operator are
-/// the same key this buys nothing; see the note on the field.
+/// the same key this buys nothing; see the note on `subaccount_count`.
 
     
               
           pub admin: &'b solana_account_info::AccountInfo<'a>,
+          
+              
+          pub system_program: &'b solana_account_info::AccountInfo<'a>,
             /// The arguments for the instruction.
-    pub __args: SetOperatorSubaccountInstructionArgs,
+    pub __args: RegisterSubaccountInstructionArgs,
   }
 
-impl<'a, 'b> SetOperatorSubaccountCpi<'a, 'b> {
+impl<'a, 'b> RegisterSubaccountCpi<'a, 'b> {
   pub fn new(
     program: &'b solana_account_info::AccountInfo<'a>,
-          accounts: SetOperatorSubaccountCpiAccounts<'a, 'b>,
-              args: SetOperatorSubaccountInstructionArgs,
+          accounts: RegisterSubaccountCpiAccounts<'a, 'b>,
+              args: RegisterSubaccountInstructionArgs,
       ) -> Self {
     Self {
       __program: program,
               vault_state: accounts.vault_state,
+              subaccount: accounts.subaccount,
               deposit_mint: accounts.deposit_mint,
               subaccount_ata: accounts.subaccount_ata,
               token_program: accounts.token_program,
               admin: accounts.admin,
+              system_program: accounts.system_program,
                     __args: args,
           }
   }
@@ -309,33 +338,34 @@ impl<'a, 'b> SetOperatorSubaccountCpi<'a, 'b> {
     signers_seeds: &[&[&[u8]]],
     remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)]
   ) -> solana_program_error::ProgramResult {
-    let mut accounts = Vec::with_capacity(5+ remaining_accounts.len());
+    let mut accounts = Vec::with_capacity(7+ remaining_accounts.len());
                             accounts.push(solana_instruction::AccountMeta::new(
             *self.vault_state.key,
+            false
+          ));
+                                          accounts.push(solana_instruction::AccountMeta::new(
+            *self.subaccount.key,
             false
           ));
                                           accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.deposit_mint.key,
             false
           ));
-                                          if let Some(subaccount_ata) = self.subaccount_ata {
-            accounts.push(solana_instruction::AccountMeta::new_readonly(
-              *subaccount_ata.key,
-              false,
-            ));
-          } else {
-            accounts.push(solana_instruction::AccountMeta::new_readonly(
-              crate::AUGUST_VAULT_ID,
-              false,
-            ));
-          }
+                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.subaccount_ata.key,
+            false
+          ));
                                           accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.token_program.key,
             false
           ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
+                                          accounts.push(solana_instruction::AccountMeta::new(
             *self.admin.key,
             true
+          ));
+                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.system_program.key,
+            false
           ));
                       remaining_accounts.iter().for_each(|remaining_account| {
       accounts.push(solana_instruction::AccountMeta {
@@ -344,7 +374,7 @@ impl<'a, 'b> SetOperatorSubaccountCpi<'a, 'b> {
           is_writable: remaining_account.2,
       })
     });
-    let mut data = SetOperatorSubaccountInstructionData::new().try_to_vec().unwrap();
+    let mut data = RegisterSubaccountInstructionData::new().try_to_vec().unwrap();
           let mut args = self.__args.try_to_vec().unwrap();
       data.append(&mut args);
     
@@ -353,15 +383,15 @@ impl<'a, 'b> SetOperatorSubaccountCpi<'a, 'b> {
       accounts,
       data,
     };
-    let mut account_infos = Vec::with_capacity(6 + remaining_accounts.len());
+    let mut account_infos = Vec::with_capacity(8 + remaining_accounts.len());
     account_infos.push(self.__program.clone());
                   account_infos.push(self.vault_state.clone());
+                        account_infos.push(self.subaccount.clone());
                         account_infos.push(self.deposit_mint.clone());
-                        if let Some(subaccount_ata) = self.subaccount_ata {
-          account_infos.push(subaccount_ata.clone());
-        }
+                        account_infos.push(self.subaccount_ata.clone());
                         account_infos.push(self.token_program.clone());
                         account_infos.push(self.admin.clone());
+                        account_infos.push(self.system_program.clone());
               remaining_accounts.iter().for_each(|remaining_account| account_infos.push(remaining_account.0.clone()));
 
     if signers_seeds.is_empty() {
@@ -372,30 +402,34 @@ impl<'a, 'b> SetOperatorSubaccountCpi<'a, 'b> {
   }
 }
 
-/// Instruction builder for `SetOperatorSubaccount` via CPI.
+/// Instruction builder for `RegisterSubaccount` via CPI.
 ///
 /// ### Accounts:
 ///
                 ///   0. `[writable]` vault_state
-          ///   1. `[]` deposit_mint
-                ///   2. `[optional]` subaccount_ata
-          ///   3. `[]` token_program
-                ///   4. `[signer]` admin
+                ///   1. `[writable]` subaccount
+          ///   2. `[]` deposit_mint
+          ///   3. `[]` subaccount_ata
+          ///   4. `[]` token_program
+                      ///   5. `[writable, signer]` admin
+          ///   6. `[]` system_program
 #[derive(Clone, Debug)]
-pub struct SetOperatorSubaccountCpiBuilder<'a, 'b> {
-  instruction: Box<SetOperatorSubaccountCpiBuilderInstruction<'a, 'b>>,
+pub struct RegisterSubaccountCpiBuilder<'a, 'b> {
+  instruction: Box<RegisterSubaccountCpiBuilderInstruction<'a, 'b>>,
 }
 
-impl<'a, 'b> SetOperatorSubaccountCpiBuilder<'a, 'b> {
+impl<'a, 'b> RegisterSubaccountCpiBuilder<'a, 'b> {
   pub fn new(program: &'b solana_account_info::AccountInfo<'a>) -> Self {
-    let instruction = Box::new(SetOperatorSubaccountCpiBuilderInstruction {
+    let instruction = Box::new(RegisterSubaccountCpiBuilderInstruction {
       __program: program,
               vault_state: None,
+              subaccount: None,
               deposit_mint: None,
               subaccount_ata: None,
               token_program: None,
               admin: None,
-                                            new_subaccount: None,
+              system_program: None,
+                                            address: None,
                     __remaining_accounts: Vec::new(),
     });
     Self { instruction }
@@ -406,18 +440,20 @@ impl<'a, 'b> SetOperatorSubaccountCpiBuilder<'a, 'b> {
                     self
     }
       #[inline(always)]
+    pub fn subaccount(&mut self, subaccount: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
+                        self.instruction.subaccount = Some(subaccount);
+                    self
+    }
+      #[inline(always)]
     pub fn deposit_mint(&mut self, deposit_mint: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
                         self.instruction.deposit_mint = Some(deposit_mint);
                     self
     }
-      /// `[optional account]`
-/// The named address's deposit-mint ATA, carrying the delegation that proves
-/// the address can return funds. Anchor derives it from `new_subaccount`, so
-/// the account cannot disagree with the argument. Omitted only for the zero
-/// rollback.
+      /// The address's deposit-mint ATA, carrying the delegation. Anchor derives
+/// it from `address`, so the account cannot disagree with the argument.
 #[inline(always)]
-    pub fn subaccount_ata(&mut self, subaccount_ata: Option<&'b solana_account_info::AccountInfo<'a>>) -> &mut Self {
-                        self.instruction.subaccount_ata = subaccount_ata;
+    pub fn subaccount_ata(&mut self, subaccount_ata: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
+                        self.instruction.subaccount_ata = Some(subaccount_ata);
                     self
     }
       #[inline(always)]
@@ -426,15 +462,20 @@ impl<'a, 'b> SetOperatorSubaccountCpiBuilder<'a, 'b> {
                     self
     }
       /// The admin's signature, not the operator's. Where admin and operator are
-/// the same key this buys nothing; see the note on the field.
+/// the same key this buys nothing; see the note on `subaccount_count`.
 #[inline(always)]
     pub fn admin(&mut self, admin: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
                         self.instruction.admin = Some(admin);
                     self
     }
+      #[inline(always)]
+    pub fn system_program(&mut self, system_program: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
+                        self.instruction.system_program = Some(system_program);
+                    self
+    }
                     #[inline(always)]
-      pub fn new_subaccount(&mut self, new_subaccount: Pubkey) -> &mut Self {
-        self.instruction.new_subaccount = Some(new_subaccount);
+      pub fn address(&mut self, address: Pubkey) -> &mut Self {
+        self.instruction.address = Some(address);
         self
       }
         /// Add an additional account to the instruction.
@@ -459,21 +500,25 @@ impl<'a, 'b> SetOperatorSubaccountCpiBuilder<'a, 'b> {
   #[allow(clippy::clone_on_copy)]
   #[allow(clippy::vec_init_then_push)]
   pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
-          let args = SetOperatorSubaccountInstructionArgs {
-                                                              new_subaccount: self.instruction.new_subaccount.clone().expect("new_subaccount is not set"),
+          let args = RegisterSubaccountInstructionArgs {
+                                                              address: self.instruction.address.clone().expect("address is not set"),
                                     };
-        let instruction = SetOperatorSubaccountCpi {
+        let instruction = RegisterSubaccountCpi {
         __program: self.instruction.__program,
                   
           vault_state: self.instruction.vault_state.expect("vault_state is not set"),
                   
+          subaccount: self.instruction.subaccount.expect("subaccount is not set"),
+                  
           deposit_mint: self.instruction.deposit_mint.expect("deposit_mint is not set"),
                   
-          subaccount_ata: self.instruction.subaccount_ata,
+          subaccount_ata: self.instruction.subaccount_ata.expect("subaccount_ata is not set"),
                   
           token_program: self.instruction.token_program.expect("token_program is not set"),
                   
           admin: self.instruction.admin.expect("admin is not set"),
+                  
+          system_program: self.instruction.system_program.expect("system_program is not set"),
                           __args: args,
             };
     instruction.invoke_signed_with_remaining_accounts(signers_seeds, &self.instruction.__remaining_accounts)
@@ -481,14 +526,16 @@ impl<'a, 'b> SetOperatorSubaccountCpiBuilder<'a, 'b> {
 }
 
 #[derive(Clone, Debug)]
-struct SetOperatorSubaccountCpiBuilderInstruction<'a, 'b> {
+struct RegisterSubaccountCpiBuilderInstruction<'a, 'b> {
   __program: &'b solana_account_info::AccountInfo<'a>,
             vault_state: Option<&'b solana_account_info::AccountInfo<'a>>,
+                subaccount: Option<&'b solana_account_info::AccountInfo<'a>>,
                 deposit_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
                 subaccount_ata: Option<&'b solana_account_info::AccountInfo<'a>>,
                 token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
                 admin: Option<&'b solana_account_info::AccountInfo<'a>>,
-                        new_subaccount: Option<Pubkey>,
+                system_program: Option<&'b solana_account_info::AccountInfo<'a>>,
+                        address: Option<Pubkey>,
         /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
   __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
 }
