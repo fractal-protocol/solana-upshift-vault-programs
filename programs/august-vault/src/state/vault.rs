@@ -160,7 +160,8 @@ pub struct VaultState {
     ///
     /// Only as good as the address, which must be custody the operator cannot
     /// sweep, and on admin being a different party than the operator. Neither
-    /// is visible here.
+    /// is visible here. One address per vault per deposit mint: the ATA's single
+    /// delegate slot cannot serve two vaults.
     pub operator_subaccount: Pubkey,
     /// Principal the operator has taken out and not returned, in base units.
     ///

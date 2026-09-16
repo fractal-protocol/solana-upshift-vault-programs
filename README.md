@@ -213,6 +213,16 @@ lapsed or short one fails with `SubaccountDelegationMissing` (6023). Note the
 program's check covers the delegation only — a short *balance* or a frozen
 source ATA still surface as the token program's own errors.
 
+**One subaccount address serves one vault per deposit mint.** An ATA is derived
+from (owner, mint), and an SPL token account has a single delegate slot that
+`approve` overwrites — so two vaults sharing a deposit mint cannot share a
+subaccount address. Give custody a distinct address per vault. Naming an address
+already delegated to another vault is refused at config time, but the reverse
+order is not preventable from here: if custody later approves for a second vault,
+the first vault's next transfer fails with `SubaccountDelegationMissing` (6023),
+which is the non-obvious cause of that error. No two live vaults share a deposit
+mint today.
+
 **The allowance is also the compromise radius.** A compromised *operator* needs
 no admin involvement to pull the whole standing allowance into the vault; a
 compromised admin can additionally rotate the operator to itself, roll the
