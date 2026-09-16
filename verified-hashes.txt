@@ -22,6 +22,12 @@
 # these hashes belong to that commit. That job also fails closed if this file
 # yields no records to compare, so a truncated file cannot pass silently.
 #
+# NOTE: a cargo FEATURE on a shared dependency changes BOTH programs. The queue
+# links `august-vault` for its CPI, so it inherits the vault's `anchor-lang`
+# feature set — enabling `allow-missing-optionals` for the vault changed the
+# queue's bytecode at an identical size. Rebuild and re-record both rows after
+# any feature change, not just the crate you edited.
+#
 # NOTE: line numbers are compiled into the bytecode (Anchor error macros capture
 # file!()/line!()), so inserting or deleting a line above any require! changes
 # these hashes even with no logic change — often at an unchanged size. See the
@@ -29,4 +35,4 @@
 #
 # program       exec_sha256                                                       raw_sha256                                                        size
 august_vault    41f6039b6bdd988cbee5e3dc094d987d61c4bb8bce857567a2508c33bdd225a2  fc5b975a7f90c1ffd0913db9f04e4f64177cfb07e7797e3059c96d099dff1379  668472
-august_withdrawal_queue    87ab5755246147569365c1e4481efe1ae3f8bb2e5605c845468f9d69a1704649  64441b54ad6afd65eeedec3fedcd23504f1717358b6b022febc4b32a761d48a4  182176
+august_withdrawal_queue    652b0d5446282dedcdbd28b183c4f8ad9fca3d9f15d7e98035df388fd0a795b3  981fc33ebc23a2057a71307778236c00e5a53dbed027c3e85c7f4f46ea2d0dd4  182176
