@@ -7,16 +7,12 @@
 // governed by version 2.0 of the Apache License.
 
 //! `operator_subaccount`: separating who may move vault funds from where those
-//! funds go.
+//! funds go. Naming an address requires it to have already delegated its ATA to
+//! the vault, so most tests start from `new_delegated_subaccount`.
 //!
-//! Naming an address requires it to have already delegated its deposit-mint ATA
-//! to the vault. That is the only on-chain proof that it can take funds back
-//! out, so most tests here start from `new_delegated_subaccount`.
-//!
-//! Two things these tests cannot establish, because the program cannot see
-//! either: that the address is custody the operator cannot sweep (a `Subaccount`
-//! here is a plain keypair), and that admin != operator (where they are the same
-//! key, that key can name any destination it has delegated).
+//! Two things these cannot establish, because the program cannot see either:
+//! that the address is custody the operator cannot sweep (a `Subaccount` here is
+//! a plain keypair), and that admin is a different party than the operator.
 
 use august_vault::errors::ErrorCode;
 use integration_tests::harness::{
@@ -28,11 +24,9 @@ use solana_sdk::signature::Signer;
 const DEPOSIT_AMOUNT: u64 = 10 * 10u64.pow(DEPOSIT_DECIMALS as u32); // 10 tokens
 const DEPLOYED: u64 = 1_000_000_000; // 1 token pushed out to the destination
 
-/// Anchor's `ConstraintTokenOwner`. `associated_token::authority = X` checks
-/// both the account's owner and its derived address; the owner check fires first
-/// on a real token account belonging to the wrong party. Pinned by number rather
-/// than asserting "it failed", since an any-error assertion would also pass for
-/// a merely uninitialized account.
+/// Anchor's `ConstraintTokenOwner`, which fires before the derived-address check
+/// on a token account belonging to the wrong party. Pinned by number so the test
+/// cannot pass on a merely uninitialized account.
 const CONSTRAINT_TOKEN_OWNER: u32 = 2015;
 
 /// Anchor's `AccountNotInitialized`, raised when a named address has no ATA.
@@ -168,15 +162,10 @@ fn an_address_with_no_ata_cannot_be_named() {
     assert_anchor_framework_err(&err, ACCOUNT_NOT_INITIALIZED);
 }
 
-/// Addresses that cannot delegate are refused by the proof, not by an
-/// enumeration of them.
-///
-/// Each ATA is created first — which any third party can do, since
-/// `create_associated_token_account` needs no signature from the address. That
-/// is the point: without it these fail at `AccountNotInitialized` and the test
-/// would be four copies of `an_address_with_no_ata_cannot_be_named`, standing
-/// behind nothing. The vault-PDA row matters most: naming it would send the
-/// reserve into a vault-owned ATA no instruction can spend from.
+/// Refused by the proof, not by an enumeration. Each ATA is created first —
+/// which any third party can do — or these fail at `AccountNotInitialized`
+/// instead and the test stands behind nothing. The vault-PDA row matters most:
+/// naming it would send the reserve somewhere no instruction can spend from.
 #[test]
 fn addresses_that_cannot_delegate_are_refused() {
     let mut ctx = funded_vault();
@@ -353,10 +342,8 @@ fn withdraw_still_requires_the_operator_to_sign() {
 // ---- the return direction ----
 
 /// On a gated vault the ATA constraint resolves to the subaccount for *any*
-/// signer, so `vault_state.operator == operator.key()` is the only thing left
-/// gating who may spend custody's allowance into the vault. The withdraw side
-/// has the same test; this is the direction where the token authority moved off
-/// the operator, which is exactly why it needs its own.
+/// signer, so the operator check is the only thing gating who may spend
+/// custody's allowance into the vault.
 #[test]
 fn deposit_still_requires_the_operator_to_sign() {
     let mut ctx = funded_vault();
@@ -510,9 +497,7 @@ fn an_allowance_covers_several_partial_returns() {
 // ---- rollback and incident response ----
 
 /// Zero is the documented rollback. Asserts the vault was really gated in
-/// between, and round-trips both directions afterwards — without that this
-/// passes against a setter that writes nothing, and the deposit direction is the
-/// one whose authority changes.
+/// between, or this passes against a setter that writes nothing.
 #[test]
 fn setting_zero_reverts_to_the_operators_ata() {
     let mut ctx = funded_vault();
@@ -535,11 +520,9 @@ fn setting_zero_reverts_to_the_operators_ata() {
     assert_eq!(ctx.vault_state_data().deployed_aum, 0);
 }
 
-/// Rolling back stops this vault pulling from custody without custody's
-/// involvement. It does *not* revoke the delegation — asserted below, still
-/// standing — so an admin can re-name the same address and resume. A lever
-/// against a compromised operator or unreachable custody, not against a
-/// compromised admin.
+/// Rolling back stops this vault pulling from custody, but does *not* revoke
+/// the delegation — asserted below — so an admin can re-name and resume. A lever
+/// against a compromised operator, not a compromised admin.
 #[test]
 fn rolling_back_stops_the_vault_honouring_a_live_delegation() {
     let mut ctx = funded_vault();
@@ -600,9 +583,8 @@ fn the_rollback_survives_an_already_zeroed_operator() {
 }
 
 /// The sequence the off-par mainnet vault would go through: deploy to the
-/// operator's own ATA, then switch. Those funds can no longer be returned
-/// through the program and `deployed_aum` stays inflated, so the rollback is the
-/// recovery path. This is the runbook, executable.
+/// operator's own ATA, then switch. Those funds can no longer be returned, so
+/// the rollback is the recovery path. The runbook, executable.
 #[test]
 fn funds_left_in_the_old_operator_ata_are_recovered_by_rolling_back() {
     let mut ctx = funded_vault();
@@ -659,11 +641,9 @@ fn the_subaccount_flow_works_on_token_2022() {
     assert_eq!(ctx.vault_state_data().deployed_aum, 0);
 }
 
-/// The one clause no other test reaches: custody re-points its delegation at a
-/// third party. `Approve` overwrites the delegate but leaves an allowance
-/// standing, so the amount half of the check passes and only the identity half
-/// can refuse — without it SPL reports the opaque `OwnerMismatch` this check
-/// exists to replace.
+/// `Approve` overwrites the delegate but leaves the allowance standing, so only
+/// the identity half of the check can refuse this — the one clause no other
+/// test reaches.
 #[test]
 fn a_delegation_re_pointed_elsewhere_stops_returns() {
     let mut ctx = funded_vault();
@@ -683,9 +663,8 @@ fn a_delegation_re_pointed_elsewhere_stops_returns() {
     assert_eq!(ctx.token_account_amount(&sub.deposit_ata), DEPLOYED);
 }
 
-/// The coverage rule: a minimal allowance no longer authorizes an unbounded
-/// deployment. Before it, a one-unit grant satisfied the setter's proof and the
-/// operator could then push the whole reserve somewhere unrecallable.
+/// A minimal allowance no longer authorizes an unbounded deployment: before the
+/// coverage rule a one-unit grant let the operator push out the whole reserve.
 #[test]
 fn the_allowance_bounds_deployments_too() {
     let mut ctx = funded_vault();
@@ -710,11 +689,9 @@ fn the_allowance_bounds_deployments_too() {
     assert_anchor_err(&err, ErrorCode::SubaccountDelegationMissing);
 }
 
-/// Rotating to a different subaccount while funds are out strands them at the
-/// old one — rollback does not recover those, since it points the source at the
-/// operator's ATA. Re-naming the old address does, and the coverage rule
-/// guarantees that path stays open: a funded subaccount cannot have a lapsed
-/// allowance.
+/// Rotating with funds out strands them at the old subaccount, and rollback does
+/// not recover those. Re-naming it does, and the coverage rule keeps that path
+/// open: a funded subaccount cannot have a lapsed allowance.
 #[test]
 fn rotating_away_from_a_funded_subaccount_is_recovered_by_re_naming_it() {
     let mut ctx = funded_vault();
@@ -748,13 +725,9 @@ fn rotating_away_from_a_funded_subaccount_is_recovered_by_re_naming_it() {
     assert_eq!(ctx.vault_state_data().deployed_aum, 0);
 }
 
-/// A third party cannot block deployments by donating to the subaccount's ATA.
-///
-/// `create_associated_token_account` and a plain transfer both need no signature
-/// from custody, so the destination's balance is externally mutable. Measuring
-/// coverage against it would let one donated unit push an allowance sized to the
-/// planned deployment out of range — and returning the donation would not give
-/// the capacity back, since a return decrements balance and allowance together.
+/// The destination's balance is externally mutable, so measuring coverage
+/// against it would let one donated unit block a planned deployment — and
+/// returning the donation would not give the capacity back.
 #[test]
 fn a_donation_to_the_subaccount_cannot_block_deployments() {
     let mut ctx = funded_vault();

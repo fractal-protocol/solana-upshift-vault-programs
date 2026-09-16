@@ -153,51 +153,34 @@ pub struct VaultState {
     pub withdrawal_queue_authority: Pubkey,
     /// Where operator transfers go, or zero for "the operator's own ATA".
     ///
-    /// Separates moving vault funds from receiving them. Zero is what every live
-    /// vault reads, so the field arrives without a migration. Admin-only; the
-    /// operator cannot redirect its own payout.
+    /// Separates moving vault funds from receiving them. Zero on every vault
+    /// created before this field existed, so it arrives without a migration.
+    /// Admin-only. Never read raw: use `destination_for_signer()` for the ATA
+    /// constraints, `operator_subaccount()` for the gate.
     ///
-    /// Never read raw: on-chain use `destination_for_signer()` for the ATA
-    /// constraints and `operator_subaccount()` for the gate; off-chain use
-    /// `operator_destination()` from the generated Rust client.
-    ///
-    /// Worth nothing on its own: protection comes from the address being custody
-    /// the operator cannot sweep, and from admin being a different key than
-    /// operator — where they are equal, that key names its own destination.
-    /// Whether two distinct keys are held by the same party is what the program
-    /// cannot see.
+    /// Only as good as the address, which must be custody the operator cannot
+    /// sweep, and on admin being a different party than the operator. Neither
+    /// is visible here.
     pub operator_subaccount: Pubkey,
     /// Principal the operator has taken out and not returned, in base units.
     ///
-    /// Distinct from `deployed_aum`, which is *reported* value:
-    /// `operator_update_aum` marks that up or down with no tokens moving. Only
-    /// `operator_withdraw` and `operator_deposit` touch this one, so it tracks
-    /// what is physically owed back.
-    ///
-    /// The withdrawal coverage rule is measured against it for exactly that
-    /// reason — basing it on `deployed_aum` let a mark-down reopen allowance
-    /// capacity, which a further deployment then spent, leaving principal at
-    /// custody with no delegation behind it.
-    ///
-    /// Zero on every vault created before this field existed, which reads as
-    /// "nothing owed". Only consulted once a subaccount is set, and setting one
-    /// requires a fresh delegation, so the legacy zero cannot weaken a vault
-    /// that is actually using the gate.
+    /// Distinct from `deployed_aum`, which is *reported* value that
+    /// `operator_update_aum` marks with no tokens moving. Only the two operator
+    /// transfers touch this, which is why the withdrawal coverage rule uses it.
+    /// Zero on pre-existing vaults, meaning nothing owed.
     pub deployed_principal: u64,
     /// Reserved. Carve new fields **out of** this array so `LEN` stays 455, the
     /// size of the live mainnet accounts — enforced by the `const` assertion below.
     ///
     /// **Declare a new field immediately before `padding`.** Anything inserted
-    /// earlier shifts the fields after it, silently, and each shifted field then
-    /// reads zero: `share_offset` (199) re-prices the vault,
-    /// `withdrawal_queue_authority` (207) reopens a gated vault to direct
-    /// redemption, `operator_subaccount` (239) sends operator withdrawals back
-    /// to the operator's own ATA, and `deployed_principal` (271) reads as
-    /// nothing owed. Pinned by the three
-    /// per-field `*_stays_at_its_byte_offset` tests plus
+    /// earlier shifts the fields after it silently, and each then reads zero:
+    /// `share_offset` (199) re-prices the vault, `withdrawal_queue_authority`
+    /// (207) reopens a gated vault, `operator_subaccount` (239) pays the
+    /// operator again, `deployed_principal` (271) reads as nothing owed. Pinned
+    /// by the per-field `*_stays_at_its_byte_offset` tests plus
     /// `every_field_stays_at_its_byte_offset`.
     ///
-    /// Shrinks in 8-byte steps only, so size new fields accordingly.
+    /// Shrinks in 8-byte steps only.
     pub padding: [u64; 22],
 }
 
@@ -272,10 +255,9 @@ impl VaultState {
         (self.operator_subaccount != Pubkey::default()).then_some(self.operator_subaccount)
     }
 
-    /// Where this vault's operator transfers go, resolved against the stored
-    /// operator. The reference resolution the fork suite asserts against — the
-    /// handlers use [`Self::destination_for_signer`], and off-chain callers use
-    /// the client crate's own copy.
+    /// Where operator transfers go, resolved against the stored operator. The
+    /// reference the fork suite asserts against; handlers use
+    /// [`Self::destination_for_signer`].
     pub fn operator_destination(&self) -> Pubkey {
         self.destination_for_signer(self.operator)
     }
@@ -283,19 +265,11 @@ impl VaultState {
     /// The destination, falling back to the **signing** key rather than the
     /// stored operator. Used by both operator handlers' ATA constraints.
     ///
-    /// The two agree wherever a call succeeds, since `operator` is separately
-    /// constrained to equal `self.operator`. They differ only in which error a
-    /// wrong signer gets: resolving against the stored operator makes a
-    /// stranger's own ATA mismatch, so Anchor raises `ConstraintTokenOwner`
-    /// (2015) before the access-control constraint runs, reporting a token
-    /// ownership problem for a wrong-key mistake — the class of misdirection the
-    /// note on `ErrorCode::NotOperator` records the cost of. Pinned by
-    /// `operator_withdraw_rejects_non_operator` and
-    /// `operator_deposit_rejects_non_operator`; do not fold it back into the
-    /// stored operator.
-    ///
-    /// The signer only matters on the legacy path: once a subaccount is set it
-    /// is ignored, so that distinction applies to ungated vaults.
+    /// The two agree wherever a call succeeds. Resolving against the stored
+    /// operator instead makes a stranger's ATA mismatch, so Anchor raises
+    /// `ConstraintTokenOwner` (2015) before the access check and a wrong-key
+    /// call reports token ownership instead of `NotOperator`. Pinned by
+    /// `operator_withdraw_rejects_non_operator`; do not fold it back.
     pub fn destination_for_signer(&self, signer: Pubkey) -> Pubkey {
         self.operator_subaccount().unwrap_or(signer)
     }

@@ -19,22 +19,16 @@ pub fn handler(ctx: Context<OperatorDeposit>, amount: u64) -> Result<()> {
 
     let state = &mut ctx.accounts.vault_state;
 
-    // Who signs the source transfer follows from who owns the source: an
-    // unconfigured vault pulls from the operator's own ATA, so the operator
-    // signs; with a subaccount the source is custody the operator cannot sign
-    // for, so the vault PDA pulls against a delegation granted up front.
-    //
-    // One `match`, deliberately: "the vault PDA signs" and "the delegation was
-    // verified" are the same decision, and splitting them across two readers of
-    // a bool is how they would come apart.
+    // An unconfigured vault pulls from the operator's own ATA, which the
+    // operator signs for. With a subaccount the source is custody the operator
+    // cannot sign for, so the vault PDA pulls against a delegation. One `match`
+    // so the PDA cannot sign without the delegation having been checked.
     let seeds = state.seeds();
     let vault_signer: [&[&[u8]]; 1] = [&seeds];
     let (authority, signer_seeds): (_, &[&[&[u8]]]) = match state.operator_subaccount() {
         Some(_) => {
-            // SPL would report a missing or wrong delegate as `OwnerMismatch`,
-            // and a short allowance as `InsufficientFunds` — indistinguishable
-            // from a short balance. A short balance and a frozen source still
-            // surface as SPL's own errors.
+            // Covers the delegation only. A short balance or frozen source
+            // still surface as SPL's own errors.
             let source = &ctx.accounts.operator_token_account;
             require!(
                 source.delegate == COption::Some(state.key()) && source.delegated_amount >= amount,
@@ -70,8 +64,7 @@ pub fn handler(ctx: Context<OperatorDeposit>, amount: u64) -> Result<()> {
 
     state.local_aum += amount;
 
-    // Mirrors the `deployed_aum` clamp above: a return larger than the
-    // outstanding principal is a recapitalisation, not a repayment.
+    // A return beyond the outstanding principal is recapitalisation, not repayment.
     state.deployed_principal = state.deployed_principal.saturating_sub(amount);
 
     Ok(())

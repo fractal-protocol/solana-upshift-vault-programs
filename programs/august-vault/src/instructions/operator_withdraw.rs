@@ -19,27 +19,10 @@ pub fn handler(ctx: Context<OperatorWithdraw>, amount: u64) -> Result<()> {
 
     let state = &mut ctx.accounts.vault_state;
 
-    // Everything the vault has sent to a subaccount must stay covered by a live
-    // delegation.
-    //
-    // Without this the config-time proof guarantees nothing: it shows the
-    // address can return one base unit, while this instruction could push out
-    // the whole reserve. The asymmetry only surfaced later, as a refused return
-    // with the funds already gone.
-    //
-    // Measured against `deployed_principal` — what the vault has physically sent
-    // and not got back — and NOT against `deployed_aum` or the destination ATA's
-    // balance. `deployed_aum` is *reported* value, so an `operator_update_aum`
-    // mark-down would reopen capacity a further deployment could spend, leaving
-    // principal at custody with nothing behind it. The ATA balance is externally
-    // mutable, so a one-unit donation would push an allowance sized to the
-    // planned deployment out of range, and returning the donation would not
-    // restore it, since a return decrements balance and allowance together.
-    //
-    // Cumulative outflow is bounded because only returns reduce
-    // `deployed_principal`, and returns spend the allowance down in step — so
-    // `delegated_amount >= deployed_principal` holds throughout. That is also
-    // why re-naming a funded subaccount always re-passes the setter's proof.
+    // Keep what the vault is owed covered by a live delegation, so it stays
+    // recallable. Measured against `deployed_principal`, not `deployed_aum`
+    // (a report would reopen capacity) and not the destination's balance
+    // (anyone can inflate it with a donation).
     if state.operator_subaccount().is_some() {
         let dest = &ctx.accounts.operator_token_account;
         require!(

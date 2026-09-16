@@ -22,26 +22,18 @@ pub fn handler(ctx: Context<SetOperatorSubaccount>, new_subaccount: Pubkey) -> R
             ErrorCode::InvalidOperatorSubaccount
         ),
         Some(ata) => {
-            // A delegation is the only on-chain proof the address can return
-            // funds, and it needs the owner's signature — so unlike ATA
-            // existence, which `create_associated_token_account` lets any third
-            // party manufacture, it cannot be arranged on the owner's behalf.
-            //
-            // It also subsumes judging the address by shape, which misses an
-            // uncreated ATA address (System-owned and empty, so it reads as a
-            // wallet) and wrongly refuses an SPL multisig that can sign. See
-            // README. Program-owned addresses are excluded only because this
-            // program issues no `Approve` CPI — if one is ever added, name them
-            // explicitly again.
+            // A delegation is the only proof the address can return funds: it
+            // needs the owner's signature, unlike ATA existence, which anyone
+            // can create. Program-owned addresses are excluded only because
+            // this program issues no `Approve` CPI. See README.
             require!(
                 ata.delegate == COption::Some(state.key()) && ata.delegated_amount > 0,
                 ErrorCode::SubaccountDelegationMissing
             );
 
-            // Role hygiene, and the one thing the proof cannot see: the
-            // operator may perfectly well have delegated its own ATA. Skipped
-            // on the rollback path, or a vault whose operator was zeroed could
-            // never roll back.
+            // The proof cannot see this: the operator may have delegated its
+            // own ATA. Skipped on the rollback path so a vault with a zeroed
+            // operator can still roll back.
             require!(
                 new_subaccount != state.operator,
                 ErrorCode::InvalidOperatorSubaccount
