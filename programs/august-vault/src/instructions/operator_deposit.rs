@@ -25,10 +25,10 @@ pub fn handler(ctx: Context<OperatorDeposit>, amount: u64) -> Result<()> {
         ErrorCode::InvalidSubaccount
     );
 
-    // An unconfigured vault pulls from the operator's own ATA, which the
-    // operator signs for. With a subaccount the source is custody the operator
-    // cannot sign for, so the vault PDA pulls against a delegation. One branch
-    // so the PDA cannot sign without the delegation having been checked.
+    // Who signs follows from who owns the source: an unconfigured vault pulls
+    // from the operator's own ATA; with a destination the source is custody the
+    // operator cannot sign for, so the vault PDA pulls against a delegation. One
+    // branch, so the PDA cannot sign without the delegation being checked.
     let seeds = state.seeds();
     let vault_signer: [&[&[u8]]; 1] = [&seeds];
     let (authority, signer_seeds): (_, &[&[&[u8]]]) = if ctx.accounts.subaccount.is_some() {
@@ -69,11 +69,8 @@ pub fn handler(ctx: Context<OperatorDeposit>, amount: u64) -> Result<()> {
 
     state.local_aum += amount;
 
-    // A return beyond the outstanding principal is recapitalisation, not
-    // repayment — so the total drops only by what this destination actually
-    // owed. Subtracting the full amount would erase other destinations'
-    // exposure: return 200 from A when A and B each owe 100, and the total
-    // reads zero while B still owes 100.
+    // The total drops only by what this destination owed: subtracting the full
+    // amount would erase other destinations' exposure.
     let repaid = match &ctx.accounts.subaccount {
         Some(sub) => amount.min(sub.principal),
         None => amount,
@@ -100,8 +97,8 @@ pub struct OperatorDeposit<'info> {
     )]
     pub vault_deposit_ata: InterfaceAccount<'info, TokenAccount>,
 
-    /// Source: the named subaccount's ATA if the vault has any registered, else
-    /// the operator's own. Keeps the old name for wire compatibility.
+    /// Source: a registered subaccount's ATA, else the operator's own. Keeps the
+    /// old name for wire compatibility.
     #[account(
         mut,
         associated_token::mint = deposit_mint,
@@ -123,12 +120,8 @@ pub struct OperatorDeposit<'info> {
     /// The source's registry entry, required exactly when the vault has
     /// registrations. Its PDA binds it to this vault.
     ///
-    /// **Last, and omittable.** Inserting it mid-struct would shift every
-    /// account after it, so a caller sending the pre-registry account list would
-    /// have its `deposit_mint` deserialized as a `Subaccount` — breaking every
-    /// existing operator integration on upgrade, before any admin opted in.
-    /// Appended plus `allow-missing-optionals`, the old six-account call still
-    /// works and resolves to the operator's own ATA.
+    /// **Last, and omittable.** Inserted mid-struct it would shift
+    /// `deposit_mint`, breaking every pre-registry operator call on upgrade.
     #[account(
         mut,
         seeds = [SUBACCOUNT_SEED, vault_state.key().as_ref(), subaccount.address.as_ref()],

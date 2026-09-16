@@ -6,13 +6,13 @@
 // As of 10 March 2036 (the "Change Date"), use of this software will be
 // governed by version 2.0 of the Apache License.
 
-//! Operator subaccounts: separating who may move vault funds from where those
-//! funds go. Registering an address requires it to have already delegated its
-//! ATA to the vault, so most tests start from `new_registered_subaccount`.
+//! Operator subaccounts: separating who may move vault funds from where they
+//! go. Registering requires a delegation, so most tests start from
+//! `new_registered_subaccount`.
 //!
 //! Two things these cannot establish, because the program cannot see either:
-//! that an address is custody the operator cannot sweep (a `Subaccount` here is
-//! a plain keypair), and that admin is a different party than the operator.
+//! that an address is custody the operator cannot sweep, and that admin is a
+//! different party than the operator.
 
 use august_vault::errors::ErrorCode;
 use integration_tests::harness::{
@@ -24,9 +24,8 @@ use solana_sdk::signature::Signer;
 const DEPOSIT_AMOUNT: u64 = 10 * 10u64.pow(DEPOSIT_DECIMALS as u32);
 const DEPLOYED: u64 = 1_000_000_000;
 
-/// Anchor's `ConstraintTokenOwner`, which fires before the derived-address check
-/// on a token account belonging to the wrong party. Pinned by number so a test
-/// cannot pass on a merely uninitialized account.
+/// Anchor's `ConstraintTokenOwner`. Pinned by number so a test cannot pass on a
+/// merely uninitialized account.
 const CONSTRAINT_TOKEN_OWNER: u32 = 2015;
 /// Anchor's `AccountNotInitialized`, raised when an address has no ATA.
 const ACCOUNT_NOT_INITIALIZED: u32 = 3012;
@@ -193,9 +192,8 @@ fn the_passed_ata_must_belong_to_the_named_address() {
 
 // ---- the pairing rule ----
 
-/// The bypass the pairing rule exists to stop: the operator omits the registry
-/// entry *and* names its own ATA, so the destination constraint resolves back to
-/// the signer and passes. Only the pairing check refuses it.
+/// The operator omits the registry entry *and* names its own ATA, so the
+/// destination constraint passes. Only the pairing check refuses it.
 #[test]
 fn omitting_the_registry_entry_cannot_pay_the_operator() {
     let mut ctx = funded_vault();
@@ -216,7 +214,7 @@ fn omitting_the_registry_entry_cannot_pay_the_operator() {
 }
 
 /// Omitting it while naming the destination's ATA fails earlier, on the
-/// destination constraint, since that resolves to the signer without the entry.
+/// destination constraint.
 #[test]
 fn omitting_the_registry_entry_fails_the_destination_constraint() {
     let mut ctx = funded_vault();
@@ -307,9 +305,8 @@ fn withdraw_still_requires_the_operator_to_sign() {
 
 // ---- the return direction ----
 
-/// On a configured vault the ATA constraint resolves to the destination for
-/// *any* signer, so the operator check is the only thing gating who may spend
-/// custody's allowance into the vault.
+/// The ATA constraint resolves to the destination for *any* signer, so the
+/// operator check is all that gates who may spend custody's allowance.
 #[test]
 fn deposit_still_requires_the_operator_to_sign() {
     let mut ctx = funded_vault();
@@ -392,8 +389,8 @@ fn a_registered_subaccount_round_trips_through_principal() {
 
 // ---- allowance lifecycle ----
 
-/// SPL clears the delegate at zero, so a spent allowance stops both directions
-/// until custody re-grants — the state every cycle ends in.
+/// SPL clears the delegate at zero, so a spent allowance stops both directions —
+/// the state every cycle ends in.
 #[test]
 fn an_exhausted_allowance_stops_both_directions() {
     let mut ctx = funded_vault();
@@ -489,7 +486,7 @@ fn an_aum_report_cannot_reopen_deployment_capacity() {
 // ---- several destinations ----
 
 /// Each destination tracks its own principal, so one's exposure does not demand
-/// coverage from another's custody.
+/// coverage from another's.
 #[test]
 fn coverage_is_per_destination_not_vault_wide() {
     let mut ctx = funded_vault();
@@ -621,12 +618,9 @@ fn the_subaccount_flow_works_on_token_2022() {
 
 // ---- upgrade compatibility ----
 
-/// A client that has not been updated still works on an unconfigured vault.
-///
-/// The optional registry account is appended, not inserted, and may be omitted
-/// entirely. Inserting it mid-struct would shift `deposit_mint` and have it
-/// deserialized as a `Subaccount`, breaking every existing operator integration
-/// the moment the program was upgraded — before any admin opted in.
+/// An un-updated client still works on an unconfigured vault. Inserting the
+/// optional account mid-struct would shift `deposit_mint`, breaking every
+/// existing operator integration on upgrade.
 #[test]
 fn the_pre_registry_account_list_still_works() {
     let mut ctx = funded_vault();
@@ -640,8 +634,7 @@ fn the_pre_registry_account_list_still_works() {
     );
 }
 
-/// And once registered, the old call shape is refused rather than silently
-/// paying the operator.
+/// Once registered, the old call shape is refused, not silently honoured.
 #[test]
 fn the_pre_registry_account_list_is_refused_once_registered() {
     let mut ctx = funded_vault();
@@ -653,8 +646,7 @@ fn the_pre_registry_account_list_is_refused_once_registered() {
     assert_anchor_err(&err, ErrorCode::InvalidSubaccount);
 }
 
-/// Returning more than a destination owes must not erase what other
-/// destinations owe.
+/// An over-return must not erase what other destinations owe.
 #[test]
 fn an_over_return_does_not_erase_another_destinations_exposure() {
     let mut ctx = funded_vault();
@@ -682,8 +674,7 @@ fn an_over_return_does_not_erase_another_destinations_exposure() {
 }
 
 /// The first registration inherits the vault's outstanding principal, so its
-/// allowance must cover it — otherwise registration creates principal the
-/// operator cannot return and deregistration cannot clear.
+/// allowance must cover it or that principal can never be cleared.
 #[test]
 fn the_first_registration_must_cover_the_principal_it_inherits() {
     let mut ctx = funded_vault();
@@ -703,9 +694,8 @@ fn the_first_registration_must_cover_the_principal_it_inherits() {
     assert_eq!(ctx.subaccount_data(&ok).principal, DEPLOYED);
 }
 
-/// Closing a vault with registry entries would leave their rent permanently
-/// unreclaimable, since deregistration needs the vault account and the share
-/// mint survives a close.
+/// Deregistration needs the vault account, and the share mint survives a close,
+/// so closing first would strand the registry rent.
 #[test]
 fn a_vault_with_registrations_cannot_be_closed() {
     let mut ctx = VaultCtx::fresh();
@@ -722,11 +712,8 @@ fn a_vault_with_registrations_cannot_be_closed() {
 
 // ---- realized losses ----
 
-/// The lifecycle a loss leaves behind, end to end.
-///
-/// Only token returns reduce principal, so after a real loss the destination
-/// carries principal that will never come back — blocking deregistration, and
-/// through that blocking `close_vault`. Settlement is the way out.
+/// Only token returns reduce principal, so a real loss leaves principal that
+/// never comes back — blocking deregistration and so `close_vault` too.
 #[test]
 fn a_realized_loss_can_be_settled_and_the_vault_retired() {
     let mut ctx = funded_vault();
@@ -766,8 +753,7 @@ fn a_realized_loss_can_be_settled_and_the_vault_retired() {
     ctx.close_vault().expect("close");
 }
 
-/// Settlement may not erase a live obligation: what is sitting at the
-/// destination has to be returned, not written off.
+/// Funds still at the destination must be returned, not written off.
 #[test]
 fn settlement_cannot_write_off_funds_still_at_the_destination() {
     let mut ctx = funded_vault();
@@ -807,8 +793,7 @@ fn settlement_is_bounded_by_the_shortfall() {
     }
 }
 
-/// The operator must not be able to write down principal — that is the
-/// capacity-reopening move the coverage rule exists to prevent.
+/// The operator writing down principal would reopen deployment capacity.
 #[test]
 fn the_operator_cannot_settle_a_loss() {
     let mut ctx = funded_vault();
@@ -831,8 +816,7 @@ fn the_operator_cannot_settle_a_loss() {
     assert_eq!(ctx.subaccount_data(&sub).principal, DEPLOYED);
 }
 
-/// Settlement reconciles principal only; reported AUM stays the operator's to
-/// move, under its own bps limits.
+/// Settlement reconciles principal only; reported AUM stays the operator's.
 #[test]
 fn settlement_does_not_touch_reported_aum() {
     let mut ctx = funded_vault();

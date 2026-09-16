@@ -7,8 +7,7 @@
 // governed by version 2.0 of the Apache License.
 
 //! One permitted operator destination. Its existence at the derived address is
-//! the registry — membership is a seed derivation, so there is no list to scan
-//! and no cap.
+//! the registry, so membership needs no list and no cap.
 
 use anchor_lang::prelude::*;
 
@@ -17,13 +16,13 @@ pub const SUBACCOUNT_SEED: &[u8] = b"SUBACCOUNT";
 #[account]
 #[derive(Default, InitSpace)]
 pub struct Subaccount {
-    /// The vault this destination belongs to. In the seeds, so it cannot be
-    /// used against another vault; stored for `getProgramAccounts` indexing.
+    /// In the seeds, so it cannot be used against another vault; stored for
+    /// `getProgramAccounts` indexing.
     pub vault_state: Pubkey,
     /// The receiving address. Its ATA is where funds go.
     pub address: Pubkey,
-    /// Principal sent here and not returned. The withdrawal coverage rule reads
-    /// this, and deregistration requires it to be zero.
+    /// Principal sent here and not returned. Read by the coverage rule;
+    /// deregistration requires zero.
     pub principal: u64,
     pub bump: u8,
     pub padding: [u64; 8],

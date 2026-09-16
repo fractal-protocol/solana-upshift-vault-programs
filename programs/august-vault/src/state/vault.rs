@@ -151,34 +151,22 @@ pub struct VaultState {
     ///
     /// Read via [`Self::withdrawal_queue`], never raw.
     pub withdrawal_queue_authority: Pubkey,
-    /// How many operator subaccounts are registered. Nonzero means operator
-    /// transfers must name one; zero means the operator's own ATA.
+    /// Registered operator destinations. Nonzero means operator transfers must
+    /// name one; zero means the operator's own ATA.
     ///
-    /// Separates moving vault funds from receiving them. Zero on every vault
-    /// created before this field existed, so it arrives without a migration.
-    /// Maintained by `register_subaccount` / `deregister_subaccount`.
-    ///
-    /// A count rather than an address because the destination is always passed
-    /// as a `Subaccount` PDA, validated by seed derivation — this only answers
-    /// "must one be passed". Drift from the registry is benign: the PDA is
-    /// authoritative for *which* address, this only decides *whether*.
-    ///
-    /// Only as good as the addresses, which must be custody the operator cannot
-    /// sweep, and on admin being a different party than the operator. Neither
-    /// is visible here. One address per vault per deposit mint: the ATA's single
-    /// delegate slot cannot serve two vaults.
+    /// Zero on every vault created before the registry existed, so it arrives
+    /// without a migration. A count rather than an address because the
+    /// destination is always passed as a PDA — this only decides *whether* one
+    /// is required. Only as good as the addresses, which must be custody the
+    /// operator cannot sweep, and on admin being a different party than the
+    /// operator; one address per vault per deposit mint, since an ATA has a
+    /// single delegate slot.
     pub subaccount_count: u64,
-    /// Total principal the operator has taken out and not returned, in base
-    /// units, across every destination.
+    /// Total principal taken out and not returned, across destinations.
     ///
-    /// Distinct from `deployed_aum`, which is *reported* value that
-    /// `operator_update_aum` marks with no tokens moving. Only the two operator
-    /// transfers touch this.
-    ///
-    /// Informational: the coverage rule reads the destination's own
-    /// `Subaccount::principal`, so nothing on-chain trusts this. It exists so
-    /// monitoring can read total exposure in one fetch rather than sweeping
-    /// every registered PDA.
+    /// Distinct from `deployed_aum`, which `operator_update_aum` marks with no
+    /// tokens moving. Informational: coverage reads the destination's own
+    /// `Subaccount::principal`, so nothing on-chain trusts this.
     pub deployed_principal: u64,
     /// Reserved. Carve new fields **out of** this array so `LEN` stays 455, the
     /// size of the live mainnet accounts — enforced by the `const` assertion below.

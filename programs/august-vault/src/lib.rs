@@ -216,23 +216,17 @@ pub mod august_vault {
         return instructions::operator_update_aum::handler(ctx, new_aum);
     }
 
-    /// Register an address as a permitted operator destination, separating "who
-    /// may move vault funds" from "where they go".
+    /// Register a permitted operator destination. Admin only. Once any exists,
+    /// both operator transfers must name one and the operator's own ATA is
+    /// refused.
     ///
-    /// Admin only. Once any is registered, `operator_withdraw` and
-    /// `operator_deposit` must name one and the operator's own ATA is refused.
-    ///
-    /// **The address must already have delegated.** Its ATA must carry this
-    /// vault's PDA as SPL delegate with a nonzero allowance — the only on-chain
-    /// proof it can return funds — so custody runs
-    /// `approve(subaccount_ata, vault_state, n)` first. `n` also bounds
-    /// deployments: `operator_withdraw` requires it to cover that destination's
-    /// outstanding principal plus the amount. Returns spend it down and SPL
-    /// clears it at zero, so it needs re-granting per cycle; a lapsed one fails
-    /// `SubaccountDelegationMissing` (6023).
-    ///
-    /// The first registration adopts the vault's existing `deployed_principal`,
-    /// so a vault with funds already out stays covered.
+    /// The address's ATA must already delegate to this vault
+    /// (`approve(subaccount_ata, vault_state, n)`) — the only on-chain proof it
+    /// can return funds. `n` also caps deployments to that destination, is spent
+    /// down by returns, and SPL clears it at zero, so it needs re-granting per
+    /// cycle; short or lapsed fails `SubaccountDelegationMissing` (6023). The
+    /// first registration adopts the vault's outstanding principal and must
+    /// cover it.
     ///
     /// ### Parameters
     /// - `address` - The receiving address. Must not be the operator
@@ -240,31 +234,23 @@ pub mod august_vault {
         return instructions::register_subaccount::handler(ctx, address);
     }
 
-    /// Recognize a realized loss at one destination, writing down principal it
-    /// will never return.
+    /// Write down principal a destination will never return, after a realized
+    /// loss. Admin only; the operator reducing principal would reopen
+    /// deployment capacity.
     ///
-    /// Admin only: the operator reducing principal is the capacity-reopening
-    /// move the coverage rule exists to prevent. Bounded by the principal that
-    /// is *not* sitting at the destination's ATA, so a live obligation cannot be
-    /// erased — if the tokens are there, return them instead. `deployed_aum` is
-    /// untouched; reported value stays the operator's to move under its bps
-    /// limits.
-    ///
-    /// Without this, a destination that took a real loss can never be
-    /// deregistered and the vault can never be closed, since only token returns
-    /// reduce principal.
+    /// Bounded by `principal - ata.amount`, so funds still sitting there must be
+    /// returned rather than written off. Leaves `deployed_aum` alone. Without
+    /// this a vault that took a loss could never be closed.
     ///
     /// ### Parameters
-    /// - `amount` - Principal to write down, at most `principal - ata.amount`
+    /// - `amount` - Principal to write down
     pub fn settle_subaccount_loss(ctx: Context<SettleSubaccountLoss>, amount: u64) -> Result<()> {
         return instructions::settle_subaccount_loss::handler(ctx, amount);
     }
 
-    /// Remove a registered destination, refunding its rent to the admin.
-    ///
-    /// Admin only, and only once that destination's outstanding principal is
-    /// zero — otherwise the vault would lose the record of what it is owed.
-    /// Removing the last one returns the vault to paying the operator's own ATA.
+    /// Remove a registered destination, refunding its rent. Admin only, and
+    /// only once its outstanding principal is zero. Removing the last one
+    /// returns the vault to the operator's own ATA.
     pub fn deregister_subaccount(ctx: Context<DeregisterSubaccount>) -> Result<()> {
         return instructions::deregister_subaccount::handler(ctx);
     }

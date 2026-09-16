@@ -14,12 +14,10 @@ use anchor_spl::token_interface::Mint;
 pub fn handler(ctx: Context<SetOperator>, new_operator: Pubkey) -> Result<()> {
     let state = &mut ctx.accounts.vault_state;
 
-    // No mirror guard against the registered subaccounts: this instruction
-    // cannot enumerate their PDAs, and passing every one is impractical.
-    // `register_subaccount` refuses the current operator, so the collision can
-    // only be created by rotating onto an already-registered address — which
-    // makes that vault's subaccount decorative rather than unsafe, since the
-    // coverage rule and the delegation still hold.
+    // No mirror guard against registered destinations: this instruction cannot
+    // enumerate their PDAs. `register_subaccount` refuses the current operator,
+    // so a collision needs a deliberate rotation, which makes that destination
+    // decorative rather than unsafe.
     // Matches the three config-authority setters. Nobody can sign as the zero
     // key, so both operator handlers would become uncallable.
     require!(

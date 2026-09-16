@@ -14,15 +14,15 @@ use borsh::BorshDeserialize;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Subaccount {
 pub discriminator: [u8; 8],
-/// The vault this destination belongs to. In the seeds, so it cannot be
-/// used against another vault; stored for `getProgramAccounts` indexing.
+/// In the seeds, so it cannot be used against another vault; stored for
+/// `getProgramAccounts` indexing.
 #[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::DisplayFromStr>"))]
 pub vault_state: Pubkey,
 /// The receiving address. Its ATA is where funds go.
 #[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::DisplayFromStr>"))]
 pub address: Pubkey,
-/// Principal sent here and not returned. The withdrawal coverage rule reads
-/// this, and deregistration requires it to be zero.
+/// Principal sent here and not returned. Read by the coverage rule;
+/// deregistration requires zero.
 pub principal: u64,
 pub bump: u8,
 pub padding: [u64; 8],

@@ -22,8 +22,8 @@ pub struct SettleSubaccountLoss {
           
               
           pub deposit_mint: solana_pubkey::Pubkey,
-                /// Read for its balance, to bound the write-down. Derived from the
-/// destination, so it cannot be substituted.
+                /// Read for its balance, to bound the write-down. Derived, so it cannot be
+/// substituted.
 
     
               
@@ -159,8 +159,8 @@ impl SettleSubaccountLossBuilder {
                         self.deposit_mint = Some(deposit_mint);
                     self
     }
-            /// Read for its balance, to bound the write-down. Derived from the
-/// destination, so it cannot be substituted.
+            /// Read for its balance, to bound the write-down. Derived, so it cannot be
+/// substituted.
 #[inline(always)]
     pub fn subaccount_ata(&mut self, subaccount_ata: solana_pubkey::Pubkey) -> &mut Self {
                         self.subaccount_ata = Some(subaccount_ata);
@@ -223,8 +223,8 @@ impl SettleSubaccountLossBuilder {
                 
                     
               pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
-                        /// Read for its balance, to bound the write-down. Derived from the
-/// destination, so it cannot be substituted.
+                        /// Read for its balance, to bound the write-down. Derived, so it cannot be
+/// substituted.
 
       
                     
@@ -250,8 +250,8 @@ pub struct SettleSubaccountLossCpi<'a, 'b> {
           
               
           pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
-                /// Read for its balance, to bound the write-down. Derived from the
-/// destination, so it cannot be substituted.
+                /// Read for its balance, to bound the write-down. Derived, so it cannot be
+/// substituted.
 
     
               
@@ -407,8 +407,8 @@ impl<'a, 'b> SettleSubaccountLossCpiBuilder<'a, 'b> {
                         self.instruction.deposit_mint = Some(deposit_mint);
                     self
     }
-      /// Read for its balance, to bound the write-down. Derived from the
-/// destination, so it cannot be substituted.
+      /// Read for its balance, to bound the write-down. Derived, so it cannot be
+/// substituted.
 #[inline(always)]
     pub fn subaccount_ata(&mut self, subaccount_ata: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
                         self.instruction.subaccount_ata = Some(subaccount_ata);

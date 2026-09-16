@@ -19,8 +19,8 @@ pub struct OperatorWithdraw {
           
               
           pub vault_deposit_ata: solana_pubkey::Pubkey,
-                /// Destination: the named subaccount's ATA if the vault has any registered,
-/// else the operator's own. Keeps the old name for wire compatibility.
+                /// Destination: a registered subaccount's ATA, else the operator's own.
+/// Keeps the old name for wire compatibility.
 
     
               
@@ -37,12 +37,8 @@ pub struct OperatorWithdraw {
                 /// The destination's registry entry, required exactly when the vault has
 /// registrations. Its PDA binds it to this vault.
 /// 
-/// **Last, and omittable.** Inserting it mid-struct would shift every
-/// account after it, so a caller sending the pre-registry account list would
-/// have its `deposit_mint` deserialized as a `Subaccount` — breaking every
-/// existing operator integration on upgrade, before any admin opted in.
-/// Appended plus `allow-missing-optionals`, the old six-account call still
-/// works and resolves to the operator's own ATA.
+/// **Last, and omittable.** Inserted mid-struct it would shift
+/// `deposit_mint`, breaking every pre-registry operator call on upgrade.
 
     
               
@@ -180,8 +176,8 @@ impl OperatorWithdrawBuilder {
                         self.vault_deposit_ata = Some(vault_deposit_ata);
                     self
     }
-            /// Destination: the named subaccount's ATA if the vault has any registered,
-/// else the operator's own. Keeps the old name for wire compatibility.
+            /// Destination: a registered subaccount's ATA, else the operator's own.
+/// Keeps the old name for wire compatibility.
 #[inline(always)]
     pub fn operator_token_account(&mut self, operator_token_account: solana_pubkey::Pubkey) -> &mut Self {
                         self.operator_token_account = Some(operator_token_account);
@@ -207,12 +203,8 @@ impl OperatorWithdrawBuilder {
 /// The destination's registry entry, required exactly when the vault has
 /// registrations. Its PDA binds it to this vault.
 /// 
-/// **Last, and omittable.** Inserting it mid-struct would shift every
-/// account after it, so a caller sending the pre-registry account list would
-/// have its `deposit_mint` deserialized as a `Subaccount` — breaking every
-/// existing operator integration on upgrade, before any admin opted in.
-/// Appended plus `allow-missing-optionals`, the old six-account call still
-/// works and resolves to the operator's own ATA.
+/// **Last, and omittable.** Inserted mid-struct it would shift
+/// `deposit_mint`, breaking every pre-registry operator call on upgrade.
 #[inline(always)]
     pub fn subaccount(&mut self, subaccount: Option<solana_pubkey::Pubkey>) -> &mut Self {
                         self.subaccount = subaccount;
@@ -262,8 +254,8 @@ impl OperatorWithdrawBuilder {
                 
                     
               pub vault_deposit_ata: &'b solana_account_info::AccountInfo<'a>,
-                        /// Destination: the named subaccount's ATA if the vault has any registered,
-/// else the operator's own. Keeps the old name for wire compatibility.
+                        /// Destination: a registered subaccount's ATA, else the operator's own.
+/// Keeps the old name for wire compatibility.
 
       
                     
@@ -280,12 +272,8 @@ impl OperatorWithdrawBuilder {
                         /// The destination's registry entry, required exactly when the vault has
 /// registrations. Its PDA binds it to this vault.
 /// 
-/// **Last, and omittable.** Inserting it mid-struct would shift every
-/// account after it, so a caller sending the pre-registry account list would
-/// have its `deposit_mint` deserialized as a `Subaccount` — breaking every
-/// existing operator integration on upgrade, before any admin opted in.
-/// Appended plus `allow-missing-optionals`, the old six-account call still
-/// works and resolves to the operator's own ATA.
+/// **Last, and omittable.** Inserted mid-struct it would shift
+/// `deposit_mint`, breaking every pre-registry operator call on upgrade.
 
       
                     
@@ -302,8 +290,8 @@ pub struct OperatorWithdrawCpi<'a, 'b> {
           
               
           pub vault_deposit_ata: &'b solana_account_info::AccountInfo<'a>,
-                /// Destination: the named subaccount's ATA if the vault has any registered,
-/// else the operator's own. Keeps the old name for wire compatibility.
+                /// Destination: a registered subaccount's ATA, else the operator's own.
+/// Keeps the old name for wire compatibility.
 
     
               
@@ -320,12 +308,8 @@ pub struct OperatorWithdrawCpi<'a, 'b> {
                 /// The destination's registry entry, required exactly when the vault has
 /// registrations. Its PDA binds it to this vault.
 /// 
-/// **Last, and omittable.** Inserting it mid-struct would shift every
-/// account after it, so a caller sending the pre-registry account list would
-/// have its `deposit_mint` deserialized as a `Subaccount` — breaking every
-/// existing operator integration on upgrade, before any admin opted in.
-/// Appended plus `allow-missing-optionals`, the old six-account call still
-/// works and resolves to the operator's own ATA.
+/// **Last, and omittable.** Inserted mid-struct it would shift
+/// `deposit_mint`, breaking every pre-registry operator call on upgrade.
 
     
               
@@ -487,8 +471,8 @@ impl<'a, 'b> OperatorWithdrawCpiBuilder<'a, 'b> {
                         self.instruction.vault_deposit_ata = Some(vault_deposit_ata);
                     self
     }
-      /// Destination: the named subaccount's ATA if the vault has any registered,
-/// else the operator's own. Keeps the old name for wire compatibility.
+      /// Destination: a registered subaccount's ATA, else the operator's own.
+/// Keeps the old name for wire compatibility.
 #[inline(always)]
     pub fn operator_token_account(&mut self, operator_token_account: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
                         self.instruction.operator_token_account = Some(operator_token_account);
@@ -513,12 +497,8 @@ impl<'a, 'b> OperatorWithdrawCpiBuilder<'a, 'b> {
 /// The destination's registry entry, required exactly when the vault has
 /// registrations. Its PDA binds it to this vault.
 /// 
-/// **Last, and omittable.** Inserting it mid-struct would shift every
-/// account after it, so a caller sending the pre-registry account list would
-/// have its `deposit_mint` deserialized as a `Subaccount` — breaking every
-/// existing operator integration on upgrade, before any admin opted in.
-/// Appended plus `allow-missing-optionals`, the old six-account call still
-/// works and resolves to the operator's own ATA.
+/// **Last, and omittable.** Inserted mid-struct it would shift
+/// `deposit_mint`, breaking every pre-registry operator call on upgrade.
 #[inline(always)]
     pub fn subaccount(&mut self, subaccount: Option<&'b solana_account_info::AccountInfo<'a>>) -> &mut Self {
                         self.instruction.subaccount = subaccount;

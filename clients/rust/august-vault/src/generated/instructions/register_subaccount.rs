@@ -23,8 +23,8 @@ pub struct RegisterSubaccount {
           
               
           pub deposit_mint: solana_pubkey::Pubkey,
-                /// The address's deposit-mint ATA, carrying the delegation. Anchor derives
-/// it from `address`, so the account cannot disagree with the argument.
+                /// The address's ATA, carrying the delegation. Derived from `address`, so it
+/// cannot disagree with the argument.
 
     
               
@@ -32,8 +32,7 @@ pub struct RegisterSubaccount {
           
               
           pub token_program: solana_pubkey::Pubkey,
-                /// The admin's signature, not the operator's. Where admin and operator are
-/// the same key this buys nothing; see the note on `subaccount_count`.
+                /// Admin, not the operator. Where they are the same key this buys nothing.
 
     
               
@@ -172,8 +171,8 @@ impl RegisterSubaccountBuilder {
                         self.deposit_mint = Some(deposit_mint);
                     self
     }
-            /// The address's deposit-mint ATA, carrying the delegation. Anchor derives
-/// it from `address`, so the account cannot disagree with the argument.
+            /// The address's ATA, carrying the delegation. Derived from `address`, so it
+/// cannot disagree with the argument.
 #[inline(always)]
     pub fn subaccount_ata(&mut self, subaccount_ata: solana_pubkey::Pubkey) -> &mut Self {
                         self.subaccount_ata = Some(subaccount_ata);
@@ -185,8 +184,7 @@ impl RegisterSubaccountBuilder {
                         self.token_program = Some(token_program);
                     self
     }
-            /// The admin's signature, not the operator's. Where admin and operator are
-/// the same key this buys nothing; see the note on `subaccount_count`.
+            /// Admin, not the operator. Where they are the same key this buys nothing.
 #[inline(always)]
     pub fn admin(&mut self, admin: solana_pubkey::Pubkey) -> &mut Self {
                         self.admin = Some(admin);
@@ -245,8 +243,8 @@ impl RegisterSubaccountBuilder {
                 
                     
               pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
-                        /// The address's deposit-mint ATA, carrying the delegation. Anchor derives
-/// it from `address`, so the account cannot disagree with the argument.
+                        /// The address's ATA, carrying the delegation. Derived from `address`, so it
+/// cannot disagree with the argument.
 
       
                     
@@ -254,8 +252,7 @@ impl RegisterSubaccountBuilder {
                 
                     
               pub token_program: &'b solana_account_info::AccountInfo<'a>,
-                        /// The admin's signature, not the operator's. Where admin and operator are
-/// the same key this buys nothing; see the note on `subaccount_count`.
+                        /// Admin, not the operator. Where they are the same key this buys nothing.
 
       
                     
@@ -278,8 +275,8 @@ pub struct RegisterSubaccountCpi<'a, 'b> {
           
               
           pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
-                /// The address's deposit-mint ATA, carrying the delegation. Anchor derives
-/// it from `address`, so the account cannot disagree with the argument.
+                /// The address's ATA, carrying the delegation. Derived from `address`, so it
+/// cannot disagree with the argument.
 
     
               
@@ -287,8 +284,7 @@ pub struct RegisterSubaccountCpi<'a, 'b> {
           
               
           pub token_program: &'b solana_account_info::AccountInfo<'a>,
-                /// The admin's signature, not the operator's. Where admin and operator are
-/// the same key this buys nothing; see the note on `subaccount_count`.
+                /// Admin, not the operator. Where they are the same key this buys nothing.
 
     
               
@@ -449,8 +445,8 @@ impl<'a, 'b> RegisterSubaccountCpiBuilder<'a, 'b> {
                         self.instruction.deposit_mint = Some(deposit_mint);
                     self
     }
-      /// The address's deposit-mint ATA, carrying the delegation. Anchor derives
-/// it from `address`, so the account cannot disagree with the argument.
+      /// The address's ATA, carrying the delegation. Derived from `address`, so it
+/// cannot disagree with the argument.
 #[inline(always)]
     pub fn subaccount_ata(&mut self, subaccount_ata: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
                         self.instruction.subaccount_ata = Some(subaccount_ata);
@@ -461,8 +457,7 @@ impl<'a, 'b> RegisterSubaccountCpiBuilder<'a, 'b> {
                         self.instruction.token_program = Some(token_program);
                     self
     }
-      /// The admin's signature, not the operator's. Where admin and operator are
-/// the same key this buys nothing; see the note on `subaccount_count`.
+      /// Admin, not the operator. Where they are the same key this buys nothing.
 #[inline(always)]
     pub fn admin(&mut self, admin: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
                         self.instruction.admin = Some(admin);

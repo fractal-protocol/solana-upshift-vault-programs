@@ -20,18 +20,15 @@ pub fn handler(ctx: Context<OperatorWithdraw>, amount: u64) -> Result<()> {
 
     let state = &mut ctx.accounts.vault_state;
 
-    // A vault with registered subaccounts must name one; a vault without must
-    // not. Without this pairing the operator could omit the account and pay
-    // itself, which is the whole point of the registry.
+    // Otherwise the operator omits the account and pays itself.
     require!(
         state.requires_subaccount() == ctx.accounts.subaccount.is_some(),
         ErrorCode::InvalidSubaccount
     );
 
-    // Keep what the vault is owed at this destination covered by a live
-    // delegation, so it stays recallable. Measured against the destination's
-    // own principal, not reported AUM (a report would reopen capacity) and not
-    // the ATA's balance (anyone can inflate it with a donation).
+    // Keep what this destination owes covered by a live delegation, so it stays
+    // recallable. Measured against its own principal, not reported AUM (a report
+    // would reopen capacity) nor the ATA balance (anyone can donate to it).
     if let Some(sub) = &ctx.accounts.subaccount {
         let dest = &ctx.accounts.operator_token_account;
         require!(
@@ -68,8 +65,7 @@ pub fn handler(ctx: Context<OperatorWithdraw>, amount: u64) -> Result<()> {
     };
 
     state.deployed_aum += amount;
-    // Principal owed back. Never marked, unlike `deployed_aum`, so a report
-    // cannot reopen the coverage capacity checked above.
+    // Never marked, unlike `deployed_aum`, so a report cannot reopen capacity.
     state.deployed_principal = state
         .deployed_principal
         .checked_add(amount)
@@ -97,8 +93,8 @@ pub struct OperatorWithdraw<'info> {
     )]
     pub vault_deposit_ata: InterfaceAccount<'info, TokenAccount>,
 
-    /// Destination: the named subaccount's ATA if the vault has any registered,
-    /// else the operator's own. Keeps the old name for wire compatibility.
+    /// Destination: a registered subaccount's ATA, else the operator's own.
+    /// Keeps the old name for wire compatibility.
     #[account(
         mut,
         associated_token::mint = deposit_mint,
@@ -119,12 +115,8 @@ pub struct OperatorWithdraw<'info> {
     /// The destination's registry entry, required exactly when the vault has
     /// registrations. Its PDA binds it to this vault.
     ///
-    /// **Last, and omittable.** Inserting it mid-struct would shift every
-    /// account after it, so a caller sending the pre-registry account list would
-    /// have its `deposit_mint` deserialized as a `Subaccount` — breaking every
-    /// existing operator integration on upgrade, before any admin opted in.
-    /// Appended plus `allow-missing-optionals`, the old six-account call still
-    /// works and resolves to the operator's own ATA.
+    /// **Last, and omittable.** Inserted mid-struct it would shift
+    /// `deposit_mint`, breaking every pre-registry operator call on upgrade.
     #[account(
         mut,
         seeds = [SUBACCOUNT_SEED, vault_state.key().as_ref(), subaccount.address.as_ref()],
