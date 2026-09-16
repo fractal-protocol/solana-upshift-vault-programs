@@ -14,8 +14,26 @@ echo ""
 
 RPC="http://127.0.0.1:8899"
 WALLET="/tmp/deployer_keypair.json" # must match [provider].wallet in Anchor.toml
-LIB_RS="programs/august-vault/src/lib.rs"
-PROGRAM_KP="target/deploy/august_vault-keypair.json"
+# Every program in the workspace. `anchor keys sync` rewrites declare_id! in ALL
+# of them, so all of them must be backed up and restored — backing up only one
+# would leave the others pointing at an ephemeral localnet key.
+#
+# Derived from programs/ rather than listed: a hardcoded list silently omits a new
+# program, which is exactly the failure the paragraph above warns about. Crate
+# directories use dashes, artifacts and Anchor.toml keys use underscores.
+PROGRAMS=""
+for _dir in programs/*/; do
+    _prog="$(basename "$_dir" | tr '-' '_')"
+    if [ ! -f "programs/$(basename "$_dir")/src/lib.rs" ]; then
+        echo -e "${RED}✗ programs/$(basename "$_dir") has no src/lib.rs — cannot back up its declare_id!.${NC}"; exit 1
+    fi
+    PROGRAMS="$PROGRAMS $_prog"
+done
+if [ -z "$PROGRAMS" ]; then
+    echo -e "${RED}✗ No programs found under programs/ — refusing to run.${NC}"; exit 1
+fi
+LIB_RS_FOR() { echo "programs/$(echo "$1" | tr '_' '-')/src/lib.rs"; }
+PROGRAM_KP_FOR() { echo "target/deploy/${1}-keypair.json"; }
 
 # The maintained TypeScript suites — kept in sync with Anchor.toml [scripts].test
 # (the set CI runs and keeps green). Suites 4-10 (admin, token-2022, metadata,
@@ -28,32 +46,52 @@ MAINTAINED_SUITES="tests/1_*.ts tests/2_*.ts tests/3_*.ts tests/11_*.ts tests/12
 # EXIT trap, so a dev machine is never left with a mutated declare_id!, test
 # command, or a destroyed program keypair. BUILT marks that we produced build
 # artifacts (which may carry a non-committed program id) for cleanup.
-LIB_BAK=""
+# Backups live as files under one temp dir, named by program, so the EXIT trap
+# can restore each without needing per-program shell variables.
+BAK_DIR=""
 ANCHOR_BAK=""
-PROGRAM_KP_BAK="" # "__none__" => no keypair existed; delete the generated one
 BUILT=""
 
 # shellcheck disable=SC2329  # invoked indirectly via `trap cleanup EXIT`
 cleanup() {
     # Verified restores: keep the backup and warn if a restore can't be confirmed.
-    if [ -n "$LIB_BAK" ] && [ -f "$LIB_BAK" ]; then
-        if cp "$LIB_BAK" "$LIB_RS" 2>/dev/null && cmp -s "$LIB_BAK" "$LIB_RS"; then rm -f "$LIB_BAK"
-        else echo -e "${RED}⚠ failed to restore $LIB_RS — backup kept at $LIB_BAK${NC}"; fi
+    if [ -n "$BAK_DIR" ] && [ -d "$BAK_DIR" ]; then
+        for prog in $PROGRAMS; do
+            libbak="$BAK_DIR/${prog}.lib.rs"
+            librs="$(LIB_RS_FOR "$prog")"
+            if [ -f "$libbak" ]; then
+                if cp "$libbak" "$librs" 2>/dev/null && cmp -s "$libbak" "$librs"; then rm -f "$libbak"
+                else echo -e "${RED}⚠ failed to restore $librs — backup kept at $libbak${NC}"; fi
+            fi
+        done
     fi
     if [ -n "$ANCHOR_BAK" ] && [ -f "$ANCHOR_BAK" ]; then
         if cp "$ANCHOR_BAK" Anchor.toml 2>/dev/null && cmp -s "$ANCHOR_BAK" Anchor.toml; then rm -f "$ANCHOR_BAK"
         else echo -e "${RED}⚠ failed to restore Anchor.toml — backup kept at $ANCHOR_BAK${NC}"; fi
     fi
-    if [ "$PROGRAM_KP_BAK" = "__none__" ]; then
-        rm -f "$PROGRAM_KP"
-    elif [ -n "$PROGRAM_KP_BAK" ] && [ -f "$PROGRAM_KP_BAK" ]; then
-        if cp "$PROGRAM_KP_BAK" "$PROGRAM_KP" 2>/dev/null && cmp -s "$PROGRAM_KP_BAK" "$PROGRAM_KP"; then rm -f "$PROGRAM_KP_BAK"
-        else echo -e "${RED}⚠ failed to restore the program keypair — backup kept at $PROGRAM_KP_BAK${NC}"; fi
+    if [ -n "$BAK_DIR" ] && [ -d "$BAK_DIR" ]; then
+        for prog in $PROGRAMS; do
+            kp="$(PROGRAM_KP_FOR "$prog")"
+            kpbak="$BAK_DIR/${prog}.keypair.json"
+            if [ -f "$BAK_DIR/${prog}.keypair.none" ]; then
+                rm -f "$kp" "$BAK_DIR/${prog}.keypair.none"
+            elif [ -f "$kpbak" ]; then
+                if cp "$kpbak" "$kp" 2>/dev/null && cmp -s "$kpbak" "$kp"; then rm -f "$kpbak"
+                else echo -e "${RED}⚠ failed to restore $kp — backup kept at $kpbak${NC}"; fi
+            elif [ -n "$BUILT" ]; then
+                # We replaced this keypair but hold no record of what was there.
+                # Silence would read as "nothing to restore"; say it out loud.
+                echo -e "${RED}⚠ no backup record for $prog — $kp holds a run-local key${NC}"
+            fi
+        done
+        rmdir "$BAK_DIR" 2>/dev/null || true
     fi
     # Remove build artifacts we generated — they may carry a non-committed program
     # id and must not be deployed/published accidentally (target/ is rebuildable).
     if [ -n "$BUILT" ]; then
-        rm -f target/deploy/august_vault.so target/idl/august_vault.json target/types/august_vault.ts
+        for prog in $PROGRAMS; do
+            rm -f "target/deploy/${prog}.so" "target/idl/${prog}.json" "target/types/${prog}.ts"
+        done
     fi
     if [ -n "$VALIDATOR_PID" ]; then
         echo ""
@@ -69,21 +107,38 @@ trap cleanup EXIT
 # dev's deployment key is never destroyed. Shared by the build paths below.
 backup_program_keypair() {
     mkdir -p target/deploy
-    if [ -f "$PROGRAM_KP" ]; then
-        # Verify a LOCAL candidate first; publish it to the cleanup-visible global
-        # only once cp+cmp confirm a good copy, so the EXIT trap can never restore
-        # a partial/corrupt backup over the real keypair.
-        local cand
-        cand="$(mktemp)"
-        if ! cp "$PROGRAM_KP" "$cand" || ! cmp -s "$PROGRAM_KP" "$cand"; then
-            rm -f "$cand"
-            echo -e "${RED}✗ Could not safely back up the existing program keypair — aborting so it isn't destroyed.${NC}"
-            exit 1
-        fi
-        PROGRAM_KP_BAK="$cand"
-    else
-        PROGRAM_KP_BAK="__none__"
+    if [ -z "$BAK_DIR" ] && ! BAK_DIR="$(mktemp -d)"; then
+        echo -e "${RED}✗ Could not create a backup directory — aborting before anything is overwritten.${NC}"
+        exit 1
     fi
+    for prog in $PROGRAMS; do
+        local kp cand
+        kp="$(PROGRAM_KP_FOR "$prog")"
+        if [ -f "$kp" ]; then
+            # Verify a LOCAL candidate first; publish it to the cleanup-visible
+            # location only once cp+cmp confirm a good copy, so the EXIT trap can
+            # never restore a partial/corrupt backup over the real keypair.
+            cand="$(mktemp)"
+            if ! cp "$kp" "$cand" || ! cmp -s "$kp" "$cand"; then
+                rm -f "$cand"
+                echo -e "${RED}✗ Could not safely back up $kp — aborting so it isn't destroyed.${NC}"
+                exit 1
+            fi
+            # Check the publish too. A failure here leaves neither a backup nor a
+            # marker, so cleanup() finds nothing and says nothing — while the
+            # `solana-keygen --force` below has already destroyed the real key.
+            if ! mv "$cand" "$BAK_DIR/${prog}.keypair.json"; then
+                rm -f "$cand"
+                echo -e "${RED}✗ Could not store the backup of $kp — aborting so it isn't destroyed.${NC}"
+                exit 1
+            fi
+        else
+            if ! : > "$BAK_DIR/${prog}.keypair.none"; then
+                echo -e "${RED}✗ Could not record that $kp is absent — aborting rather than leave cleanup guessing.${NC}"
+                exit 1
+            fi
+        fi
+    done
 }
 
 # Start a FRESH local validator that this script owns, and fund the provider
@@ -129,13 +184,19 @@ ensure_localnet() {
 # the repo). Rewritten source/config + the keypair are restored on exit.
 prepare_local_program() {
     backup_program_keypair
-    # Same fail-closed pattern: verify a local candidate, then publish to the global.
+    # Same fail-closed pattern: verify a local candidate, then publish it into
+    # $BAK_DIR, checking the publish itself — see backup_program_keypair.
     local libcand anchorcand
-    libcand="$(mktemp)"
-    if ! cp "$LIB_RS" "$libcand" || ! cmp -s "$LIB_RS" "$libcand"; then
-        rm -f "$libcand"; echo -e "${RED}✗ failed to back up $LIB_RS${NC}"; exit 1
-    fi
-    LIB_BAK="$libcand"
+    for prog in $PROGRAMS; do
+        librs="$(LIB_RS_FOR "$prog")"
+        libcand="$(mktemp)"
+        if ! cp "$librs" "$libcand" || ! cmp -s "$librs" "$libcand"; then
+            rm -f "$libcand"; echo -e "${RED}✗ failed to back up $librs${NC}"; exit 1
+        fi
+        if ! mv "$libcand" "$BAK_DIR/${prog}.lib.rs"; then
+            rm -f "$libcand"; echo -e "${RED}✗ failed to store the backup of $librs${NC}"; exit 1
+        fi
+    done
     anchorcand="$(mktemp)"
     if ! cp Anchor.toml "$anchorcand" || ! cmp -s Anchor.toml "$anchorcand"; then
         rm -f "$anchorcand"; echo -e "${RED}✗ failed to back up Anchor.toml${NC}"; exit 1
@@ -144,21 +205,39 @@ prepare_local_program() {
 
     # A fresh program id each run is fine because ensure_localnet guarantees a
     # clean (--reset) ledger — nothing from a prior run's id/PDAs lingers.
-    solana-keygen new --no-bip39-passphrase -o "$PROGRAM_KP" --force > /dev/null
-    local pid
-    pid=$(solana-keygen pubkey "$PROGRAM_KP")
+    for prog in $PROGRAMS; do
+        solana-keygen new --no-bip39-passphrase -o "$(PROGRAM_KP_FOR "$prog")" --force > /dev/null
+    done
     BUILT=1
     # Do NOT suppress failures: if declare_id! isn't synced, anchor deploys under
-    # $pid while lib.rs still declares up12…, causing misleading failures.
+    # the fresh id while lib.rs still declares the committed one, causing
+    # misleading failures.
     if ! anchor keys sync > /dev/null 2>&1; then
         echo -e "${RED}✗ 'anchor keys sync' failed — cannot align declare_id! for a local deploy.${NC}"; exit 1
     fi
-    if ! grep -q "$pid" "$LIB_RS"; then
-        echo -e "${RED}✗ declare_id! was not synced to $pid — aborting to avoid a program-ID mismatch.${NC}"; exit 1
-    fi
-    awk -v id="$pid" '/^august_vault = /{print "august_vault = \"" id "\""; next} {print}' \
-        Anchor.toml > Anchor.toml.tmp && mv Anchor.toml.tmp Anchor.toml
-    echo -e "${GREEN}✓ Local program id synced: $pid${NC}"
+    # Verify and rewrite per program. Checking only one would let a second
+    # program deploy under an id its source does not declare, which surfaces as
+    # an unrelated instruction failure much later.
+    local pid librs
+    for prog in $PROGRAMS; do
+        pid=$(solana-keygen pubkey "$(PROGRAM_KP_FOR "$prog")")
+        librs="$(LIB_RS_FOR "$prog")"
+        if ! grep -q "$pid" "$librs"; then
+            echo -e "${RED}✗ declare_id! in $librs was not synced to $pid — aborting to avoid a program-ID mismatch.${NC}"; exit 1
+        fi
+        if ! awk -v id="$pid" -v prog="$prog" \
+            '$0 ~ "^" prog " = " {print prog " = \"" id "\""; next} {print}' \
+            Anchor.toml > Anchor.toml.tmp || ! mv Anchor.toml.tmp Anchor.toml; then
+            rm -f Anchor.toml.tmp
+            echo -e "${RED}✗ failed to rewrite Anchor.toml for $prog${NC}"; exit 1
+        fi
+        # awk exits 0 having matched nothing, so confirm the id actually landed —
+        # a renamed [programs.*] entry would otherwise deploy under a stale id.
+        if ! grep -q "^${prog} = \"${pid}\"" Anchor.toml; then
+            echo -e "${RED}✗ Anchor.toml has no '${prog} = ...' entry — aborting to avoid a program-ID mismatch.${NC}"; exit 1
+        fi
+        echo -e "${GREEN}✓ Local program id synced for $prog: $pid${NC}"
+    done
 }
 
 # Run `anchor test` against ONLY the given files by rewriting the [scripts].test

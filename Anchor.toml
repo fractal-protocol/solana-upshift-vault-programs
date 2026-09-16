@@ -7,12 +7,15 @@ skip-lint = false
 
 [programs.devnet]
 august_vault = "C8B1EpsSGVWK2vMrk3aDT3kL7RCE77otokUh4EC35kK7"
+august_withdrawal_queue = "NmJ9CGaiPJSfAGSdhNeVDkMPGi7ZQMABYYwWUC4GHyf"
 
 [programs.localnet]
 august_vault = "up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt"
+august_withdrawal_queue = "NmJ9CGaiPJSfAGSdhNeVDkMPGi7ZQMABYYwWUC4GHyf"
 
 [programs.mainnet]
 august_vault = "up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt"
+august_withdrawal_queue = "NmJ9CGaiPJSfAGSdhNeVDkMPGi7ZQMABYYwWUC4GHyf"
 
 [registry]
 url = "https://api.apr.dev"

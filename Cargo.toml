@@ -9,6 +9,7 @@ members = [
 exclude = [
     "integration-tests",
     "clients/rust/august-vault",
+    "clients/rust/august-withdrawal-queue",
 ]
 resolver = "2"
 
