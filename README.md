@@ -1,6 +1,30 @@
-# Upshift Vault Program
+# Upshift Vault Programs
 
 A share-based vault on Solana built with Anchor. Users deposit an SPL token and receive shares in return. An operator deploys vault funds externally (e.g., yield strategies), while an admin manages roles, fees, and emergency controls.
+
+This workspace builds two programs:
+
+| Crate | Artifact | Status |
+|---|---|---|
+| `programs/august-vault` | `august_vault.so` | Live on mainnet and devnet. Everything below describes this program. |
+| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | **Scaffold only.** Carries the program identity, the error-ABI pin and the build wiring; no state accounts or instructions yet. |
+
+The queue will let a vault route redemptions through a request-and-cooldown flow
+instead of paying out instantly. The vault side of that is already in place: a
+vault can name a `withdrawal_queue_authority` and will then redeem only for that
+key. No vault names this program, and none is set, so every vault still redeems
+instantly. Until the queue has instructions it builds and deploys but does
+nothing.
+
+**Both programs are built one crate at a time, never as a whole workspace.** The
+queue depends on the vault with `features = ["cpi"]`, and `cpi` implies
+`no-entrypoint`. Cargo unifies a dependency's features across a single build, so a
+workspace-wide `cargo build-sbf` compiles the vault once under
+`default ∪ cpi ∪ no-entrypoint` and emits a ~900-byte `august_vault.so` with no
+entrypoint for the loader to dispatch to. `integration-tests/build.rs` builds per
+manifest for this reason; CI uses `anchor build`, which already builds each program
+separately. Two guards catch a regression: `integration-tests/tests/embedded_artifacts.rs`
+and the size floor in CI's program-size step.
 
 ## Features
 

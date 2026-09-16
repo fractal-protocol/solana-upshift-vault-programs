@@ -1,9 +1,12 @@
 # Reproducible Build & On-Chain Verification
 
-This repository produces a **reproducible** Solana program: building `august_vault`
-with the pinned toolchain below yields a `.so` whose SHA-256 is byte-for-byte
-identical on any host. The expected hash is committed in
-[`verified-hashes.txt`](verified-hashes.txt) and asserted in CI.
+This repository produces **reproducible** Solana programs: building each with the
+pinned toolchain below yields a `.so` whose SHA-256 is byte-for-byte identical on
+any host. The expected hashes are committed in
+[`verified-hashes.txt`](verified-hashes.txt) — one row per program — and asserted
+in CI. Two programs are pinned today: `august_vault`, live on mainnet and devnet,
+and `august_withdrawal_queue`, which is built and pinned but not yet deployed
+anywhere.
 
 > **Verification is point-in-time.** The program is **upgradeable** — the upgrade
 > authority can replace the bytecode. A matching hash proves the deployed code
@@ -29,22 +32,38 @@ git clone https://github.com/fractal-protocol/solana-upshift-vault-programs
 cd solana-upshift-vault-programs
 git checkout <release-commit-or-tag>
 
-solana-verify build --library-name august_vault \
-  --base-image solanafoundation/solana-verifiable-build@sha256:695f890e620db8c39afe5112e048599f8ee395a0cab5a2e572f30a72c6366cb4
+IMAGE=solanafoundation/solana-verifiable-build@sha256:695f890e620db8c39afe5112e048599f8ee395a0cab5a2e572f30a72c6366cb4
 
-solana-verify get-executable-hash target/deploy/august_vault.so   # exec_sha256
-shasum -a 256 target/deploy/august_vault.so                        # raw_sha256
-wc -c target/deploy/august_vault.so                                # size (bytes)
+# One build per program. Never build the workspace in one go: the queue depends on
+# the vault with `features = ["cpi"]`, which implies `no-entrypoint`, and cargo
+# unifies features across a single build — producing a ~900-byte, entrypoint-less
+# `august_vault.so`. See integration-tests/build.rs.
+while read -r pkg _; do
+  case "$pkg" in ''|\#*) continue ;; esac
+  # Delete the artifact first. A cached compilation makes the build skip its copy
+  # step, leaving the PREVIOUS .so in place — you then hash a stale file and
+  # conclude the bytecode is unchanged. Removing it means a missing file, not a
+  # wrong hash, if the build ever fails to produce one.
+  rm -f "target/deploy/${pkg}.so"
+  solana-verify build --library-name "$pkg" --base-image "$IMAGE"
+  solana-verify get-executable-hash "target/deploy/${pkg}.so"   # exec_sha256
+  shasum -a 256 "target/deploy/${pkg}.so"                       # raw_sha256
+  wc -c "target/deploy/${pkg}.so"                               # size (bytes)
+done < verified-hashes.txt
 ```
 
-At the commit these hashes were recorded, all three columns match
-[`verified-hashes.txt`](verified-hashes.txt) (the CI `reproducible-build` job
-asserts the same three):
+**Re-pinning after a source change.** Any edit to a program crate can change its
+bytecode — doc comments included, since they can reach the artifact. Do not assume
+a comment-only change is hash-neutral: clear the artifact as above, rebuild, and
+compare. CI rebuilds from a clean checkout, so a stale local artifact is the one
+way to convince yourself a pin is current when it is not.
 
-```
-# program       exec_sha256                                                       raw_sha256                                                        size
-august_vault    cb1352a5dc4ab9513c10c1083534837bb4c666ed8ad9c3919f02f752bff52df9  7d9c0a4a16b31c2f10cbdcda60bf9fd88254c06df916f86e8e88479e6acd2481  605160
-```
+At the commit these hashes were recorded, all three columns match every row of
+[`verified-hashes.txt`](verified-hashes.txt). That file is the single source of
+truth and is not reproduced here — the CI `reproducible-build` job rebuilds each
+row and asserts all three columns, and additionally requires that the set of
+pinned package names equals the set of directories under `programs/`, so a
+program cannot be added without a row.
 
 ## Compare against the on-chain program
 
@@ -65,10 +84,10 @@ fca11d73ae5ba0635ee76964945c52ddcf78a167eb4c60317ae63df4a4e7cc1d   (505,216 B)
 i.e. the program as it stood prior to the `ProgramConfig` gate and the
 share-price offset retune. That is what `get-program-hash` returns today.
 
-**`verified-hashes.txt` does not contain it.** That file holds exactly one
-record — the hash of the current source tree — because the `reproducible-build`
-CI job rebuilds from source and asserts every line in it matches, so a second,
-older record would fail the build by construction. While an upgrade is in
+**`verified-hashes.txt` does not contain it.** That file holds one record per
+program, each describing the *current source tree*, because the
+`reproducible-build` CI job rebuilds from source and asserts every line matches —
+so an older record would fail the build by construction. While an upgrade is in
 flight the two therefore disagree on purpose:
 
 | Hash | Where it is recorded | What it describes |

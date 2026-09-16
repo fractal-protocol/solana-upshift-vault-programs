@@ -39,6 +39,7 @@ path = "src/lib.rs"
 
 [dependencies]
 august-vault = { path = "../programs/august-vault", features = ["no-entrypoint"] }
+august-withdrawal-queue = { path = "../programs/august-withdrawal-queue", features = ["no-entrypoint"] }
 anchor-lang = "0.31.1"
 anchor-spl = "0.31.1"
 litesvm = "0.7.1"

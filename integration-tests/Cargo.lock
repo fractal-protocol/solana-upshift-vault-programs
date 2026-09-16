@@ -516,6 +516,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "august-withdrawal-queue"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "anchor-spl",
+ "august-vault",
+ "solana-security-txt",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1737,6 +1747,7 @@ dependencies = [
  "anchor-lang",
  "anchor-spl",
  "august-vault",
+ "august-withdrawal-queue",
  "litesvm",
  "mpl-token-metadata",
  "proptest",
