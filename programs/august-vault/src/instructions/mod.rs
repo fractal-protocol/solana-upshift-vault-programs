@@ -24,5 +24,6 @@ pub mod set_config_authority;
 pub mod set_fee_recipient;
 pub mod set_operator;
 pub mod set_withdrawal_fee;
+pub mod set_withdrawal_queue_authority;
 pub mod unpause;
 pub mod update_metadata;

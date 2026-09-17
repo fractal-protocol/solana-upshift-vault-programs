@@ -56,11 +56,19 @@ pub share_offset: u64,
 /// When set it holds this vault's withdrawal-queue PDA, and a direct holder
 /// redeem is refused with `WithdrawalQueueRequired` (6021).
 /// 
-/// **Nothing writes it yet.** The setter must reject any key that does not
-/// derive as this vault's queue PDA: a key nobody can sign for freezes every
-/// exit permanently, while deposits keep working.
+/// Only `set_withdrawal_queue_authority` writes this field. It stores nothing
+/// but this vault's [`withdrawal_queue_pda`] or zero, and once a key is set it
+/// changes only with **both** the admin's signature and the stored key's. Both
+/// rules exist because a key nobody can sign for would freeze every exit
+/// permanently while deposits kept working.
 /// 
-/// Read via [`Self::withdrawal_queue`], never raw.
+/// `close_vault` also clears the field, by closing the whole account, but it
+/// requires zero share supply and an empty reserve. Re-examine that path once
+/// the queue holds state keyed to this vault's address.
+/// 
+/// Read this field via [`Self::withdrawal_queue`] at every decision point. The
+/// only raw reads are the setter's own write and the `previous` value it
+/// reports in `WithdrawalQueueAuthorityUpdated`, which is raw by design.
 #[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::DisplayFromStr>"))]
 pub withdrawal_queue_authority: Pubkey,
 /// Reserved. Carve new fields **out of** this array so `LEN` stays 455, the

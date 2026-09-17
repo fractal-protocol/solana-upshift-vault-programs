@@ -9,15 +9,18 @@
 //! Behaviour of the `withdrawal_queue_authority` gate on `redeem` /
 //! `redeem_checked`.
 //!
-//! Three states matter: **zero** (no queue — what every live vault reads, so
-//! "unchanged" is the property that protects funds), **set with someone else
-//! signing** (refused, and refused having changed nothing), and **set with the
-//! authority signing** (allowed — the path the queue itself takes by CPI).
+//! Three states matter. **Zero** means no queue, which is what every live vault
+//! reads, so "unchanged" is the property that protects funds. **Set with someone
+//! else signing** is refused, and refused having changed nothing. **Set with the
+//! authority signing** is allowed, and is the path the queue itself takes by
+//! CPI.
 //!
 //! Layout compatibility against real mainnet bytes lives in
 //! `mainnet_fork_compat.rs`; this file is behaviour only. The authority is
-//! written straight into the account because the admin instruction that sets it
-//! does not exist yet.
+//! written straight into the account rather than set through
+//! `set_withdrawal_queue_authority`, so that these tests depend on the gate
+//! alone. That instruction's own rules are covered in
+//! `set_withdrawal_queue_authority.rs`.
 
 use august_vault::errors::ErrorCode;
 use integration_tests::harness::{
@@ -35,8 +38,9 @@ fn vault_with_a_holder() -> VaultCtx {
     ctx
 }
 
-/// Point the vault at `authority`, bypassing the not-yet-written admin
-/// instruction.
+/// Points the vault at `authority`, bypassing `set_withdrawal_queue_authority`.
+/// This is deliberate, because it lets the gate be tested against an arbitrary
+/// key, including keys that instruction would refuse to store.
 fn attach_queue(ctx: &mut VaultCtx, authority: Pubkey) {
     let mut state = ctx.vault_state_data();
     state.withdrawal_queue_authority = authority;

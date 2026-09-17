@@ -76,6 +76,12 @@ pub enum AugustVaultError {
     /// 6021 - Signer is not this vault's withdrawal_queue_authority; holders request a withdrawal at the queue instead
     #[error("Signer is not this vault's withdrawal_queue_authority; holders request a withdrawal at the queue instead")]
     WithdrawalQueueRequired = 0x1785,
+    /// 6022 - new_queue must name this vault's initialized queue PDA and equal new_authority, and must be absent when detaching
+    #[error("new_queue must name this vault's initialized queue PDA and equal new_authority, and must be absent when detaching")]
+    InvalidWithdrawalQueueAuthority = 0x1786,
+    /// 6023 - The attached withdrawal queue did not co-sign; every change to this field needs the stored key's signature
+    #[error("The attached withdrawal queue did not co-sign; every change to this field needs the stored key's signature")]
+    WithdrawalQueueNotDrained = 0x1787,
 }
 
 impl From<AugustVaultError> for solana_program_error::ProgramError {
