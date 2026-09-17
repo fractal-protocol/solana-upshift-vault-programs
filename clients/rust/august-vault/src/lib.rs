@@ -85,8 +85,8 @@ impl VaultState {
             0..=3 => 1,
             d => 10_u64.saturating_pow(u32::from(d.saturating_sub(3))),
         };
-        let by_offset = u64::try_from(MIN_SUPPLY_MULTIPLE * self.resolved_share_offset())
-            .unwrap_or(u64::MAX);
+        let by_offset =
+            u64::try_from(MIN_SUPPLY_MULTIPLE * self.resolved_share_offset()).unwrap_or(u64::MAX);
         by_decimals.max(by_offset)
     }
 }

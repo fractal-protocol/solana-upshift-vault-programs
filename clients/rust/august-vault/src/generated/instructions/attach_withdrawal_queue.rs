@@ -5,377 +5,394 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
-use borsh::BorshSerialize;
 use borsh::BorshDeserialize;
+use borsh::BorshSerialize;
 
 pub const ATTACH_WITHDRAWAL_QUEUE_DISCRIMINATOR: [u8; 8] = [6, 130, 226, 67, 214, 208, 145, 212];
 
 /// Accounts.
 #[derive(Debug)]
 pub struct AttachWithdrawalQueue {
-      
-              
-          pub vault_state: solana_pubkey::Pubkey,
-          
-              
-          pub deposit_mint: solana_pubkey::Pubkey,
-          
-              
-          pub admin: solana_pubkey::Pubkey,
-                /// This vault's queue PDA, `["withdrawal_queue", vault_state]` under the
-/// hardcoded queue program, already initialized by that program.
-/// 
+    pub vault_state: solana_pubkey::Pubkey,
 
-    
-              
-          pub queue: solana_pubkey::Pubkey,
-      }
+    pub deposit_mint: solana_pubkey::Pubkey,
+
+    pub admin: solana_pubkey::Pubkey,
+    /// This vault's queue PDA, `["withdrawal_queue", vault_state]` under the
+    /// hardcoded queue program, already initialized by that program.
+    ///
+    pub queue: solana_pubkey::Pubkey,
+}
 
 impl AttachWithdrawalQueue {
-  pub fn instruction(&self) -> solana_instruction::Instruction {
-    self.instruction_with_remaining_accounts(&[])
-  }
-  #[allow(clippy::arithmetic_side_effects)]
-  #[allow(clippy::vec_init_then_push)]
-  pub fn instruction_with_remaining_accounts(&self, remaining_accounts: &[solana_instruction::AccountMeta]) -> solana_instruction::Instruction {
-    let mut accounts = Vec::with_capacity(4+ remaining_accounts.len());
-                            accounts.push(solana_instruction::AccountMeta::new(
-            self.vault_state,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.deposit_mint,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.admin,
-            true
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.queue,
-            false
-          ));
-                      accounts.extend_from_slice(remaining_accounts);
-    let data = AttachWithdrawalQueueInstructionData::new().try_to_vec().unwrap();
-    
-    solana_instruction::Instruction {
-      program_id: crate::AUGUST_VAULT_ID,
-      accounts,
-      data,
+    pub fn instruction(&self) -> solana_instruction::Instruction {
+        self.instruction_with_remaining_accounts(&[])
     }
-  }
+    #[allow(clippy::arithmetic_side_effects)]
+    #[allow(clippy::vec_init_then_push)]
+    pub fn instruction_with_remaining_accounts(
+        &self,
+        remaining_accounts: &[solana_instruction::AccountMeta],
+    ) -> solana_instruction::Instruction {
+        let mut accounts = Vec::with_capacity(4 + remaining_accounts.len());
+        accounts.push(solana_instruction::AccountMeta::new(
+            self.vault_state,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.deposit_mint,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.admin, true,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.queue, false,
+        ));
+        accounts.extend_from_slice(remaining_accounts);
+        let data = AttachWithdrawalQueueInstructionData::new()
+            .try_to_vec()
+            .unwrap();
+
+        solana_instruction::Instruction {
+            program_id: crate::AUGUST_VAULT_ID,
+            accounts,
+            data,
+        }
+    }
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
- pub struct AttachWithdrawalQueueInstructionData {
-            discriminator: [u8; 8],
-      }
-
-impl AttachWithdrawalQueueInstructionData {
-  pub fn new() -> Self {
-    Self {
-                        discriminator: [6, 130, 226, 67, 214, 208, 145, 212],
-                  }
-  }
-
-    pub(crate) fn try_to_vec(&self) -> Result<Vec<u8>, std::io::Error> {
-    borsh::to_vec(self)
-  }
-  }
-
-impl Default for AttachWithdrawalQueueInstructionData {
-  fn default() -> Self {
-    Self::new()
-  }
+pub struct AttachWithdrawalQueueInstructionData {
+    discriminator: [u8; 8],
 }
 
+impl AttachWithdrawalQueueInstructionData {
+    pub fn new() -> Self {
+        Self {
+            discriminator: [6, 130, 226, 67, 214, 208, 145, 212],
+        }
+    }
 
+    pub(crate) fn try_to_vec(&self) -> Result<Vec<u8>, std::io::Error> {
+        borsh::to_vec(self)
+    }
+}
+
+impl Default for AttachWithdrawalQueueInstructionData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Instruction builder for `AttachWithdrawalQueue`.
 ///
 /// ### Accounts:
 ///
-                ///   0. `[writable]` vault_state
-          ///   1. `[]` deposit_mint
-                ///   2. `[signer]` admin
-          ///   3. `[]` queue
+///   0. `[writable]` vault_state
+///   1. `[]` deposit_mint
+///   2. `[signer]` admin
+///   3. `[]` queue
 #[derive(Clone, Debug, Default)]
 pub struct AttachWithdrawalQueueBuilder {
-            vault_state: Option<solana_pubkey::Pubkey>,
-                deposit_mint: Option<solana_pubkey::Pubkey>,
-                admin: Option<solana_pubkey::Pubkey>,
-                queue: Option<solana_pubkey::Pubkey>,
-                __remaining_accounts: Vec<solana_instruction::AccountMeta>,
+    vault_state: Option<solana_pubkey::Pubkey>,
+    deposit_mint: Option<solana_pubkey::Pubkey>,
+    admin: Option<solana_pubkey::Pubkey>,
+    queue: Option<solana_pubkey::Pubkey>,
+    __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
 impl AttachWithdrawalQueueBuilder {
-  pub fn new() -> Self {
-    Self::default()
-  }
-            #[inline(always)]
+    pub fn new() -> Self {
+        Self::default()
+    }
+    #[inline(always)]
     pub fn vault_state(&mut self, vault_state: solana_pubkey::Pubkey) -> &mut Self {
-                        self.vault_state = Some(vault_state);
-                    self
+        self.vault_state = Some(vault_state);
+        self
     }
-            #[inline(always)]
+    #[inline(always)]
     pub fn deposit_mint(&mut self, deposit_mint: solana_pubkey::Pubkey) -> &mut Self {
-                        self.deposit_mint = Some(deposit_mint);
-                    self
+        self.deposit_mint = Some(deposit_mint);
+        self
     }
-            #[inline(always)]
+    #[inline(always)]
     pub fn admin(&mut self, admin: solana_pubkey::Pubkey) -> &mut Self {
-                        self.admin = Some(admin);
-                    self
+        self.admin = Some(admin);
+        self
     }
-            /// This vault's queue PDA, `["withdrawal_queue", vault_state]` under the
-/// hardcoded queue program, already initialized by that program.
-/// 
-#[inline(always)]
+    /// This vault's queue PDA, `["withdrawal_queue", vault_state]` under the
+    /// hardcoded queue program, already initialized by that program.
+    ///
+    #[inline(always)]
     pub fn queue(&mut self, queue: solana_pubkey::Pubkey) -> &mut Self {
-                        self.queue = Some(queue);
-                    self
+        self.queue = Some(queue);
+        self
     }
-            /// Add an additional account to the instruction.
-  #[inline(always)]
-  pub fn add_remaining_account(&mut self, account: solana_instruction::AccountMeta) -> &mut Self {
-    self.__remaining_accounts.push(account);
-    self
-  }
-  /// Add additional accounts to the instruction.
-  #[inline(always)]
-  pub fn add_remaining_accounts(&mut self, accounts: &[solana_instruction::AccountMeta]) -> &mut Self {
-    self.__remaining_accounts.extend_from_slice(accounts);
-    self
-  }
-  #[allow(clippy::clone_on_copy)]
-  pub fn instruction(&self) -> solana_instruction::Instruction {
-    let accounts = AttachWithdrawalQueue {
-                              vault_state: self.vault_state.expect("vault_state is not set"),
-                                        deposit_mint: self.deposit_mint.expect("deposit_mint is not set"),
-                                        admin: self.admin.expect("admin is not set"),
-                                        queue: self.queue.expect("queue is not set"),
-                      };
-    
-    accounts.instruction_with_remaining_accounts(&self.__remaining_accounts)
-  }
+    /// Add an additional account to the instruction.
+    #[inline(always)]
+    pub fn add_remaining_account(&mut self, account: solana_instruction::AccountMeta) -> &mut Self {
+        self.__remaining_accounts.push(account);
+        self
+    }
+    /// Add additional accounts to the instruction.
+    #[inline(always)]
+    pub fn add_remaining_accounts(
+        &mut self,
+        accounts: &[solana_instruction::AccountMeta],
+    ) -> &mut Self {
+        self.__remaining_accounts.extend_from_slice(accounts);
+        self
+    }
+    #[allow(clippy::clone_on_copy)]
+    pub fn instruction(&self) -> solana_instruction::Instruction {
+        let accounts = AttachWithdrawalQueue {
+            vault_state: self.vault_state.expect("vault_state is not set"),
+            deposit_mint: self.deposit_mint.expect("deposit_mint is not set"),
+            admin: self.admin.expect("admin is not set"),
+            queue: self.queue.expect("queue is not set"),
+        };
+
+        accounts.instruction_with_remaining_accounts(&self.__remaining_accounts)
+    }
 }
 
-  /// `attach_withdrawal_queue` CPI accounts.
-  pub struct AttachWithdrawalQueueCpiAccounts<'a, 'b> {
-          
-                    
-              pub vault_state: &'b solana_account_info::AccountInfo<'a>,
-                
-                    
-              pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
-                
-                    
-              pub admin: &'b solana_account_info::AccountInfo<'a>,
-                        /// This vault's queue PDA, `["withdrawal_queue", vault_state]` under the
-/// hardcoded queue program, already initialized by that program.
-/// 
+/// `attach_withdrawal_queue` CPI accounts.
+pub struct AttachWithdrawalQueueCpiAccounts<'a, 'b> {
+    pub vault_state: &'b solana_account_info::AccountInfo<'a>,
 
-      
-                    
-              pub queue: &'b solana_account_info::AccountInfo<'a>,
-            }
+    pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
+
+    pub admin: &'b solana_account_info::AccountInfo<'a>,
+    /// This vault's queue PDA, `["withdrawal_queue", vault_state]` under the
+    /// hardcoded queue program, already initialized by that program.
+    ///
+    pub queue: &'b solana_account_info::AccountInfo<'a>,
+}
 
 /// `attach_withdrawal_queue` CPI instruction.
 pub struct AttachWithdrawalQueueCpi<'a, 'b> {
-  /// The program to invoke.
-  pub __program: &'b solana_account_info::AccountInfo<'a>,
-      
-              
-          pub vault_state: &'b solana_account_info::AccountInfo<'a>,
-          
-              
-          pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
-          
-              
-          pub admin: &'b solana_account_info::AccountInfo<'a>,
-                /// This vault's queue PDA, `["withdrawal_queue", vault_state]` under the
-/// hardcoded queue program, already initialized by that program.
-/// 
+    /// The program to invoke.
+    pub __program: &'b solana_account_info::AccountInfo<'a>,
 
-    
-              
-          pub queue: &'b solana_account_info::AccountInfo<'a>,
-        }
+    pub vault_state: &'b solana_account_info::AccountInfo<'a>,
+
+    pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
+
+    pub admin: &'b solana_account_info::AccountInfo<'a>,
+    /// This vault's queue PDA, `["withdrawal_queue", vault_state]` under the
+    /// hardcoded queue program, already initialized by that program.
+    ///
+    pub queue: &'b solana_account_info::AccountInfo<'a>,
+}
 
 impl<'a, 'b> AttachWithdrawalQueueCpi<'a, 'b> {
-  pub fn new(
-    program: &'b solana_account_info::AccountInfo<'a>,
-          accounts: AttachWithdrawalQueueCpiAccounts<'a, 'b>,
-          ) -> Self {
-    Self {
-      __program: program,
-              vault_state: accounts.vault_state,
-              deposit_mint: accounts.deposit_mint,
-              admin: accounts.admin,
-              queue: accounts.queue,
-                }
-  }
-  #[inline(always)]
-  pub fn invoke(&self) -> solana_program_error::ProgramResult {
-    self.invoke_signed_with_remaining_accounts(&[], &[])
-  }
-  #[inline(always)]
-  pub fn invoke_with_remaining_accounts(&self, remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)]) -> solana_program_error::ProgramResult {
-    self.invoke_signed_with_remaining_accounts(&[], remaining_accounts)
-  }
-  #[inline(always)]
-  pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
-    self.invoke_signed_with_remaining_accounts(signers_seeds, &[])
-  }
-  #[allow(clippy::arithmetic_side_effects)]
-  #[allow(clippy::clone_on_copy)]
-  #[allow(clippy::vec_init_then_push)]
-  pub fn invoke_signed_with_remaining_accounts(
-    &self,
-    signers_seeds: &[&[&[u8]]],
-    remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)]
-  ) -> solana_program_error::ProgramResult {
-    let mut accounts = Vec::with_capacity(4+ remaining_accounts.len());
-                            accounts.push(solana_instruction::AccountMeta::new(
-            *self.vault_state.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.deposit_mint.key,
-            false
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.admin.key,
-            true
-          ));
-                                          accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.queue.key,
-            false
-          ));
-                      remaining_accounts.iter().for_each(|remaining_account| {
-      accounts.push(solana_instruction::AccountMeta {
-          pubkey: *remaining_account.0.key,
-          is_signer: remaining_account.1,
-          is_writable: remaining_account.2,
-      })
-    });
-    let data = AttachWithdrawalQueueInstructionData::new().try_to_vec().unwrap();
-    
-    let instruction = solana_instruction::Instruction {
-      program_id: crate::AUGUST_VAULT_ID,
-      accounts,
-      data,
-    };
-    let mut account_infos = Vec::with_capacity(5 + remaining_accounts.len());
-    account_infos.push(self.__program.clone());
-                  account_infos.push(self.vault_state.clone());
-                        account_infos.push(self.deposit_mint.clone());
-                        account_infos.push(self.admin.clone());
-                        account_infos.push(self.queue.clone());
-              remaining_accounts.iter().for_each(|remaining_account| account_infos.push(remaining_account.0.clone()));
-
-    if signers_seeds.is_empty() {
-      solana_cpi::invoke(&instruction, &account_infos)
-    } else {
-      solana_cpi::invoke_signed(&instruction, &account_infos, signers_seeds)
+    pub fn new(
+        program: &'b solana_account_info::AccountInfo<'a>,
+        accounts: AttachWithdrawalQueueCpiAccounts<'a, 'b>,
+    ) -> Self {
+        Self {
+            __program: program,
+            vault_state: accounts.vault_state,
+            deposit_mint: accounts.deposit_mint,
+            admin: accounts.admin,
+            queue: accounts.queue,
+        }
     }
-  }
+    #[inline(always)]
+    pub fn invoke(&self) -> solana_program_error::ProgramResult {
+        self.invoke_signed_with_remaining_accounts(&[], &[])
+    }
+    #[inline(always)]
+    pub fn invoke_with_remaining_accounts(
+        &self,
+        remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
+    ) -> solana_program_error::ProgramResult {
+        self.invoke_signed_with_remaining_accounts(&[], remaining_accounts)
+    }
+    #[inline(always)]
+    pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
+        self.invoke_signed_with_remaining_accounts(signers_seeds, &[])
+    }
+    #[allow(clippy::arithmetic_side_effects)]
+    #[allow(clippy::clone_on_copy)]
+    #[allow(clippy::vec_init_then_push)]
+    pub fn invoke_signed_with_remaining_accounts(
+        &self,
+        signers_seeds: &[&[&[u8]]],
+        remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
+    ) -> solana_program_error::ProgramResult {
+        let mut accounts = Vec::with_capacity(4 + remaining_accounts.len());
+        accounts.push(solana_instruction::AccountMeta::new(
+            *self.vault_state.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.deposit_mint.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.admin.key,
+            true,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.queue.key,
+            false,
+        ));
+        remaining_accounts.iter().for_each(|remaining_account| {
+            accounts.push(solana_instruction::AccountMeta {
+                pubkey: *remaining_account.0.key,
+                is_signer: remaining_account.1,
+                is_writable: remaining_account.2,
+            })
+        });
+        let data = AttachWithdrawalQueueInstructionData::new()
+            .try_to_vec()
+            .unwrap();
+
+        let instruction = solana_instruction::Instruction {
+            program_id: crate::AUGUST_VAULT_ID,
+            accounts,
+            data,
+        };
+        let mut account_infos = Vec::with_capacity(5 + remaining_accounts.len());
+        account_infos.push(self.__program.clone());
+        account_infos.push(self.vault_state.clone());
+        account_infos.push(self.deposit_mint.clone());
+        account_infos.push(self.admin.clone());
+        account_infos.push(self.queue.clone());
+        remaining_accounts
+            .iter()
+            .for_each(|remaining_account| account_infos.push(remaining_account.0.clone()));
+
+        if signers_seeds.is_empty() {
+            solana_cpi::invoke(&instruction, &account_infos)
+        } else {
+            solana_cpi::invoke_signed(&instruction, &account_infos, signers_seeds)
+        }
+    }
 }
 
 /// Instruction builder for `AttachWithdrawalQueue` via CPI.
 ///
 /// ### Accounts:
 ///
-                ///   0. `[writable]` vault_state
-          ///   1. `[]` deposit_mint
-                ///   2. `[signer]` admin
-          ///   3. `[]` queue
+///   0. `[writable]` vault_state
+///   1. `[]` deposit_mint
+///   2. `[signer]` admin
+///   3. `[]` queue
 #[derive(Clone, Debug)]
 pub struct AttachWithdrawalQueueCpiBuilder<'a, 'b> {
-  instruction: Box<AttachWithdrawalQueueCpiBuilderInstruction<'a, 'b>>,
+    instruction: Box<AttachWithdrawalQueueCpiBuilderInstruction<'a, 'b>>,
 }
 
 impl<'a, 'b> AttachWithdrawalQueueCpiBuilder<'a, 'b> {
-  pub fn new(program: &'b solana_account_info::AccountInfo<'a>) -> Self {
-    let instruction = Box::new(AttachWithdrawalQueueCpiBuilderInstruction {
-      __program: program,
-              vault_state: None,
-              deposit_mint: None,
-              admin: None,
-              queue: None,
-                                __remaining_accounts: Vec::new(),
-    });
-    Self { instruction }
-  }
-      #[inline(always)]
-    pub fn vault_state(&mut self, vault_state: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.vault_state = Some(vault_state);
-                    self
+    pub fn new(program: &'b solana_account_info::AccountInfo<'a>) -> Self {
+        let instruction = Box::new(AttachWithdrawalQueueCpiBuilderInstruction {
+            __program: program,
+            vault_state: None,
+            deposit_mint: None,
+            admin: None,
+            queue: None,
+            __remaining_accounts: Vec::new(),
+        });
+        Self { instruction }
     }
-      #[inline(always)]
-    pub fn deposit_mint(&mut self, deposit_mint: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.deposit_mint = Some(deposit_mint);
-                    self
+    #[inline(always)]
+    pub fn vault_state(
+        &mut self,
+        vault_state: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.vault_state = Some(vault_state);
+        self
     }
-      #[inline(always)]
+    #[inline(always)]
+    pub fn deposit_mint(
+        &mut self,
+        deposit_mint: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.deposit_mint = Some(deposit_mint);
+        self
+    }
+    #[inline(always)]
     pub fn admin(&mut self, admin: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.admin = Some(admin);
-                    self
+        self.instruction.admin = Some(admin);
+        self
     }
-      /// This vault's queue PDA, `["withdrawal_queue", vault_state]` under the
-/// hardcoded queue program, already initialized by that program.
-/// 
-#[inline(always)]
+    /// This vault's queue PDA, `["withdrawal_queue", vault_state]` under the
+    /// hardcoded queue program, already initialized by that program.
+    ///
+    #[inline(always)]
     pub fn queue(&mut self, queue: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-                        self.instruction.queue = Some(queue);
-                    self
+        self.instruction.queue = Some(queue);
+        self
     }
-            /// Add an additional account to the instruction.
-  #[inline(always)]
-  pub fn add_remaining_account(&mut self, account: &'b solana_account_info::AccountInfo<'a>, is_writable: bool, is_signer: bool) -> &mut Self {
-    self.instruction.__remaining_accounts.push((account, is_writable, is_signer));
-    self
-  }
-  /// Add additional accounts to the instruction.
-  ///
-  /// Each account is represented by a tuple of the `AccountInfo`, a `bool` indicating whether the account is writable or not,
-  /// and a `bool` indicating whether the account is a signer or not.
-  #[inline(always)]
-  pub fn add_remaining_accounts(&mut self, accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)]) -> &mut Self {
-    self.instruction.__remaining_accounts.extend_from_slice(accounts);
-    self
-  }
-  #[inline(always)]
-  pub fn invoke(&self) -> solana_program_error::ProgramResult {
-    self.invoke_signed(&[])
-  }
-  #[allow(clippy::clone_on_copy)]
-  #[allow(clippy::vec_init_then_push)]
-  pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
+    /// Add an additional account to the instruction.
+    #[inline(always)]
+    pub fn add_remaining_account(
+        &mut self,
+        account: &'b solana_account_info::AccountInfo<'a>,
+        is_writable: bool,
+        is_signer: bool,
+    ) -> &mut Self {
+        self.instruction
+            .__remaining_accounts
+            .push((account, is_writable, is_signer));
+        self
+    }
+    /// Add additional accounts to the instruction.
+    ///
+    /// Each account is represented by a tuple of the `AccountInfo`, a `bool` indicating whether the account is writable or not,
+    /// and a `bool` indicating whether the account is a signer or not.
+    #[inline(always)]
+    pub fn add_remaining_accounts(
+        &mut self,
+        accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
+    ) -> &mut Self {
+        self.instruction
+            .__remaining_accounts
+            .extend_from_slice(accounts);
+        self
+    }
+    #[inline(always)]
+    pub fn invoke(&self) -> solana_program_error::ProgramResult {
+        self.invoke_signed(&[])
+    }
+    #[allow(clippy::clone_on_copy)]
+    #[allow(clippy::vec_init_then_push)]
+    pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
         let instruction = AttachWithdrawalQueueCpi {
-        __program: self.instruction.__program,
-                  
-          vault_state: self.instruction.vault_state.expect("vault_state is not set"),
-                  
-          deposit_mint: self.instruction.deposit_mint.expect("deposit_mint is not set"),
-                  
-          admin: self.instruction.admin.expect("admin is not set"),
-                  
-          queue: self.instruction.queue.expect("queue is not set"),
-                    };
-    instruction.invoke_signed_with_remaining_accounts(signers_seeds, &self.instruction.__remaining_accounts)
-  }
+            __program: self.instruction.__program,
+
+            vault_state: self
+                .instruction
+                .vault_state
+                .expect("vault_state is not set"),
+
+            deposit_mint: self
+                .instruction
+                .deposit_mint
+                .expect("deposit_mint is not set"),
+
+            admin: self.instruction.admin.expect("admin is not set"),
+
+            queue: self.instruction.queue.expect("queue is not set"),
+        };
+        instruction.invoke_signed_with_remaining_accounts(
+            signers_seeds,
+            &self.instruction.__remaining_accounts,
+        )
+    }
 }
 
 #[derive(Clone, Debug)]
 struct AttachWithdrawalQueueCpiBuilderInstruction<'a, 'b> {
-  __program: &'b solana_account_info::AccountInfo<'a>,
-            vault_state: Option<&'b solana_account_info::AccountInfo<'a>>,
-                deposit_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
-                admin: Option<&'b solana_account_info::AccountInfo<'a>>,
-                queue: Option<&'b solana_account_info::AccountInfo<'a>>,
-                /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
-  __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
+    __program: &'b solana_account_info::AccountInfo<'a>,
+    vault_state: Option<&'b solana_account_info::AccountInfo<'a>>,
+    deposit_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
+    admin: Option<&'b solana_account_info::AccountInfo<'a>>,
+    queue: Option<&'b solana_account_info::AccountInfo<'a>>,
+    /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
+    __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
 }
-
