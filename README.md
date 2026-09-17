@@ -185,7 +185,7 @@ the queue program and hold data, or the call fails with
 attached fails with `WithdrawalQueueAlreadyAttached` (6024). Because the PDA is a
 pure function of the vault, there is no swap to a different queue, only attach
 and detach. `detach_withdrawal_queue` clears the field and needs the attached
-queue's signature: a different signer fails with `WithdrawalQueueNotDrained`
+queue's signature: a different signer fails with `WrongWithdrawalQueueSigner`
 (6023), an unsigned slot with Anchor's 3010, and a vault with no queue with
 `WithdrawalQueueNotAttached` (6025). The queue will give that signature only from
 its `release_vault`, after every pending request has been finalized or cancelled.

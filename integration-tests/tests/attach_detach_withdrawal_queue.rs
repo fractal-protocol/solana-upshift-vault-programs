@@ -402,7 +402,7 @@ fn detaching_without_the_queues_signature_is_refused() {
     let err = ctx
         .detach_withdrawal_queue(QueueCoSigner::Signing(&impostor))
         .expect_err("wrong signer");
-    assert_anchor_err(&err, ErrorCode::WithdrawalQueueNotDrained);
+    assert_anchor_err(&err, ErrorCode::WrongWithdrawalQueueSigner);
     assert_anchor_framework_err(&err, 6023);
 
     assert_eq!(
@@ -557,7 +557,7 @@ fn a_refused_detach_leaves_the_vault_untouched() {
     let err = ctx
         .detach_withdrawal_queue(QueueCoSigner::Signing(&impostor))
         .expect_err("refused");
-    assert_anchor_err(&err, ErrorCode::WithdrawalQueueNotDrained);
+    assert_anchor_err(&err, ErrorCode::WrongWithdrawalQueueSigner);
 
     let after = ctx
         .svm

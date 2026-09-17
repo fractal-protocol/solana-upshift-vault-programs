@@ -79,9 +79,9 @@ pub enum AugustVaultError {
     /// 6022 - Queue must be this vault's initialized, queue-program-owned withdrawal-queue PDA
     #[error("Queue must be this vault's initialized, queue-program-owned withdrawal-queue PDA")]
     InvalidWithdrawalQueueAuthority = 0x1786,
-    /// 6023 - The attached withdrawal queue did not sign; detaching needs that key's signature
-    #[error("The attached withdrawal queue did not sign; detaching needs that key's signature")]
-    WithdrawalQueueNotDrained = 0x1787,
+    /// 6023 - The queue slot was signed by a key other than the attached queue
+    #[error("The queue slot was signed by a key other than the attached queue")]
+    WrongWithdrawalQueueSigner = 0x1787,
     /// 6024 - A withdrawal queue is already attached; detach it before attaching again
     #[error("A withdrawal queue is already attached; detach it before attaching again")]
     WithdrawalQueueAlreadyAttached = 0x1788,

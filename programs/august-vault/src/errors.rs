@@ -72,13 +72,13 @@ pub enum ErrorCode {
     WithdrawalQueueRequired,
     #[msg("Queue must be this vault's initialized, queue-program-owned withdrawal-queue PDA")]
     InvalidWithdrawalQueueAuthority,
-    // The variant is named for what the co-signature stands for, which is the
-    // term the epic and the design doc use. The message states what the vault
-    // actually checks, because the vault never reads queue state. Do not name a
-    // specific queue instruction here: error strings ship in the bytecode and can
-    // be corrected only by a program upgrade.
-    #[msg("The attached withdrawal queue did not sign; detaching needs that key's signature")]
-    WithdrawalQueueNotDrained,
+    // Named for what the vault checks, a signature, not for the drain rule it
+    // stands in for: the queue reports an undrained queue itself, from
+    // `release_vault`, before it ever reaches the vault. Do not name a specific
+    // queue instruction in the message: error strings ship in the bytecode and
+    // can be corrected only by a program upgrade.
+    #[msg("The queue slot was signed by a key other than the attached queue")]
+    WrongWithdrawalQueueSigner,
     #[msg("A withdrawal queue is already attached; detach it before attaching again")]
     WithdrawalQueueAlreadyAttached,
     #[msg("No withdrawal queue is attached to this vault")]
@@ -156,7 +156,7 @@ pin_error_abi! {
     InvalidShareOffset => 20,
     WithdrawalQueueRequired => 21,
     InvalidWithdrawalQueueAuthority => 22,
-    WithdrawalQueueNotDrained => 23,
+    WrongWithdrawalQueueSigner => 23,
     WithdrawalQueueAlreadyAttached => 24,
     WithdrawalQueueNotAttached => 25,
 }

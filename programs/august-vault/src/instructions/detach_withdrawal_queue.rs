@@ -23,7 +23,7 @@ use anchor_spl::token_interface::Mint;
 /// Clear `withdrawal_queue_authority`, with the attached queue's signature.
 ///
 /// The `queue` signer must equal the stored key, else
-/// `WithdrawalQueueNotDrained`. A vault with no queue attached is refused with
+/// `WrongWithdrawalQueueSigner`. A vault with no queue attached is refused with
 /// `WithdrawalQueueNotAttached`, judged first among the handler's checks, so a
 /// caller who detaches twice learns the vault is already open rather than that
 /// the signer is wrong.
@@ -40,7 +40,7 @@ pub fn handler(ctx: Context<DetachWithdrawalQueue>) -> Result<()> {
     require_keys_eq!(
         ctx.accounts.queue.key(),
         current,
-        ErrorCode::WithdrawalQueueNotDrained
+        ErrorCode::WrongWithdrawalQueueSigner
     );
 
     ctx.accounts.vault_state.withdrawal_queue_authority = Pubkey::default();
