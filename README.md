@@ -204,22 +204,36 @@ address by shape instead would miss an uncreated ATA address (System-owned and
 empty, so it reads as an ordinary wallet) and would wrongly refuse an SPL token
 multisig, which can sign.
 
+**Custody grants the delegation, and only custody can.** SPL `Approve` is
+authorized by the token account's owner, so neither the admin nor the operator
+can do it. Custody signs `approve(subaccount_ata, vault_state, n)`, where
+`vault_state` is the vault PDA derived
+`["VAULT_STATE", deposit_mint, vault_version]`. Note `approve` **overwrites**
+rather than accumulates: topping up from 100 to 150 means approving 150, not 50.
+
 **The allowance bounds deployments, not just returns.** `operator_withdraw`
 requires the destination's delegation to cover **that destination's** outstanding
-principal plus the amount being sent, so whatever the vault is owed there stays
-recallable at all times. Principal is tracked per destination, on its registry
-PDA — a vault-wide figure would make every destination's custody cover every
-other's exposure. It is measured against principal actually sent and not
-returned: not against reported AUM, since `operator_update_aum` marks value with
-no tokens moving and a mark-down would otherwise reopen capacity; and not against
-the destination ATA's balance, which anyone can inflate with a donation.
-`VaultState.deployed_principal` carries the total for monitoring only — nothing
-on-chain trusts it. Size the
-grant to the cycle you intend to deploy. Returns spend it down and SPL clears
-the delegation once it reaches zero, so it must be re-granted per cycle; a
-lapsed or short one fails with `SubaccountDelegationMissing` (6023). Note the
-program's check covers the delegation only — a short *balance* or a frozen
-source ATA still surface as the token program's own errors.
+principal plus the amount being sent. What that guarantees is narrow and worth
+stating exactly: the vault can pull from the destination's ATA, up to the
+allowance, without custody signing again. It does **not** guarantee the funds
+will be in that ATA. Once custody deploys them to a venue they leave it
+entirely, and a return then fails inside the token program with
+`InsufficientFunds` until custody brings them back. That leg is a trust
+assumption on custody, not something this program can enforce — it never sees
+it.
+
+Principal is tracked per destination, on its registry PDA — a vault-wide figure
+would make every destination's custody cover every other's exposure. It counts
+tokens actually sent and not returned: not reported AUM, since
+`operator_update_aum` marks value with no tokens moving and a mark-down would
+otherwise reopen capacity; and not the destination ATA's balance, which anyone
+can inflate with a donation. `VaultState.deployed_principal` carries the total for
+monitoring only — nothing on-chain trusts it. Size the grant to the cycle you
+intend to deploy: returns spend it down and SPL clears the delegation once it
+reaches zero, so it must be re-granted per cycle, and a lapsed or short one fails
+with `SubaccountDelegationMissing` (6023). The program's check covers the
+delegation only — a short *balance* or a frozen source ATA still surface as the
+token program's own errors.
 
 **One subaccount address serves one vault per deposit mint.** An ATA is derived
 from (owner, mint), and an SPL token account has a single delegate slot that
@@ -230,6 +244,15 @@ order is not preventable from here: if custody later approves for a second vault
 the first vault's next transfer fails with `SubaccountDelegationMissing` (6023),
 which is the non-obvious cause of that error. No two live vaults share a deposit
 mint today.
+
+**Use an address that holds nothing else.** SPL cannot tell the vault's tokens
+from the destination's own, so anything in that ATA is reachable by the vault up
+to the allowance — approve 600 against a balance of 600 and a return of 600
+succeeds, booking the surplus as vault assets. A pre-existing balance also
+*blocks* loss settlement, since the shortfall is `principal - ata.amount` and so
+reads zero while unrelated funds sit there, leaving the destination impossible to
+deregister and the vault impossible to close until they are moved out. A
+dedicated address per vault avoids both.
 
 **The allowance is also the compromise radius.** A compromised *operator* needs
 no admin involvement to pull the whole standing allowance into the vault; a
@@ -254,11 +277,15 @@ reducing principal is the capacity-reopening move the coverage rule exists to
 prevent, and bounded by the principal *not* sitting at the destination's ATA, so
 a live obligation cannot be written off. It leaves `deployed_aum` alone; reported
 value stays the operator's to move under its bps limits. Without it a vault that
-took a loss could never be closed. Removing the
-last registration returns the vault to paying the operator's own ATA, which also
-recovers funds left there from before the first registration. The first
-registration adopts the vault's existing `deployed_principal`, so a vault with
-funds already out stays covered.
+took a loss could never be closed. Removing the last registration returns the
+vault to paying the operator's own ATA, which also recovers funds left there from
+before the first registration.
+
+The first registration adopts the vault's existing `deployed_principal`, and its
+allowance must cover it — so a vault with funds already out stays covered. That
+principal is physically in the *operator's* ATA, which is no longer an accepted
+source, so the operator should move it to the new destination rather than leave it
+to be written off. Registering while `deployed_aum == 0` avoids the question.
 
 **Token-2022 CPI Guard.** The return transfer is the shape the guard permits: it
 blocks CPI transfers authorized by the account's *owner*, not by a delegate. The
