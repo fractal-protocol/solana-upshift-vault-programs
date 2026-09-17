@@ -21,15 +21,13 @@ pub const SHARE_MINT_SEED: &[u8] = b"mint";
 pub const VAULT_TOKEN_SEED: &[u8] = b"token_vault";
 
 /// The withdrawal-queue program this vault trusts. It is the only program whose
-/// PDA `set_withdrawal_queue_authority` will ever store.
+/// PDA `attach_withdrawal_queue` will ever store.
 ///
 /// The id is hardcoded rather than stored or passed in. An admin-supplied program
 /// id would let a mistaken or compromised admin route every redemption to a
 /// program of their choosing, and the field cannot be cleared without that
 /// program's cooperation. The reverse direction needs no literal and has none,
 /// because the queue reaches this crate's id through its `cpi` dependency.
-/// Neither id is admin-configurable, and one id serves every cluster, as with
-/// `up12`.
 ///
 /// This value is `august_withdrawal_queue::ID`, which cannot be imported here:
 /// the queue depends on this crate for CPI, so the reverse edge would be a
@@ -44,17 +42,18 @@ pub const WITHDRAWAL_QUEUE_PROGRAM_ID: Pubkey =
 /// its address too, as [`withdrawal_queue_pda`] shows.
 pub const WITHDRAWAL_QUEUE_SEED: &[u8] = b"withdrawal_queue";
 
-/// Derives the one non-zero key `set_withdrawal_queue_authority` accepts for
-/// `vault_state`, namely `["withdrawal_queue", vault_state]` under
+/// Derives the one key `attach_withdrawal_queue` will store for `vault_state`,
+/// namely `["withdrawal_queue", vault_state]` under
 /// [`WITHDRAWAL_QUEUE_PROGRAM_ID`] with the canonical bump.
 ///
 /// The bump is always canonical, because this uses `find_program_address` and
 /// never a caller-supplied bump. Read that as a **requirement on the queue
 /// program rather than a fact about it**: `invoke_signed` will sign for any valid
 /// bump, so only the queue's own discipline makes the canonical address the right
-/// one to demand. WQ-05 and WQ-09 must therefore create and sign this account
-/// with Anchor's `seeds` and `bump`. If they store an arbitrary bump instead,
-/// attach stops working and neither side reports why.
+/// one to demand. `initialize_queue` (WQ-06) and `release_vault` (WQ-09) must
+/// therefore create and sign this account with Anchor's `seeds` and `bump`. If
+/// they store an arbitrary bump instead, attach stops working, and the vault's
+/// error does not say which of its three checks failed.
 pub fn withdrawal_queue_pda(vault_state: &Pubkey) -> Pubkey {
     Pubkey::find_program_address(
         &[WITHDRAWAL_QUEUE_SEED, vault_state.as_ref()],
@@ -188,19 +187,19 @@ pub struct VaultState {
     /// When set it holds this vault's withdrawal-queue PDA, and a direct holder
     /// redeem is refused with `WithdrawalQueueRequired` (6021).
     ///
-    /// Only `set_withdrawal_queue_authority` writes this field. It stores nothing
-    /// but this vault's [`withdrawal_queue_pda`] or zero, and once a key is set it
-    /// changes only with **both** the admin's signature and the stored key's. Both
-    /// rules exist because a key nobody can sign for would freeze every exit
-    /// permanently while deposits kept working.
+    /// Two instructions write this field. `attach_withdrawal_queue` stores
+    /// nothing but this vault's [`withdrawal_queue_pda`], and only while the field
+    /// is zero. `detach_withdrawal_queue` clears it, and needs **both** the
+    /// admin's signature and the stored key's. Both rules exist because a key
+    /// nobody can sign for would freeze every exit permanently while deposits
+    /// kept working.
     ///
-    /// `close_vault` also clears the field, by closing the whole account, but it
-    /// requires zero share supply and an empty reserve. Re-examine that path once
-    /// the queue holds state keyed to this vault's address.
+    /// `close_vault` also clears it, by closing the whole account, behind its
+    /// zero-supply and empty-reserve checks. Closing a gated vault is therefore an
+    /// implicit detach.
     ///
-    /// Read this field via [`Self::withdrawal_queue`] at every decision point. The
-    /// only raw reads are the setter's own write and the `previous` value it
-    /// reports in `WithdrawalQueueAuthorityUpdated`, which is raw by design.
+    /// Read this field via [`Self::withdrawal_queue`] at every decision point.
+    /// The only raw accesses are the two writers' own writes.
     pub withdrawal_queue_authority: Pubkey,
     /// Reserved. Carve new fields **out of** this array so `LEN` stays 455, the
     /// size of the live mainnet accounts — enforced by the `const` assertion below.

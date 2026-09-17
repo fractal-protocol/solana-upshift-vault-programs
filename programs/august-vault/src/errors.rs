@@ -70,15 +70,19 @@ pub enum ErrorCode {
     InvalidShareOffset,
     #[msg("Signer is not this vault's withdrawal_queue_authority; holders request a withdrawal at the queue instead")]
     WithdrawalQueueRequired,
-    #[msg("new_queue must name this vault's initialized queue PDA and equal new_authority, and must be absent when detaching")]
+    #[msg("Queue must be this vault's initialized, queue-program-owned withdrawal-queue PDA")]
     InvalidWithdrawalQueueAuthority,
     // The variant is named for what the co-signature stands for, which is the
     // term the epic and the design doc use. The message states what the vault
     // actually checks, because the vault never reads queue state. Do not name a
     // specific queue instruction here: error strings ship in the bytecode and can
     // be corrected only by a program upgrade.
-    #[msg("The attached withdrawal queue did not co-sign; every change to this field needs the stored key's signature")]
+    #[msg("The attached withdrawal queue did not sign; detaching needs that key's signature")]
     WithdrawalQueueNotDrained,
+    #[msg("A withdrawal queue is already attached; detach it before attaching again")]
+    WithdrawalQueueAlreadyAttached,
+    #[msg("No withdrawal queue is attached to this vault")]
+    WithdrawalQueueNotAttached,
 }
 
 /// Compile-time pin of the ABI described above, placed next to the enum it
@@ -153,4 +157,6 @@ pin_error_abi! {
     WithdrawalQueueRequired => 21,
     InvalidWithdrawalQueueAuthority => 22,
     WithdrawalQueueNotDrained => 23,
+    WithdrawalQueueAlreadyAttached => 24,
+    WithdrawalQueueNotAttached => 25,
 }

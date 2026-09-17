@@ -702,14 +702,14 @@ impl VaultCtx {
     // ---- withdrawal queue authority ----
 
     /// Returns this vault's queue PDA under the hardcoded queue program, which is
-    /// the one non-zero value `set_withdrawal_queue_authority` accepts.
+    /// the one key `attach_withdrawal_queue` will store.
     pub fn withdrawal_queue_pda(&self) -> Pubkey {
         withdrawal_queue_pda(&self.vault_state)
     }
 
     /// Plants a non-empty account at `address` owned by `owner`, standing in for
-    /// the queue program's `initialize_queue`, which does not exist yet. The vault
-    /// checks only the owner and that the data is non-empty, never the contents.
+    /// the queue program's `initialize_queue`. The vault checks only the owner and
+    /// that the data is non-empty, never the contents.
     pub fn install_queue_account(&mut self, address: Pubkey, owner: Pubkey) {
         self.install_queue_account_of_len(address, owner, 64);
     }
@@ -733,67 +733,85 @@ impl VaultCtx {
             .unwrap_or_else(|e| panic!("set_account failed for {address}: {e:?}"));
     }
 
-    /// Calls `set_withdrawal_queue_authority` as the admin. The arguments behave
-    /// as they do on the `_as` variant below.
-    pub fn set_withdrawal_queue_authority(
+    /// Calls `attach_withdrawal_queue` as the admin with `queue` in the queue
+    /// slot.
+    pub fn attach_withdrawal_queue(
         &mut self,
-        new_authority: Pubkey,
-        new_queue: Option<Pubkey>,
-        current_queue: Option<QueueCoSigner<'_>>,
+        queue: Pubkey,
     ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
         let admin = self.admin.insecure_clone();
-        self.set_withdrawal_queue_authority_as(&admin, new_authority, new_queue, current_queue)
+        self.attach_withdrawal_queue_as(&admin, queue)
     }
 
-    /// Calls `set_withdrawal_queue_authority` signed by `signer`.
-    ///
-    /// `new_queue` fills the optional `new_queue` slot, and `None` omits it.
-    /// `current_queue` fills the optional co-signer slot, saying both which
-    /// account occupies it and whether that account signs. The transaction
+    /// Calls `attach_withdrawal_queue` signed by `signer`. The transaction
     /// metadata is returned so that tests can read the emitted event.
-    pub fn set_withdrawal_queue_authority_as(
+    pub fn attach_withdrawal_queue_as(
         &mut self,
         signer: &Keypair,
-        new_authority: Pubkey,
-        new_queue: Option<Pubkey>,
-        current_queue: Option<QueueCoSigner<'_>>,
+        queue: Pubkey,
     ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
-        let mut accounts = ix_accounts::SetWithdrawalQueueAuthority {
+        let accounts = ix_accounts::AttachWithdrawalQueue {
             vault_state: self.vault_state,
             deposit_mint: self.deposit_mint,
             admin: signer.pubkey(),
-            new_queue,
-            current_queue: current_queue.as_ref().map(QueueCoSigner::key),
+            queue,
+        }
+        .to_account_metas(None);
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts,
+            data: ix_data::AttachWithdrawalQueue {}.data(),
+        };
+        send_tx(&mut self.svm, signer, &[ix], &[signer])
+    }
+
+    /// Calls `detach_withdrawal_queue` as the admin. `queue` says which account
+    /// fills the queue slot and whether it signs.
+    pub fn detach_withdrawal_queue(
+        &mut self,
+        queue: QueueCoSigner<'_>,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let admin = self.admin.insecure_clone();
+        self.detach_withdrawal_queue_as(&admin, queue)
+    }
+
+    /// Calls `detach_withdrawal_queue` signed by `signer`. The transaction
+    /// metadata is returned so that tests can read the emitted event.
+    pub fn detach_withdrawal_queue_as(
+        &mut self,
+        signer: &Keypair,
+        queue: QueueCoSigner<'_>,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let mut accounts = ix_accounts::DetachWithdrawalQueue {
+            vault_state: self.vault_state,
+            deposit_mint: self.deposit_mint,
+            admin: signer.pubkey(),
+            queue: queue.key(),
         }
         .to_account_metas(None);
         let mut signers: Vec<&Keypair> = vec![signer];
-        match current_queue {
-            Some(QueueCoSigner::Signing(kp)) => signers.push(kp),
+        match queue {
+            QueueCoSigner::Signing(kp) => signers.push(kp),
             // The program types this slot as `Signer`, so the generated meta
             // already demands a signature. Clearing the flag sends the account
-            // unsigned, which is the shape a caller who forgot the co-signature
-            // produces.
-            //
-            // The slot is found by position rather than by pubkey. `current_queue`
-            // is declared last, and Anchor emits a meta even for an absent
-            // `Option`, so the slot is always the final one. Matching on the key
-            // would patch `new_queue` instead whenever both slots hold the same
-            // PDA, and the test would then fail inside `Transaction::sign` for
-            // reasons that point nowhere near the cause.
-            Some(QueueCoSigner::Unsigned(key)) => {
+            // unsigned, which is the shape a caller who forgot the signature
+            // produces. The slot is found by position: `queue` is declared last.
+            QueueCoSigner::Unsigned(key) => {
+                // The message compiler ORs `is_signer` per pubkey, so an unsigned
+                // slot that aliases the payer would still arrive signed.
+                assert_ne!(key, signer.pubkey(), "Unsigned cannot alias the payer");
                 let slot = accounts.last_mut().expect("metas are never empty");
                 assert_eq!(
                     slot.pubkey, key,
-                    "current_queue is not the last meta; the accounts struct was reordered"
+                    "queue is not the last meta; the accounts struct was reordered"
                 );
                 slot.is_signer = false;
             }
-            None => {}
         }
         let ix = Instruction {
             program_id: august_vault::ID,
             accounts,
-            data: ix_data::SetWithdrawalQueueAuthority { new_authority }.data(),
+            data: ix_data::DetachWithdrawalQueue {}.data(),
         };
         send_tx(&mut self.svm, signer, &[ix], &signers)
     }
@@ -1335,8 +1353,7 @@ impl VaultCtx {
     }
 }
 
-/// Describes how a test fills the optional `current_queue` slot of
-/// `set_withdrawal_queue_authority` when it passes that slot at all.
+/// Describes how a test fills the `queue` slot of `detach_withdrawal_queue`.
 pub enum QueueCoSigner<'a> {
     /// The account is present and signs. This stands in for the signature
     /// `release_vault` will produce by CPI, which is faithful because the vault
@@ -1501,9 +1518,8 @@ pub struct CeiSnapshot {
     pub share_supply: u64,
     pub local_aum: u64,
     pub deployed_aum: u64,
-    /// This is not a balance, but it decides who may redeem at all, so a mutation
-    /// here is an exit freeze. It became mutable with
-    /// `set_withdrawal_queue_authority`.
+    /// Not a balance, but it decides who may redeem, so an unintended change here
+    /// is an exit freeze.
     pub withdrawal_queue_authority: Pubkey,
 }
 

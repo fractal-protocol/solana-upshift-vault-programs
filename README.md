@@ -72,7 +72,8 @@ so each deposit mint has a finite number of vault lifecycles.
 | `set_operator`           | Admin    | Assign new operator                                  |
 | `set_fee_recipient`      | Admin    | Change fee recipient                                 |
 | `set_aum_limits`         | Admin    | Configure AUM limits                                 |
-| `set_withdrawal_queue_authority` | Admin, plus the attached queue when one is set | Attach this vault's withdrawal queue, or detach it once drained |
+| `attach_withdrawal_queue` | Admin    | Attach this vault's withdrawal queue, once the queue has initialized it |
+| `detach_withdrawal_queue` | Admin, plus the attached queue | Detach the queue once drained, restoring direct redemption |
 | `pause` / `unpause`      | Admin    | Emergency pause/unpause                              |
 | `close_vault`            | Admin    | Close an empty vault                                 |
 | `create_share_token_metadata` | Admin | Create token metadata for share mint            |
@@ -174,19 +175,25 @@ requesting through the queue and waiting out its cooldown, and the queue redeems
 on their behalf by CPI, signing as that PDA. It is a per-vault setting, not a
 program-wide one: vaults on the same program can differ.
 
-`set_withdrawal_queue_authority` is the only writer. It accepts exactly one
-non-zero value: this vault's queue PDA, `["withdrawal_queue", vault_state]` under
-the queue program id hardcoded in the vault, and only once the queue program has
-initialized the account there — anything else is `InvalidWithdrawalQueueAuthority`
-(6022). Because that PDA is a pure function of the vault, it is the *only*
-non-zero value the field can ever hold — the operations are attach, detach and an
-idempotent re-set, never a swap to a different queue. Once a queue is attached,
-clearing it needs that queue's signature (`WithdrawalQueueNotDrained`, 6023,
-otherwise), which the queue will give only from its `release_vault`, after every
-pending request has been finalized or cancelled. Together those two rules mean
-the field can never hold a key nobody can sign for, which would freeze every exit
-while deposits kept working. Every change emits
-`WithdrawalQueueAuthorityUpdated { vault, previous, current }`.
+Two instructions write the field. `attach_withdrawal_queue` takes no key
+argument: the only key it can store is this vault's queue PDA,
+`["withdrawal_queue", vault_state]` under the queue program id hardcoded in the
+vault, and it stores that key only once the queue program has initialized the
+account there. The `queue` account passed must sit at that address, be owned by
+the queue program and hold data, or the call fails with
+`InvalidWithdrawalQueueAuthority` (6022); a vault that already has a queue
+attached fails with `WithdrawalQueueAlreadyAttached` (6024). Because the PDA is a
+pure function of the vault, there is no swap to a different queue, only attach
+and detach. `detach_withdrawal_queue` clears the field and needs the attached
+queue's signature: a different signer fails with `WithdrawalQueueNotDrained`
+(6023), an unsigned slot with Anchor's 3010, and a vault with no queue with
+`WithdrawalQueueNotAttached` (6025). The queue will give that signature only from
+its `release_vault`, after every pending request has been finalized or cancelled.
+Together those rules mean the field can only ever hold a key under the queue
+program's control, so no admin mistake can freeze exits while deposits keep
+working.
+Attach emits `WithdrawalQueueAttached { vault, queue }` and detach emits
+`WithdrawalQueueDetached { vault, queue }`.
 
 The queue program itself — requests, cooldown, finalization, `release_vault` — is
 not implemented yet, which today makes attaching *structurally* impossible rather
@@ -194,7 +201,7 @@ than merely inadvisable: the account at the queue PDA can only be created by the
 queue program signing for it, and that program has no instructions. **That
 changes the moment `initialize_queue` ships.** If it lands before `release_vault`,
 attaching becomes possible while detaching does not, and the only thing between an
-operator and a permanent exit freeze is this paragraph — so `release_vault` must
+admin and a permanent exit freeze is this paragraph — so `release_vault` must
 land first, or not attach on any cluster until it has.
 
 ## Security

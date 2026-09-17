@@ -6,10 +6,12 @@
 //!
 
   pub(crate) mod r#accept_admin_nomination;
+  pub(crate) mod r#attach_withdrawal_queue;
   pub(crate) mod r#close_vault;
   pub(crate) mod r#create_share_token_metadata;
   pub(crate) mod r#deposit;
   pub(crate) mod r#deposit_checked;
+  pub(crate) mod r#detach_withdrawal_queue;
   pub(crate) mod r#initialize;
   pub(crate) mod r#initialize_config;
   pub(crate) mod r#nominate_admin;
@@ -25,15 +27,16 @@
   pub(crate) mod r#set_fee_recipient;
   pub(crate) mod r#set_operator;
   pub(crate) mod r#set_withdrawal_fee;
-  pub(crate) mod r#set_withdrawal_queue_authority;
   pub(crate) mod r#unpause;
   pub(crate) mod r#update_share_token_metadata;
 
   pub use self::r#accept_admin_nomination::*;
+  pub use self::r#attach_withdrawal_queue::*;
   pub use self::r#close_vault::*;
   pub use self::r#create_share_token_metadata::*;
   pub use self::r#deposit::*;
   pub use self::r#deposit_checked::*;
+  pub use self::r#detach_withdrawal_queue::*;
   pub use self::r#initialize::*;
   pub use self::r#initialize_config::*;
   pub use self::r#nominate_admin::*;
@@ -49,7 +52,6 @@
   pub use self::r#set_fee_recipient::*;
   pub use self::r#set_operator::*;
   pub use self::r#set_withdrawal_fee::*;
-  pub use self::r#set_withdrawal_queue_authority::*;
   pub use self::r#unpause::*;
   pub use self::r#update_share_token_metadata::*;
 

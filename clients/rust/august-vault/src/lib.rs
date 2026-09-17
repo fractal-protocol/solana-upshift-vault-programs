@@ -25,11 +25,11 @@ pub const EXTRA_SHARES: u128 = 1_000_000;
 pub const MIN_SUPPLY_MULTIPLE: u128 = 100;
 
 /// The withdrawal-queue program the vault trusts, mirroring
-/// `WITHDRAWAL_QUEUE_PROGRAM_ID` in the program. `set_withdrawal_queue_authority`
-/// accepts exactly one non-zero key: the PDA of [`WITHDRAWAL_QUEUE_SEED`] and
-/// the vault state address under this program, canonical bump, once the queue
-/// program has initialized the account there. Pass that same key as the
-/// instruction's `new_queue` account.
+/// `WITHDRAWAL_QUEUE_PROGRAM_ID` in the program. `attach_withdrawal_queue`
+/// stores exactly one key: the PDA of [`WITHDRAWAL_QUEUE_SEED`] and the vault
+/// state address under this program, canonical bump, once the queue program has
+/// initialized the account there. Pass that key as the instruction's `queue`
+/// account.
 ///
 /// Keep in step with `programs/august-vault/src/state/vault.rs`.
 pub const WITHDRAWAL_QUEUE_PROGRAM_ID: Pubkey =

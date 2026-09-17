@@ -56,19 +56,19 @@ pub share_offset: u64,
 /// When set it holds this vault's withdrawal-queue PDA, and a direct holder
 /// redeem is refused with `WithdrawalQueueRequired` (6021).
 /// 
-/// Only `set_withdrawal_queue_authority` writes this field. It stores nothing
-/// but this vault's [`withdrawal_queue_pda`] or zero, and once a key is set it
-/// changes only with **both** the admin's signature and the stored key's. Both
-/// rules exist because a key nobody can sign for would freeze every exit
-/// permanently while deposits kept working.
+/// Two instructions write this field. `attach_withdrawal_queue` stores
+/// nothing but this vault's [`withdrawal_queue_pda`], and only while the field
+/// is zero. `detach_withdrawal_queue` clears it, and needs **both** the
+/// admin's signature and the stored key's. Both rules exist because a key
+/// nobody can sign for would freeze every exit permanently while deposits
+/// kept working.
 /// 
-/// `close_vault` also clears the field, by closing the whole account, but it
-/// requires zero share supply and an empty reserve. Re-examine that path once
-/// the queue holds state keyed to this vault's address.
+/// `close_vault` also clears it, by closing the whole account, behind its
+/// zero-supply and empty-reserve checks. Closing a gated vault is therefore an
+/// implicit detach.
 /// 
-/// Read this field via [`Self::withdrawal_queue`] at every decision point. The
-/// only raw reads are the setter's own write and the `previous` value it
-/// reports in `WithdrawalQueueAuthorityUpdated`, which is raw by design.
+/// Read this field via [`Self::withdrawal_queue`] at every decision point.
+/// The only raw accesses are the two writers' own writes.
 #[cfg_attr(feature = "serde", serde(with = "serde_with::As::<serde_with::DisplayFromStr>"))]
 pub withdrawal_queue_authority: Pubkey,
 /// Reserved. Carve new fields **out of** this array so `LEN` stays 455, the
