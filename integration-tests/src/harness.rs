@@ -1590,10 +1590,10 @@ pub struct Depositor {
     pub share_ata: Pubkey,
 }
 
-/// A stand-in for the custody address an `operator_subaccount` points at. A
-/// plain keypair where production wants Fordefi or a multisig; what the tests
-/// need is the part the program can see — an ATA the operator does not own, and
-/// a delegation it cannot grant itself.
+/// A stand-in for the custody address a registered subaccount names. A plain
+/// keypair where production wants Fordefi or a multisig; what the tests need is
+/// the part the program can see — an ATA the operator does not own, and a
+/// delegation it cannot grant itself.
 pub struct Subaccount {
     pub keypair: Keypair,
     pub deposit_ata: Pubkey,

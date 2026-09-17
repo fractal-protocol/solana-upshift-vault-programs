@@ -28,10 +28,10 @@ pub fn handler(ctx: Context<CloseVault>) -> Result<()> {
         ErrorCode::VaultNotEmpty
     );
 
-    // Registry entries name this account in their seeds and `deregister_
-    // subaccount` requires it, so closing the vault first would leave their
-    // rent permanently unreclaimable — the share mint survives a close, so the
-    // vault cannot be recreated to release them.
+    // Registry entries name this account in their seeds, and deregistering
+    // requires it, so closing the vault first would strand their rent for good:
+    // the share mint survives a close, so the vault cannot be recreated to
+    // release them.
     require!(state.subaccount_count == 0, ErrorCode::VaultNotEmpty);
 
     // Ensure vault token account is empty

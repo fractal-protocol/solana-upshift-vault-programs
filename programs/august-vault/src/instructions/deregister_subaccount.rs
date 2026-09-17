@@ -21,8 +21,8 @@ pub fn handler(ctx: Context<DeregisterSubaccount>) -> Result<()> {
     );
 
     let state = &mut ctx.accounts.vault_state;
-    // Saturating rather than checked: a count below the registry is benign, and
-    // an underflow panic here would strand the only way out of subaccount mode.
+    // Saturating, not checked: undercounting the registry is benign, while an
+    // underflow panic here would strand the only way out of subaccount mode.
     state.subaccount_count = state.subaccount_count.saturating_sub(1);
     Ok(())
 }

@@ -19,10 +19,10 @@ pub fn handler(ctx: Context<RegisterSubaccount>, address: Pubkey) -> Result<()> 
     // A delegation is the only proof the address can return funds: it needs the
     // owner's signature, unlike ATA existence, which anyone can create.
     //
-    // The first registration adopts the vault's outstanding principal, so the
-    // allowance must cover it or registration creates principal the operator
-    // cannot return — the funds sit at its own ATA, no longer an accepted
-    // source — which also blocks deregistration.
+    // The first registration adopts the vault's outstanding principal, which
+    // sits at the operator's own ATA — no longer an accepted source. The
+    // allowance must cover it, or that principal cannot come back under this
+    // grant and deregistration stays blocked.
     let inherited = if state.subaccount_count == 0 {
         state.deployed_principal
     } else {
@@ -36,7 +36,7 @@ pub fn handler(ctx: Context<RegisterSubaccount>, address: Pubkey) -> Result<()> 
         ErrorCode::SubaccountDelegationMissing
     );
 
-    // The proof cannot see this: the operator may have delegated its own ATA.
+    // The proof above cannot catch this: the operator may have delegated its own ATA.
     require!(address != state.operator, ErrorCode::InvalidSubaccount);
 
     let sub = &mut ctx.accounts.subaccount;

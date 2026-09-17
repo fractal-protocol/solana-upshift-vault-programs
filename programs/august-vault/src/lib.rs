@@ -182,11 +182,11 @@ pub mod august_vault {
     }
     /// Operator withdraw funds from the Vault
     ///
-    /// Get tokens out, to this vault's `operator_subaccount` if set, else the
-    /// operator's own ATA; the account must already exist. With a subaccount,
-    /// its delegation must cover outstanding principal plus `amount`, else
-    /// `SubaccountDelegationMissing` (6023). A wrong-party ATA fails
-    /// `ConstraintTokenOwner` (2015); a non-derived token account, 2009.
+    /// Get tokens out, to the named registered subaccount's ATA once the vault
+    /// has any, else the operator's own; the account must already exist. The
+    /// subaccount's delegation must cover its outstanding principal plus
+    /// `amount`, else `SubaccountDelegationMissing` (6023). A wrong-party ATA
+    /// fails `ConstraintTokenOwner` (2015); a non-derived token account, 2009.
     ///
     /// ### Parameters
     /// - `amount` - The amount of tokens to get out of the Vault
@@ -195,10 +195,10 @@ pub mod august_vault {
     }
     /// Operator deposit funds in the Vault
     ///
-    /// Get tokens in, from this vault's `operator_subaccount` if set, else the
-    /// operator's own ATA. With a subaccount the vault PDA — not the operator —
-    /// authorizes the transfer against the granted delegation; a missing or
-    /// exhausted allowance fails `SubaccountDelegationMissing` (6023).
+    /// Get tokens in, from the named registered subaccount's ATA once the vault
+    /// has any, else the operator's own. From a subaccount the vault PDA — not
+    /// the operator — signs against the granted delegation; a missing or short
+    /// allowance fails `SubaccountDelegationMissing` (6023).
     ///
     /// ### Parameters
     /// - `amount` - The amount of tokens to get in the Vault

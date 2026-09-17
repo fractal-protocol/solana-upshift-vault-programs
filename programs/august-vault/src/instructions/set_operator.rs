@@ -16,10 +16,10 @@ pub fn handler(ctx: Context<SetOperator>, new_operator: Pubkey) -> Result<()> {
 
     // No mirror guard against registered destinations: this instruction cannot
     // enumerate their PDAs. `register_subaccount` refuses the current operator,
-    // so a collision needs a deliberate rotation, which makes that destination
-    // decorative rather than unsafe.
-    // Matches the three config-authority setters. Nobody can sign as the zero
-    // key, so both operator handlers would become uncallable.
+    // so a collision needs a deliberate rotation — decorative, not unsafe.
+    //
+    // Nobody can sign as the zero key, so both operator handlers would become
+    // uncallable; the config-authority setters refuse it for the same reason.
     require!(
         new_operator != Pubkey::default(),
         ErrorCode::InvalidAuthority

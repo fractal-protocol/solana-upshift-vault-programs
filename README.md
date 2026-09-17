@@ -295,20 +295,21 @@ anyway, and a PDA-owned ATA cannot enable the extension in the first place. A
 PDA-based multisig therefore cannot combine CPI Guard with this feature, since
 it can only issue `Approve` via CPI.
 
-The field is **only as good as the address**: it must be custody the operator
-cannot unilaterally sweep — an MPC wallet such as Fordefi, which is an ordinary
-System-owned account signing directly, or a multisig such as Squads, whose vault
-is a PDA owned by its own program — and it depends on admin being a different
-*party* than the operator, which is not enforced and not checkable on-chain.
+The registry is **only as good as its addresses**: each must be custody the
+operator cannot unilaterally sweep — an MPC wallet such as Fordefi, which is an
+ordinary System-owned account signing directly, or a multisig such as Squads,
+whose vault is a PDA owned by its own program — and it depends on admin being a
+different *party* from the operator, which is not enforced and not checkable
+on-chain.
 
 ## Security
 
 - **Operator Trust**: The operator can move funds out of the vault and report
-  off-chain balances. Trust assumptions are critical. `operator_subaccount`
-  narrows this where set — the operator still moves funds, but only to an
-  address the admin named — and does nothing where it is zero or where admin and
+  off-chain balances. Trust assumptions are critical. A registered subaccount
+  narrows this — the operator still moves funds, but only to an address the
+  admin named — and nothing changes while none is registered or where admin and
   operator are the same key. See the operator-subaccount section for what
-  rolling back to zero does and does not neutralise.
+  deregistering does and does not neutralise.
 - **Withdrawal Fee**: Protects against front-running of AUM updates.
 - **Emergency Pause**: Disables all user operations.
 - **Upgrade Authority**: Should be transferred to an admin multisig after production deployment.

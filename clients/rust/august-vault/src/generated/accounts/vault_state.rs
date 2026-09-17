@@ -69,10 +69,10 @@ pub withdrawal_queue_authority: Pubkey,
 /// Zero on every vault created before the registry existed, so it arrives
 /// without a migration. A count rather than an address because the
 /// destination is always passed as a PDA — this only decides *whether* one
-/// is required. Only as good as the addresses, which must be custody the
-/// operator cannot sweep, and on admin being a different party than the
-/// operator; one address per vault per deposit mint, since an ATA has a
-/// single delegate slot.
+/// is required. Its safety rests on the addresses being custody the
+/// operator cannot sweep, and on the admin being a different party from
+/// the operator. One address serves one vault per deposit mint, since an
+/// ATA has a single delegate slot.
 pub subaccount_count: u64,
 /// Total principal taken out and not returned, across destinations.
 /// 
@@ -87,12 +87,12 @@ pub deployed_principal: u64,
 /// earlier shifts the fields after it silently, and each then reads zero:
 /// `share_offset` (199) re-prices the vault, `withdrawal_queue_authority`
 /// (207) reopens a gated vault, `subaccount_count` (239) reads as no
-/// subaccounts and pays the operator again, `deployed_principal` (247) reads
-/// as nothing owed. Pinned
-/// by the per-field `*_stays_at_its_byte_offset` tests plus
+/// subaccounts and pays the operator again, `deployed_principal` (247)
+/// reads as nothing owed. Pinned by the per-field
+/// `*_stays_at_its_byte_offset` tests plus
 /// `every_field_stays_at_its_byte_offset`.
 /// 
-/// Shrinks in 8-byte steps only.
+/// Shrinks in 8-byte steps only: it is an array of `u64`.
 pub padding: [u64; 25],
 }
 

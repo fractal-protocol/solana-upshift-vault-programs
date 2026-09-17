@@ -20,7 +20,7 @@ pub fn handler(ctx: Context<OperatorWithdraw>, amount: u64) -> Result<()> {
 
     let state = &mut ctx.accounts.vault_state;
 
-    // Otherwise the operator omits the account and pays itself.
+    // Pairing rule: without it the operator omits the account and pays itself.
     require!(
         state.requires_subaccount() == ctx.accounts.subaccount.is_some(),
         ErrorCode::InvalidSubaccount

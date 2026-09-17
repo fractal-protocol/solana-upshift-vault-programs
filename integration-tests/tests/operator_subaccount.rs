@@ -12,7 +12,7 @@
 //!
 //! Two things these cannot establish, because the program cannot see either:
 //! that an address is custody the operator cannot sweep, and that admin is a
-//! different party than the operator.
+//! different party from the operator.
 
 use august_vault::errors::ErrorCode;
 use integration_tests::harness::{
@@ -674,7 +674,7 @@ fn an_over_return_does_not_erase_another_destinations_exposure() {
 }
 
 /// The first registration inherits the vault's outstanding principal, so its
-/// allowance must cover it or that principal can never be cleared.
+/// allowance must cover it or that principal cannot come back under the grant.
 #[test]
 fn the_first_registration_must_cover_the_principal_it_inherits() {
     let mut ctx = funded_vault();

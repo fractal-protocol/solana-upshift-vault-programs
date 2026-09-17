@@ -26,14 +26,14 @@ pub fn handler(ctx: Context<OperatorDeposit>, amount: u64) -> Result<()> {
     );
 
     // Who signs follows from who owns the source: an unconfigured vault pulls
-    // from the operator's own ATA; with a destination the source is custody the
-    // operator cannot sign for, so the vault PDA pulls against a delegation. One
-    // branch, so the PDA cannot sign without the delegation being checked.
+    // from the operator's own ATA; a registered destination is custody the
+    // operator cannot sign for, so the vault PDA pulls against its delegation.
+    // Signature and delegation check share a branch, so neither happens alone.
     let seeds = state.seeds();
     let vault_signer: [&[&[u8]]; 1] = [&seeds];
     let (authority, signer_seeds): (_, &[&[&[u8]]]) = if ctx.accounts.subaccount.is_some() {
-        // Covers the delegation only. A short balance or frozen source still
-        // surface as SPL's own errors.
+        // Covers the delegation only. A short balance or a frozen source still
+        // surfaces as SPL's own error.
         let source = &ctx.accounts.operator_token_account;
         require!(
             source.delegate == COption::Some(state.key()) && source.delegated_amount >= amount,
