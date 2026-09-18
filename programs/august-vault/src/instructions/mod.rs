@@ -7,9 +7,11 @@
 // governed by version 2.0 of the Apache License.
 
 pub mod accept_admin_nomination;
+pub mod attach_withdrawal_queue;
 pub mod close_vault;
 pub mod create_metadata;
 pub mod deposit;
+pub mod detach_withdrawal_queue;
 pub mod initialize;
 pub mod initialize_config;
 pub mod nominate_admin;

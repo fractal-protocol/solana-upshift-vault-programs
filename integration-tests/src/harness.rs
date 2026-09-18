@@ -9,7 +9,8 @@ use august_vault::{
     state::config::PROGRAM_CONFIG_SEED,
     state::nominated_admin::NOMINATED_ADMIN_PDA_SEED,
     state::vault::{
-        FEE_RATE_DENOMINATOR_VALUE, SHARE_MINT_SEED, VAULT_STATE_SEED, VAULT_TOKEN_SEED,
+        withdrawal_queue_pda, FEE_RATE_DENOMINATOR_VALUE, SHARE_MINT_SEED, VAULT_STATE_SEED,
+        VAULT_TOKEN_SEED,
     },
 };
 use litesvm::{types::FailedTransactionMetadata, LiteSVM};
@@ -698,6 +699,123 @@ impl VaultCtx {
         .0
     }
 
+    // ---- withdrawal queue authority ----
+
+    /// Returns this vault's queue PDA under the hardcoded queue program, which is
+    /// the one key `attach_withdrawal_queue` will store.
+    pub fn withdrawal_queue_pda(&self) -> Pubkey {
+        withdrawal_queue_pda(&self.vault_state)
+    }
+
+    /// Plants a non-empty account at `address` owned by `owner`, standing in for
+    /// the queue program's `initialize_queue`. The vault checks only the owner and
+    /// that the data is non-empty, never the contents.
+    pub fn install_queue_account(&mut self, address: Pubkey, owner: Pubkey) {
+        self.install_queue_account_of_len(address, owner, 64);
+    }
+
+    /// Plants the same account with an explicit data length. A length of `0` is
+    /// the only state the `!data_is_empty()` check can catch.
+    pub fn install_queue_account_of_len(&mut self, address: Pubkey, owner: Pubkey, len: usize) {
+        let data = vec![0xA5u8; len];
+        let lamports = Rent::default().minimum_balance(data.len());
+        self.svm
+            .set_account(
+                address,
+                SolanaAccount {
+                    lamports,
+                    data,
+                    owner,
+                    executable: false,
+                    rent_epoch: 0,
+                },
+            )
+            .unwrap_or_else(|e| panic!("set_account failed for {address}: {e:?}"));
+    }
+
+    /// Calls `attach_withdrawal_queue` as the admin with `queue` in the queue
+    /// slot.
+    pub fn attach_withdrawal_queue(
+        &mut self,
+        queue: Pubkey,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let admin = self.admin.insecure_clone();
+        self.attach_withdrawal_queue_as(&admin, queue)
+    }
+
+    /// Calls `attach_withdrawal_queue` signed by `signer`. The transaction
+    /// metadata is returned so that tests can read the emitted event.
+    pub fn attach_withdrawal_queue_as(
+        &mut self,
+        signer: &Keypair,
+        queue: Pubkey,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let accounts = ix_accounts::AttachWithdrawalQueue {
+            vault_state: self.vault_state,
+            deposit_mint: self.deposit_mint,
+            admin: signer.pubkey(),
+            queue,
+        }
+        .to_account_metas(None);
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts,
+            data: ix_data::AttachWithdrawalQueue {}.data(),
+        };
+        send_tx(&mut self.svm, signer, &[ix], &[signer])
+    }
+
+    /// Calls `detach_withdrawal_queue` as the admin. `queue` says which account
+    /// fills the queue slot and whether it signs.
+    pub fn detach_withdrawal_queue(
+        &mut self,
+        queue: QueueCoSigner<'_>,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let admin = self.admin.insecure_clone();
+        self.detach_withdrawal_queue_as(&admin, queue)
+    }
+
+    /// Calls `detach_withdrawal_queue` signed by `signer`. The transaction
+    /// metadata is returned so that tests can read the emitted event.
+    pub fn detach_withdrawal_queue_as(
+        &mut self,
+        signer: &Keypair,
+        queue: QueueCoSigner<'_>,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let mut accounts = ix_accounts::DetachWithdrawalQueue {
+            vault_state: self.vault_state,
+            deposit_mint: self.deposit_mint,
+            admin: signer.pubkey(),
+            queue: queue.key(),
+        }
+        .to_account_metas(None);
+        let mut signers: Vec<&Keypair> = vec![signer];
+        match queue {
+            QueueCoSigner::Signing(kp) => signers.push(kp),
+            // The program types this slot as `Signer`, so the generated meta
+            // already demands a signature. Clearing the flag sends the account
+            // unsigned, which is the shape a caller who forgot the signature
+            // produces. The slot is found by position: `queue` is declared last.
+            QueueCoSigner::Unsigned(key) => {
+                // The message compiler ORs `is_signer` per pubkey, so an unsigned
+                // slot that aliases the payer would still arrive signed.
+                assert_ne!(key, signer.pubkey(), "Unsigned cannot alias the payer");
+                let slot = accounts.last_mut().expect("metas are never empty");
+                assert_eq!(
+                    slot.pubkey, key,
+                    "queue is not the last meta; the accounts struct was reordered"
+                );
+                slot.is_signer = false;
+            }
+        }
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts,
+            data: ix_data::DetachWithdrawalQueue {}.data(),
+        };
+        send_tx(&mut self.svm, signer, &[ix], &signers)
+    }
+
     /// Create and fund a throwaway keypair (for impostor-signer tests).
     pub fn new_funded_keypair(&mut self, lamports: u64) -> Keypair {
         airdrop_keypair(&mut self.svm, lamports)
@@ -1230,6 +1348,27 @@ impl VaultCtx {
             share_supply: self.share_mint_supply(),
             local_aum: state.local_aum,
             deployed_aum: state.deployed_aum,
+            withdrawal_queue_authority: state.withdrawal_queue_authority,
+        }
+    }
+}
+
+/// Describes how a test fills the `queue` slot of `detach_withdrawal_queue`.
+pub enum QueueCoSigner<'a> {
+    /// The account is present and signs. This stands in for the signature
+    /// `release_vault` will produce by CPI, which is faithful because the vault
+    /// compares a signature against a stored key and never asks whether that key
+    /// is a PDA.
+    Signing(&'a Keypair),
+    /// The account is present but does not sign.
+    Unsigned(Pubkey),
+}
+
+impl QueueCoSigner<'_> {
+    fn key(&self) -> Pubkey {
+        match self {
+            Self::Signing(kp) => kp.pubkey(),
+            Self::Unsigned(k) => *k,
         }
     }
 }
@@ -1379,6 +1518,9 @@ pub struct CeiSnapshot {
     pub share_supply: u64,
     pub local_aum: u64,
     pub deployed_aum: u64,
+    /// Not a balance, but it decides who may redeem, so an unintended change here
+    /// is an exit freeze.
+    pub withdrawal_queue_authority: Pubkey,
 }
 
 /// The on-chain custom error code for an `ErrorCode` variant.

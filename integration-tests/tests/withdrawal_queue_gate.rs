@@ -9,15 +9,18 @@
 //! Behaviour of the `withdrawal_queue_authority` gate on `redeem` /
 //! `redeem_checked`.
 //!
-//! Three states matter: **zero** (no queue — what every live vault reads, so
-//! "unchanged" is the property that protects funds), **set with someone else
-//! signing** (refused, and refused having changed nothing), and **set with the
-//! authority signing** (allowed — the path the queue itself takes by CPI).
+//! Three states matter. **Zero** means no queue, which is what every live vault
+//! reads, so "unchanged" is the property that protects funds. **Set with someone
+//! else signing** is refused, and refused having changed nothing. **Set with the
+//! authority signing** is allowed, and is the path the queue itself takes by
+//! CPI.
 //!
 //! Layout compatibility against real mainnet bytes lives in
 //! `mainnet_fork_compat.rs`; this file is behaviour only. The authority is
-//! written straight into the account because the admin instruction that sets it
-//! does not exist yet.
+//! written straight into the account rather than set through
+//! `attach_withdrawal_queue`, so that these tests depend on the gate alone.
+//! The attach and detach rules are covered in
+//! `attach_detach_withdrawal_queue.rs`.
 
 use august_vault::errors::ErrorCode;
 use integration_tests::harness::{
@@ -35,9 +38,10 @@ fn vault_with_a_holder() -> VaultCtx {
     ctx
 }
 
-/// Point the vault at `authority`, bypassing the not-yet-written admin
-/// instruction.
-fn attach_queue(ctx: &mut VaultCtx, authority: Pubkey) {
+/// Points the vault at `authority`, bypassing `attach_withdrawal_queue`.
+/// This is deliberate, because it lets the gate be tested against an arbitrary
+/// key, including keys that instruction would refuse to store.
+fn gate_on(ctx: &mut VaultCtx, authority: Pubkey) {
     let mut state = ctx.vault_state_data();
     state.withdrawal_queue_authority = authority;
     ctx.force_overwrite_vault_state(state);
@@ -75,7 +79,7 @@ fn an_ungated_vault_redeems_as_before() {
 #[test]
 fn a_gated_vault_refuses_a_direct_holder_redeem() {
     let mut ctx = vault_with_a_holder();
-    attach_queue(&mut ctx, Pubkey::new_unique());
+    gate_on(&mut ctx, Pubkey::new_unique());
 
     let shares = ctx.token_account_amount(&ctx.user_share_ata);
     let err = ctx
@@ -98,7 +102,7 @@ fn a_gated_vault_refuses_redeem_checked_as_well() {
     let depositor = ctx.new_depositor(DEPOSIT_AMOUNT);
     ctx.deposit_as(&depositor, DEPOSIT_AMOUNT)
         .expect("second depositor");
-    attach_queue(&mut ctx, Pubkey::new_unique());
+    gate_on(&mut ctx, Pubkey::new_unique());
 
     let shares = ctx.token_account_amount(&depositor.share_ata);
     let err = ctx
@@ -113,7 +117,7 @@ fn a_gated_vault_refuses_redeem_checked_as_well() {
 #[test]
 fn a_refused_gated_redeem_has_no_side_effects() {
     let mut ctx = vault_with_a_holder();
-    attach_queue(&mut ctx, Pubkey::new_unique());
+    gate_on(&mut ctx, Pubkey::new_unique());
 
     let shares = ctx.token_account_amount(&ctx.user_share_ata);
     let before = ctx.snapshot();
@@ -137,7 +141,7 @@ fn the_gate_precedes_the_liquidity_check() {
     // Drain the reserve so an ungated redeem would hit NotEnoughLiquidity.
     ctx.operator_withdraw(DEPOSIT_AMOUNT * 9 / 10)
         .expect("operator withdraw");
-    attach_queue(&mut ctx, Pubkey::new_unique());
+    gate_on(&mut ctx, Pubkey::new_unique());
 
     let shares = ctx.token_account_amount(&ctx.user_share_ata);
     let err = ctx.redeem(shares).expect_err("should be refused");
@@ -157,7 +161,7 @@ fn the_gate_precedes_the_liquidity_check() {
 fn the_queue_authority_may_redeem() {
     let mut ctx = vault_with_a_holder();
     let holder = ctx.user.pubkey();
-    attach_queue(&mut ctx, holder);
+    gate_on(&mut ctx, holder);
 
     let shares = ctx.token_account_amount(&ctx.user_share_ata);
     let before = ctx.token_account_amount(&ctx.user_deposit_ata);
@@ -174,7 +178,7 @@ fn the_queue_authority_may_redeem() {
 #[test]
 fn clearing_the_authority_restores_direct_redemption() {
     let mut ctx = vault_with_a_holder();
-    attach_queue(&mut ctx, Pubkey::new_unique());
+    gate_on(&mut ctx, Pubkey::new_unique());
 
     let shares = ctx.token_account_amount(&ctx.user_share_ata);
     assert_anchor_err(
@@ -182,7 +186,7 @@ fn clearing_the_authority_restores_direct_redemption() {
         ErrorCode::WithdrawalQueueRequired,
     );
 
-    attach_queue(&mut ctx, Pubkey::default());
+    gate_on(&mut ctx, Pubkey::default());
     ctx.redeem(shares)
         .expect("clearing the gate must reopen direct redemption");
 }
@@ -194,7 +198,7 @@ fn clearing_the_authority_restores_direct_redemption() {
 #[test]
 fn a_gated_vault_still_accepts_deposits() {
     let mut ctx = vault_with_a_holder();
-    attach_queue(&mut ctx, Pubkey::new_unique());
+    gate_on(&mut ctx, Pubkey::new_unique());
 
     let before = ctx.token_account_amount(&ctx.user_share_ata);
     ctx.mint_to_user(DEPOSIT_AMOUNT);
@@ -212,7 +216,7 @@ fn a_gated_vault_still_accepts_deposits() {
 #[test]
 fn pause_is_reported_ahead_of_the_gate() {
     let mut ctx = vault_with_a_holder();
-    attach_queue(&mut ctx, Pubkey::new_unique());
+    gate_on(&mut ctx, Pubkey::new_unique());
     ctx.pause().expect("admin pause");
 
     let shares = ctx.token_account_amount(&ctx.user_share_ata);
