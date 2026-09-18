@@ -1748,6 +1748,7 @@ dependencies = [
  "anchor-spl",
  "august-vault",
  "august-withdrawal-queue",
+ "base64 0.21.7",
  "litesvm",
  "mpl-token-metadata",
  "proptest",

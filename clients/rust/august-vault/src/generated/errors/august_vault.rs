@@ -76,6 +76,18 @@ pub enum AugustVaultError {
     /// 6021 - Signer is not this vault's withdrawal_queue_authority; holders request a withdrawal at the queue instead
     #[error("Signer is not this vault's withdrawal_queue_authority; holders request a withdrawal at the queue instead")]
     WithdrawalQueueRequired = 0x1785,
+    /// 6022 - Queue must be this vault's initialized, queue-program-owned withdrawal-queue PDA
+    #[error("Queue must be this vault's initialized, queue-program-owned withdrawal-queue PDA")]
+    InvalidWithdrawalQueueAuthority = 0x1786,
+    /// 6023 - The queue slot was signed by a key other than the attached queue
+    #[error("The queue slot was signed by a key other than the attached queue")]
+    WrongWithdrawalQueueSigner = 0x1787,
+    /// 6024 - A withdrawal queue is already attached; detach it before attaching again
+    #[error("A withdrawal queue is already attached; detach it before attaching again")]
+    WithdrawalQueueAlreadyAttached = 0x1788,
+    /// 6025 - No withdrawal queue is attached to this vault
+    #[error("No withdrawal queue is attached to this vault")]
+    WithdrawalQueueNotAttached = 0x1789,
 }
 
 impl From<AugustVaultError> for solana_program_error::ProgramError {
@@ -83,4 +95,3 @@ impl From<AugustVaultError> for solana_program_error::ProgramError {
         solana_program_error::ProgramError::Custom(e as u32)
     }
 }
-

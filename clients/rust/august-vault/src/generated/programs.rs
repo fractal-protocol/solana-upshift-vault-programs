@@ -7,7 +7,5 @@
 
 use solana_pubkey::{pubkey, Pubkey};
 
-
-  /// `august_vault` program ID.
-  pub const AUGUST_VAULT_ID: Pubkey = pubkey!("up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt");
-
+/// `august_vault` program ID.
+pub const AUGUST_VAULT_ID: Pubkey = pubkey!("up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt");

@@ -7,32 +7,33 @@
 
 use borsh::BorshDeserialize;
 use borsh::BorshSerialize;
-use solana_pubkey::Pubkey;
 
-pub const SET_OPERATOR_DISCRIMINATOR: [u8; 8] = [238, 153, 101, 169, 243, 131, 36, 1];
+pub const DETACH_WITHDRAWAL_QUEUE_DISCRIMINATOR: [u8; 8] = [58, 25, 112, 37, 254, 105, 157, 96];
 
 /// Accounts.
 #[derive(Debug)]
-pub struct SetOperator {
+pub struct DetachWithdrawalQueue {
     pub vault_state: solana_pubkey::Pubkey,
 
     pub deposit_mint: solana_pubkey::Pubkey,
 
     pub admin: solana_pubkey::Pubkey,
+    /// The attached queue, which must sign. The handler checks its key against
+    /// the stored authority.
+    pub queue: solana_pubkey::Pubkey,
 }
 
-impl SetOperator {
-    pub fn instruction(&self, args: SetOperatorInstructionArgs) -> solana_instruction::Instruction {
-        self.instruction_with_remaining_accounts(args, &[])
+impl DetachWithdrawalQueue {
+    pub fn instruction(&self) -> solana_instruction::Instruction {
+        self.instruction_with_remaining_accounts(&[])
     }
     #[allow(clippy::arithmetic_side_effects)]
     #[allow(clippy::vec_init_then_push)]
     pub fn instruction_with_remaining_accounts(
         &self,
-        args: SetOperatorInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
-        let mut accounts = Vec::with_capacity(3 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(4 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(
             self.vault_state,
             false,
@@ -44,10 +45,13 @@ impl SetOperator {
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.admin, true,
         ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.queue, true,
+        ));
         accounts.extend_from_slice(remaining_accounts);
-        let mut data = SetOperatorInstructionData::new().try_to_vec().unwrap();
-        let mut args = args.try_to_vec().unwrap();
-        data.append(&mut args);
+        let data = DetachWithdrawalQueueInstructionData::new()
+            .try_to_vec()
+            .unwrap();
 
         solana_instruction::Instruction {
             program_id: crate::AUGUST_VAULT_ID,
@@ -59,14 +63,14 @@ impl SetOperator {
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SetOperatorInstructionData {
+pub struct DetachWithdrawalQueueInstructionData {
     discriminator: [u8; 8],
 }
 
-impl SetOperatorInstructionData {
+impl DetachWithdrawalQueueInstructionData {
     pub fn new() -> Self {
         Self {
-            discriminator: [238, 153, 101, 169, 243, 131, 36, 1],
+            discriminator: [58, 25, 112, 37, 254, 105, 157, 96],
         }
     }
 
@@ -75,41 +79,30 @@ impl SetOperatorInstructionData {
     }
 }
 
-impl Default for SetOperatorInstructionData {
+impl Default for DetachWithdrawalQueueInstructionData {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SetOperatorInstructionArgs {
-    pub new_operator: Pubkey,
-}
-
-impl SetOperatorInstructionArgs {
-    pub(crate) fn try_to_vec(&self) -> Result<Vec<u8>, std::io::Error> {
-        borsh::to_vec(self)
-    }
-}
-
-/// Instruction builder for `SetOperator`.
+/// Instruction builder for `DetachWithdrawalQueue`.
 ///
 /// ### Accounts:
 ///
 ///   0. `[writable]` vault_state
 ///   1. `[]` deposit_mint
 ///   2. `[signer]` admin
+///   3. `[signer]` queue
 #[derive(Clone, Debug, Default)]
-pub struct SetOperatorBuilder {
+pub struct DetachWithdrawalQueueBuilder {
     vault_state: Option<solana_pubkey::Pubkey>,
     deposit_mint: Option<solana_pubkey::Pubkey>,
     admin: Option<solana_pubkey::Pubkey>,
-    new_operator: Option<Pubkey>,
+    queue: Option<solana_pubkey::Pubkey>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
-impl SetOperatorBuilder {
+impl DetachWithdrawalQueueBuilder {
     pub fn new() -> Self {
         Self::default()
     }
@@ -128,9 +121,11 @@ impl SetOperatorBuilder {
         self.admin = Some(admin);
         self
     }
+    /// The attached queue, which must sign. The handler checks its key against
+    /// the stored authority.
     #[inline(always)]
-    pub fn new_operator(&mut self, new_operator: Pubkey) -> &mut Self {
-        self.new_operator = Some(new_operator);
+    pub fn queue(&mut self, queue: solana_pubkey::Pubkey) -> &mut Self {
+        self.queue = Some(queue);
         self
     }
     /// Add an additional account to the instruction.
@@ -150,30 +145,31 @@ impl SetOperatorBuilder {
     }
     #[allow(clippy::clone_on_copy)]
     pub fn instruction(&self) -> solana_instruction::Instruction {
-        let accounts = SetOperator {
+        let accounts = DetachWithdrawalQueue {
             vault_state: self.vault_state.expect("vault_state is not set"),
             deposit_mint: self.deposit_mint.expect("deposit_mint is not set"),
             admin: self.admin.expect("admin is not set"),
-        };
-        let args = SetOperatorInstructionArgs {
-            new_operator: self.new_operator.clone().expect("new_operator is not set"),
+            queue: self.queue.expect("queue is not set"),
         };
 
-        accounts.instruction_with_remaining_accounts(args, &self.__remaining_accounts)
+        accounts.instruction_with_remaining_accounts(&self.__remaining_accounts)
     }
 }
 
-/// `set_operator` CPI accounts.
-pub struct SetOperatorCpiAccounts<'a, 'b> {
+/// `detach_withdrawal_queue` CPI accounts.
+pub struct DetachWithdrawalQueueCpiAccounts<'a, 'b> {
     pub vault_state: &'b solana_account_info::AccountInfo<'a>,
 
     pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
 
     pub admin: &'b solana_account_info::AccountInfo<'a>,
+    /// The attached queue, which must sign. The handler checks its key against
+    /// the stored authority.
+    pub queue: &'b solana_account_info::AccountInfo<'a>,
 }
 
-/// `set_operator` CPI instruction.
-pub struct SetOperatorCpi<'a, 'b> {
+/// `detach_withdrawal_queue` CPI instruction.
+pub struct DetachWithdrawalQueueCpi<'a, 'b> {
     /// The program to invoke.
     pub __program: &'b solana_account_info::AccountInfo<'a>,
 
@@ -182,22 +178,22 @@ pub struct SetOperatorCpi<'a, 'b> {
     pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
 
     pub admin: &'b solana_account_info::AccountInfo<'a>,
-    /// The arguments for the instruction.
-    pub __args: SetOperatorInstructionArgs,
+    /// The attached queue, which must sign. The handler checks its key against
+    /// the stored authority.
+    pub queue: &'b solana_account_info::AccountInfo<'a>,
 }
 
-impl<'a, 'b> SetOperatorCpi<'a, 'b> {
+impl<'a, 'b> DetachWithdrawalQueueCpi<'a, 'b> {
     pub fn new(
         program: &'b solana_account_info::AccountInfo<'a>,
-        accounts: SetOperatorCpiAccounts<'a, 'b>,
-        args: SetOperatorInstructionArgs,
+        accounts: DetachWithdrawalQueueCpiAccounts<'a, 'b>,
     ) -> Self {
         Self {
             __program: program,
             vault_state: accounts.vault_state,
             deposit_mint: accounts.deposit_mint,
             admin: accounts.admin,
-            __args: args,
+            queue: accounts.queue,
         }
     }
     #[inline(always)]
@@ -223,7 +219,7 @@ impl<'a, 'b> SetOperatorCpi<'a, 'b> {
         signers_seeds: &[&[&[u8]]],
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
-        let mut accounts = Vec::with_capacity(3 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(4 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(
             *self.vault_state.key,
             false,
@@ -236,6 +232,10 @@ impl<'a, 'b> SetOperatorCpi<'a, 'b> {
             *self.admin.key,
             true,
         ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.queue.key,
+            true,
+        ));
         remaining_accounts.iter().for_each(|remaining_account| {
             accounts.push(solana_instruction::AccountMeta {
                 pubkey: *remaining_account.0.key,
@@ -243,20 +243,21 @@ impl<'a, 'b> SetOperatorCpi<'a, 'b> {
                 is_writable: remaining_account.2,
             })
         });
-        let mut data = SetOperatorInstructionData::new().try_to_vec().unwrap();
-        let mut args = self.__args.try_to_vec().unwrap();
-        data.append(&mut args);
+        let data = DetachWithdrawalQueueInstructionData::new()
+            .try_to_vec()
+            .unwrap();
 
         let instruction = solana_instruction::Instruction {
             program_id: crate::AUGUST_VAULT_ID,
             accounts,
             data,
         };
-        let mut account_infos = Vec::with_capacity(4 + remaining_accounts.len());
+        let mut account_infos = Vec::with_capacity(5 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
         account_infos.push(self.vault_state.clone());
         account_infos.push(self.deposit_mint.clone());
         account_infos.push(self.admin.clone());
+        account_infos.push(self.queue.clone());
         remaining_accounts
             .iter()
             .for_each(|remaining_account| account_infos.push(remaining_account.0.clone()));
@@ -269,26 +270,27 @@ impl<'a, 'b> SetOperatorCpi<'a, 'b> {
     }
 }
 
-/// Instruction builder for `SetOperator` via CPI.
+/// Instruction builder for `DetachWithdrawalQueue` via CPI.
 ///
 /// ### Accounts:
 ///
 ///   0. `[writable]` vault_state
 ///   1. `[]` deposit_mint
 ///   2. `[signer]` admin
+///   3. `[signer]` queue
 #[derive(Clone, Debug)]
-pub struct SetOperatorCpiBuilder<'a, 'b> {
-    instruction: Box<SetOperatorCpiBuilderInstruction<'a, 'b>>,
+pub struct DetachWithdrawalQueueCpiBuilder<'a, 'b> {
+    instruction: Box<DetachWithdrawalQueueCpiBuilderInstruction<'a, 'b>>,
 }
 
-impl<'a, 'b> SetOperatorCpiBuilder<'a, 'b> {
+impl<'a, 'b> DetachWithdrawalQueueCpiBuilder<'a, 'b> {
     pub fn new(program: &'b solana_account_info::AccountInfo<'a>) -> Self {
-        let instruction = Box::new(SetOperatorCpiBuilderInstruction {
+        let instruction = Box::new(DetachWithdrawalQueueCpiBuilderInstruction {
             __program: program,
             vault_state: None,
             deposit_mint: None,
             admin: None,
-            new_operator: None,
+            queue: None,
             __remaining_accounts: Vec::new(),
         });
         Self { instruction }
@@ -314,9 +316,11 @@ impl<'a, 'b> SetOperatorCpiBuilder<'a, 'b> {
         self.instruction.admin = Some(admin);
         self
     }
+    /// The attached queue, which must sign. The handler checks its key against
+    /// the stored authority.
     #[inline(always)]
-    pub fn new_operator(&mut self, new_operator: Pubkey) -> &mut Self {
-        self.instruction.new_operator = Some(new_operator);
+    pub fn queue(&mut self, queue: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
+        self.instruction.queue = Some(queue);
         self
     }
     /// Add an additional account to the instruction.
@@ -353,14 +357,7 @@ impl<'a, 'b> SetOperatorCpiBuilder<'a, 'b> {
     #[allow(clippy::clone_on_copy)]
     #[allow(clippy::vec_init_then_push)]
     pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
-        let args = SetOperatorInstructionArgs {
-            new_operator: self
-                .instruction
-                .new_operator
-                .clone()
-                .expect("new_operator is not set"),
-        };
-        let instruction = SetOperatorCpi {
+        let instruction = DetachWithdrawalQueueCpi {
             __program: self.instruction.__program,
 
             vault_state: self
@@ -374,7 +371,8 @@ impl<'a, 'b> SetOperatorCpiBuilder<'a, 'b> {
                 .expect("deposit_mint is not set"),
 
             admin: self.instruction.admin.expect("admin is not set"),
-            __args: args,
+
+            queue: self.instruction.queue.expect("queue is not set"),
         };
         instruction.invoke_signed_with_remaining_accounts(
             signers_seeds,
@@ -384,12 +382,12 @@ impl<'a, 'b> SetOperatorCpiBuilder<'a, 'b> {
 }
 
 #[derive(Clone, Debug)]
-struct SetOperatorCpiBuilderInstruction<'a, 'b> {
+struct DetachWithdrawalQueueCpiBuilderInstruction<'a, 'b> {
     __program: &'b solana_account_info::AccountInfo<'a>,
     vault_state: Option<&'b solana_account_info::AccountInfo<'a>>,
     deposit_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
     admin: Option<&'b solana_account_info::AccountInfo<'a>>,
-    new_operator: Option<Pubkey>,
+    queue: Option<&'b solana_account_info::AccountInfo<'a>>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
 }

@@ -52,5 +52,7 @@ spl-token-2022 = "8.0.1"
 spl-associated-token-account = "6"
 
 [dev-dependencies]
+# Decodes `Program data:` logs so tests can assert on emitted events.
+base64 = "0.21"
 proptest = "1"
 test-case = "3.3.1"
