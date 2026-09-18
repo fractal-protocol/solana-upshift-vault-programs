@@ -8,7 +8,9 @@
 
 pub mod initialize_queue;
 pub mod queue_admin;
+pub mod request_withdrawal;
 pub mod set_accepting_requests;
 pub mod set_cooldown;
 pub mod set_finalizer_authority;
 pub mod set_fulfillment_window;
+pub mod update_request;

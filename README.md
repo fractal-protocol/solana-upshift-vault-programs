@@ -7,7 +7,7 @@ This workspace builds two programs:
 | Crate | Artifact | Status |
 |---|---|---|
 | `programs/august-vault` | `august_vault.so` | Live on mainnet and devnet. Everything below describes this program. |
-| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | **Admin instructions only** (`initialize_queue` and four config setters) over the `WithdrawalQueue` / `WithdrawalRequest` state accounts. Requests, finalization and `release_vault` are not implemented. **Not deployed anywhere, and must not be until `release_vault` lands.** |
+| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | `initialize_queue`, four config setters, `request_withdrawal` and `update_request` over the `WithdrawalQueue` / `WithdrawalRequest` state accounts. Finalization, cancellation and `release_vault` are not implemented. **Not deployed anywhere, and must not be until `release_vault` lands.** |
 
 The queue will let a vault route redemptions through a request-and-cooldown flow
 instead of paying out instantly. The vault side of that is already in place: a
@@ -202,8 +202,21 @@ or a Token-2022 mint carrying at most the two metadata extensions
 `set_fulfillment_window` (zero disables expiry, else at most 90 days),
 `set_finalizer_authority` (zero lifts the restriction) and
 `set_accepting_requests` configure it. Opening the queue requires the vault's
-gate to already point at it (`QueueNotActiveOnVault`, 6005). Requests,
-finalization and `release_vault` are not implemented yet.
+gate to already point at it (`QueueNotActiveOnVault`, 6005).
+
+Holders use `request_withdrawal(request_id, shares, min_assets_out, finalizer)`:
+their shares move to the queue's escrow and a request account is created at
+`["withdrawal_request", queue, owner, request_id]`, stamped with the cooldown and
+window in force at that moment. It requires the queue to be accepting
+(`NotAcceptingRequests`, 6007) and the vault's gate to point at the queue, a
+nonzero amount (`ZeroShares`, 6008), and a recipient that holds the deposit mint
+and belongs to neither the queue nor the vault (`InvalidRecipient`, 6009).
+`update_request(expected_sequence, min?, finalizer?)` plus an optional new
+recipient account lets the owner adjust those three fields while the request is
+pending and unexpired (`RequestExpired`, 6011); the sequence stamp must match
+(`StaleRequestSequence`, 6012) so a delayed instruction cannot land on a
+recreated request. Finalization, cancellation and `release_vault` are not
+implemented yet.
 
 **Do not deploy the queue program, or attach a queue, on any cluster yet.** Once
 `initialize_queue` is deployable the queue PDA can be created, so attaching
