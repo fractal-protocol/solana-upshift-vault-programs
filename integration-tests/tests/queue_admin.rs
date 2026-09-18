@@ -114,6 +114,31 @@ fn the_admin_creates_a_queue_in_drain_mode() {
     assert_eq!(e.cooldown_seconds, DAY);
 }
 
+/// An ATA's address is a pure function of its owner, mint and token program, and
+/// anyone may create one. A stranger who creates the queue's escrows first, and
+/// even funds one, must not be able to block the vault from ever getting a queue.
+#[test]
+fn pre_created_escrow_atas_do_not_block_initialization() {
+    let mut ctx = VaultCtx::fresh();
+    let pda = ctx.withdrawal_queue_pda();
+    let (share_mint, deposit_mint) = (ctx.share_mint, ctx.deposit_mint);
+    let shares_ata = ctx.create_ata_for(&pda, &share_mint);
+    let assets_ata = ctx.create_ata_for(&pda, &deposit_mint);
+    ctx.mint_deposit_to(&assets_ata, 1_000);
+
+    ctx.initialize_queue(DAY)
+        .expect("pre-created escrows are adopted, not refused");
+
+    let q = ctx.queue_state_data();
+    assert_eq!(q.escrow_shares, shares_ata);
+    assert_eq!(q.escrow_assets, assets_ata);
+    assert_eq!(
+        token_account(&ctx, &assets_ata).amount,
+        1_000,
+        "a balance already there is a donation, left where it is"
+    );
+}
+
 #[test]
 fn a_token_2022_vault_gets_a_queue_too() {
     let mut ctx = VaultCtx::fresh_token_2022();

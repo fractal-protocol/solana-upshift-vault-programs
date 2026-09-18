@@ -278,6 +278,13 @@ jobs:
                     grep -q "^${prog} = \"$PROGRAM_ID\"" Anchor.toml \
                       || { echo "::error::Anchor.toml has no '${prog} = ...' entry to sync"; exit 1; }
                   done
+                  # The vault hardcodes the queue's id (state/vault.rs) and `anchor keys
+                  # sync` does not know about it; without this a localnet queue's PDAs
+                  # would never validate in the vault's attach.
+                  QUEUE_ID=$(solana-keygen pubkey target/deploy/august_withdrawal_queue-keypair.json)
+                  sed -i "/^pub const WITHDRAWAL_QUEUE_PROGRAM_ID: Pubkey =/{n;s/pubkey!(\"[1-9A-HJ-NP-Za-km-z]*\")/pubkey!(\"$QUEUE_ID\")/}" programs/august-vault/src/state/vault.rs
+                  grep -q "pubkey!(\"$QUEUE_ID\")" programs/august-vault/src/state/vault.rs \
+                    || { echo "::error::WITHDRAWAL_QUEUE_PROGRAM_ID in state/vault.rs was not synced to the localnet queue id"; exit 1; }
 
             - name: Rebuild with localnet program ID
               run: anchor build

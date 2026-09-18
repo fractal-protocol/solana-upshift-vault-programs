@@ -90,8 +90,15 @@ pub struct InitializeQueue<'info> {
     )]
     pub queue: Box<Account<'info, WithdrawalQueue>>,
 
+    /// `init_if_needed`, not `init`: an ATA's address is a pure function of
+    /// (owner, mint, token program) and anyone may create it, so a stranger who
+    /// created these two first would otherwise make every `initialize_queue`
+    /// for this vault fail in the create CPI. When the account exists, Anchor
+    /// checks its mint, authority and token program against these constraints,
+    /// which is exactly what a fresh create would have produced. A balance
+    /// someone already sent there is a donation; payouts are balance deltas.
     #[account(
-        init,
+        init_if_needed,
         payer = payer,
         associated_token::mint = share_mint,
         associated_token::authority = queue,
@@ -100,7 +107,7 @@ pub struct InitializeQueue<'info> {
     pub escrow_shares: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(
-        init,
+        init_if_needed,
         payer = payer,
         associated_token::mint = deposit_mint,
         associated_token::authority = queue,

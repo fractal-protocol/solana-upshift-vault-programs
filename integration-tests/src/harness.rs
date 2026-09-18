@@ -1047,6 +1047,26 @@ impl VaultCtx {
         send_tx(&mut self.svm, admin, &[ix], &[admin])
     }
 
+    /// Creates the ATA of `owner` for `mint` under this vault's token program,
+    /// paid by the harness payer, as anyone may. Returns its address.
+    pub fn create_ata_for(&mut self, owner: &Pubkey, mint: &Pubkey) -> Pubkey {
+        let payer = self.payer.insecure_clone();
+        create_ata(&mut self.svm, &payer, owner, mint, self.token_program)
+    }
+
+    /// Mints `amount` of the deposit token straight into `destination`.
+    pub fn mint_deposit_to(&mut self, destination: &Pubkey, amount: u64) {
+        let ix = mint_to_ix(
+            self.token_program,
+            &self.deposit_mint,
+            destination,
+            &self.payer.pubkey(),
+            amount,
+        );
+        let payer = self.payer.insecure_clone();
+        send_tx(&mut self.svm, &payer, &[ix], &[&payer]).expect("mint to destination");
+    }
+
     /// Create and fund a throwaway keypair (for impostor-signer tests).
     pub fn new_funded_keypair(&mut self, lamports: u64) -> Keypair {
         airdrop_keypair(&mut self.svm, lamports)
