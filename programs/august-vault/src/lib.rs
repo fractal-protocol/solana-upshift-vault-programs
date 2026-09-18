@@ -9,10 +9,12 @@
 pub mod errors;
 pub mod state;
 use instructions::accept_admin_nomination::*;
+use instructions::attach_withdrawal_queue::*;
 use instructions::close_vault::*;
 use instructions::create_metadata::*;
 use instructions::deposit::*;
 use instructions::deregister_subaccount::*;
+use instructions::detach_withdrawal_queue::*;
 use instructions::initialize::*;
 use instructions::initialize_config::*;
 use instructions::nominate_admin::*;
@@ -308,6 +310,27 @@ pub mod august_vault {
         decrease_limit: u32,
     ) -> Result<()> {
         return instructions::set_aum_limits::handler(ctx, increase_limit, decrease_limit);
+    }
+
+    /// Admin attaches this vault's withdrawal queue.
+    ///
+    /// `queue` must be this vault's queue PDA under the hardcoded queue program,
+    /// already initialized there. Anything else is refused, because a stored key
+    /// nobody can sign for would freeze every exit. That PDA is a pure function
+    /// of the vault, so the instruction takes no key argument: there is exactly
+    /// one value it can store. A vault with a queue already attached is refused.
+    pub fn attach_withdrawal_queue(ctx: Context<AttachWithdrawalQueue>) -> Result<()> {
+        return instructions::attach_withdrawal_queue::handler(ctx);
+    }
+
+    /// Admin detaches this vault's withdrawal queue, restoring direct redemption.
+    ///
+    /// The attached queue must co-sign, which it will do from `release_vault`
+    /// (WQ-09) once every pending request has been finalized or cancelled. The
+    /// vault never reads queue state, so that signature is how "drained" is
+    /// expressed.
+    pub fn detach_withdrawal_queue(ctx: Context<DetachWithdrawalQueue>) -> Result<()> {
+        return instructions::detach_withdrawal_queue::handler(ctx);
     }
 
     /// Admin Pauses the Vault

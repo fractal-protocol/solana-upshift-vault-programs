@@ -76,18 +76,32 @@ pub enum AugustVaultError {
     /// 6021 - Signer is not this vault's withdrawal_queue_authority; holders request a withdrawal at the queue instead
     #[error("Signer is not this vault's withdrawal_queue_authority; holders request a withdrawal at the queue instead")]
     WithdrawalQueueRequired = 0x1785,
-    /// 6022 - A subaccount must differ from the operator, belong to this vault, and be passed whenever the vault has any registered
+    /// 6022 - Queue must be this vault's initialized, queue-program-owned withdrawal-queue PDA
+    #[error("Queue must be this vault's initialized, queue-program-owned withdrawal-queue PDA")]
+    InvalidWithdrawalQueueAuthority = 0x1786,
+    /// 6023 - The queue slot was signed by a key other than the attached queue
+    #[error("The queue slot was signed by a key other than the attached queue")]
+    WrongWithdrawalQueueSigner = 0x1787,
+    /// 6024 - A withdrawal queue is already attached; detach it before attaching again
+    #[error("A withdrawal queue is already attached; detach it before attaching again")]
+    WithdrawalQueueAlreadyAttached = 0x1788,
+    /// 6025 - No withdrawal queue is attached to this vault
+    #[error("No withdrawal queue is attached to this vault")]
+    WithdrawalQueueNotAttached = 0x1789,
+    /// 6026 - A subaccount must differ from the operator, belong to this vault, and be passed whenever the vault has any registered
     #[error("A subaccount must differ from the operator, belong to this vault, and be passed whenever the vault has any registered")]
-    InvalidSubaccount = 0x1786,
-    /// 6023 - The named address's ATA must have this vault approved as delegate, with an allowance covering the transfer
+    InvalidSubaccount = 0x178A,
+    /// 6027 - The named address's ATA must have this vault approved as delegate, with an allowance covering the transfer
     #[error("The named address's ATA must have this vault approved as delegate, with an allowance covering the transfer")]
-    SubaccountDelegationMissing = 0x1787,
-    /// 6024 - A subaccount still holds outstanding principal and cannot be deregistered
+    SubaccountDelegationMissing = 0x178B,
+    /// 6028 - A subaccount still holds outstanding principal and cannot be deregistered
     #[error("A subaccount still holds outstanding principal and cannot be deregistered")]
-    SubaccountNotEmpty = 0x1788,
-    /// 6025 - A loss settlement may not exceed the principal that is not sitting at the destination
-    #[error("A loss settlement may not exceed the principal that is not sitting at the destination")]
-    LossExceedsShortfall = 0x1789,
+    SubaccountNotEmpty = 0x178C,
+    /// 6029 - A loss settlement may not exceed the principal that is not sitting at the destination
+    #[error(
+        "A loss settlement may not exceed the principal that is not sitting at the destination"
+    )]
+    LossExceedsShortfall = 0x178D,
 }
 
 impl From<AugustVaultError> for solana_program_error::ProgramError {
@@ -95,4 +109,3 @@ impl From<AugustVaultError> for solana_program_error::ProgramError {
         solana_program_error::ProgramError::Custom(e as u32)
     }
 }
-

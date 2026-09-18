@@ -70,6 +70,19 @@ pub enum ErrorCode {
     InvalidShareOffset,
     #[msg("Signer is not this vault's withdrawal_queue_authority; holders request a withdrawal at the queue instead")]
     WithdrawalQueueRequired,
+    #[msg("Queue must be this vault's initialized, queue-program-owned withdrawal-queue PDA")]
+    InvalidWithdrawalQueueAuthority,
+    // Named for what the vault checks, a signature, not for the drain rule it
+    // stands in for: the queue reports an undrained queue itself, from
+    // `release_vault`, before it ever reaches the vault. Do not name a specific
+    // queue instruction in the message: error strings ship in the bytecode and
+    // can be corrected only by a program upgrade.
+    #[msg("The queue slot was signed by a key other than the attached queue")]
+    WrongWithdrawalQueueSigner,
+    #[msg("A withdrawal queue is already attached; detach it before attaching again")]
+    WithdrawalQueueAlreadyAttached,
+    #[msg("No withdrawal queue is attached to this vault")]
+    WithdrawalQueueNotAttached,
     #[msg("A subaccount must differ from the operator, belong to this vault, and be passed whenever the vault has any registered")]
     InvalidSubaccount,
     #[msg("The named address's ATA must have this vault approved as delegate, with an allowance covering the transfer")]
@@ -150,8 +163,12 @@ pin_error_abi! {
     SharePriceUndefined => 19,
     InvalidShareOffset => 20,
     WithdrawalQueueRequired => 21,
-    InvalidSubaccount => 22,
-    SubaccountDelegationMissing => 23,
-    SubaccountNotEmpty => 24,
-    LossExceedsShortfall => 25,
+    InvalidWithdrawalQueueAuthority => 22,
+    WrongWithdrawalQueueSigner => 23,
+    WithdrawalQueueAlreadyAttached => 24,
+    WithdrawalQueueNotAttached => 25,
+    InvalidSubaccount => 26,
+    SubaccountDelegationMissing => 27,
+    SubaccountNotEmpty => 28,
+    LossExceedsShortfall => 29,
 }

@@ -5,7 +5,6 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
-      pub(crate) mod august_withdrawal_queue;
-  
-      pub use self::august_withdrawal_queue::AugustWithdrawalQueueError;
-  
+pub(crate) mod august_withdrawal_queue;
+
+pub use self::august_withdrawal_queue::AugustWithdrawalQueueError;

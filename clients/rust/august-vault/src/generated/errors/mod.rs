@@ -5,7 +5,6 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
-      pub(crate) mod august_vault;
-  
-      pub use self::august_vault::AugustVaultError;
-  
+pub(crate) mod august_vault;
+
+pub use self::august_vault::AugustVaultError;

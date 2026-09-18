@@ -24,6 +24,21 @@ pub const EXTRA_SHARES: u128 = 1_000_000;
 /// `MIN_SUPPLY_MULTIPLE` in the program.
 pub const MIN_SUPPLY_MULTIPLE: u128 = 100;
 
+/// The withdrawal-queue program the vault trusts, mirroring
+/// `WITHDRAWAL_QUEUE_PROGRAM_ID` in the program. `attach_withdrawal_queue`
+/// stores exactly one key: the PDA of [`WITHDRAWAL_QUEUE_SEED`] and the vault
+/// state address under this program, canonical bump, once the queue program has
+/// initialized the account there. Pass that key as the instruction's `queue`
+/// account.
+///
+/// Keep in step with `programs/august-vault/src/state/vault.rs`.
+pub const WITHDRAWAL_QUEUE_PROGRAM_ID: Pubkey =
+    Pubkey::from_str_const("NmJ9CGaiPJSfAGSdhNeVDkMPGi7ZQMABYYwWUC4GHyf");
+
+/// First seed of the queue's per-vault PDA; the second is the vault state
+/// address. Mirrors `WITHDRAWAL_QUEUE_SEED` in the program.
+pub const WITHDRAWAL_QUEUE_SEED: &[u8] = b"withdrawal_queue";
+
 impl VaultState {
     /// This vault's virtual-share offset, resolving the legacy zero.
     ///
@@ -90,8 +105,8 @@ impl VaultState {
             0..=3 => 1,
             d => 10_u64.saturating_pow(u32::from(d.saturating_sub(3))),
         };
-        let by_offset = u64::try_from(MIN_SUPPLY_MULTIPLE * self.resolved_share_offset())
-            .unwrap_or(u64::MAX);
+        let by_offset =
+            u64::try_from(MIN_SUPPLY_MULTIPLE * self.resolved_share_offset()).unwrap_or(u64::MAX);
         by_decimals.max(by_offset)
     }
 }

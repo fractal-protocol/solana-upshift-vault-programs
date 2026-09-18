@@ -47,12 +47,17 @@ jobs:
               with:
                   components: rustfmt
             # `--all` only covers the root workspace (programs/*). The
-            # integration-tests + clients/rust workspaces are excluded from it,
-            # so check integration-tests separately (clients/rust is generated).
+            # integration-tests and clients/rust workspaces are excluded from it,
+            # so each is checked separately. The clients are generated, and the
+            # generator formats its output, so an unformatted regeneration fails here.
             - name: Rustfmt (root workspace)
               run: cargo fmt --all --check
             - name: Rustfmt (integration-tests workspace)
               run: cargo fmt --manifest-path integration-tests/Cargo.toml --all --check
+            - name: Rustfmt (generated clients)
+              run: |
+                  cargo fmt --manifest-path clients/rust/august-vault/Cargo.toml --all --check
+                  cargo fmt --manifest-path clients/rust/august-withdrawal-queue/Cargo.toml --all --check
 
     # NOTE: this job cannot detect an author's untracked file. GitHub Actions
     # checks out committed state, so `git ls-files --others` is always empty
