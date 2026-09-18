@@ -16,7 +16,8 @@ use august_vault::{
     },
 };
 use august_withdrawal_queue::{
-    accounts as q_accounts, instruction as q_ix, state::WithdrawalQueue,
+    accounts as q_accounts, instruction as q_ix,
+    state::{WithdrawalQueue, WithdrawalRequest, WITHDRAWAL_REQUEST_SEED},
 };
 use litesvm::{types::FailedTransactionMetadata, LiteSVM};
 // `solana_sdk::bpf_loader_upgradeable` is deprecated in favour of the
@@ -40,6 +41,10 @@ use spl_associated_token_account::{
 use spl_token::state::{Account as SplAccount, Mint as SplMint};
 
 pub const VAULT_VERSION: u8 = 0;
+/// Unix time every fresh SVM starts at. LiteSVM's clock begins at 0, where a
+/// forgotten `eligible_at` (still 0) and a correct one under a zero cooldown are
+/// the same byte; a real epoch keeps that class of bug visible.
+pub const HARNESS_EPOCH: i64 = 1_790_000_000;
 /// Offset the harness vaults are created with. Uses the program's own default so
 /// the suite exercises the value real vaults get unless a test says otherwise.
 pub const HARNESS_SHARE_OFFSET: u128 = august_vault::state::vault::EXTRA_SHARES;
@@ -144,6 +149,9 @@ impl VaultCtx {
 
     fn fresh_inner(token_program: TokenProgramKind, extensions: &[MintExtension]) -> Self {
         let mut svm = LiteSVM::new();
+        let mut clock: solana_sdk::clock::Clock = svm.get_sysvar();
+        clock.unix_timestamp = HARNESS_EPOCH;
+        svm.set_sysvar(&clock);
 
         svm.add_program(
             august_vault::ID,
@@ -1380,6 +1388,164 @@ impl VaultCtx {
         );
         let payer = self.payer.insecure_clone();
         send_tx(&mut self.svm, &payer, &[ix], &[&payer]).expect("mint to destination");
+    }
+
+    /// The Clock sysvar's current `unix_timestamp`.
+    pub fn now(&self) -> i64 {
+        let clock: solana_sdk::clock::Clock = self.svm.get_sysvar();
+        clock.unix_timestamp
+    }
+
+    // ---- the queue program's request instructions ----
+
+    /// Initializes the queue, attaches it on the vault and opens it to requests.
+    /// Returns the queue PDA.
+    pub fn open_queue(&mut self, cooldown_seconds: u64) -> Pubkey {
+        self.initialize_queue(cooldown_seconds)
+            .expect("initialize_queue");
+        let pda = self.withdrawal_queue_pda();
+        self.attach_withdrawal_queue(pda).expect("attach");
+        self.set_accepting_requests(true).expect("accept requests");
+        pda
+    }
+
+    /// The request PDA for `owner`'s `request_id` on this vault's queue.
+    pub fn request_pda(&self, owner: &Pubkey, request_id: u64) -> Pubkey {
+        Pubkey::find_program_address(
+            &[
+                WITHDRAWAL_REQUEST_SEED,
+                self.withdrawal_queue_pda().as_ref(),
+                owner.as_ref(),
+                &request_id.to_le_bytes(),
+            ],
+            &august_withdrawal_queue::ID,
+        )
+        .0
+    }
+
+    /// Decodes a request account. Panics if it does not exist.
+    pub fn request_state_data(&self, owner: &Pubkey, request_id: u64) -> WithdrawalRequest {
+        let account = self
+            .svm
+            .get_account(&self.request_pda(owner, request_id))
+            .expect("request account exists");
+        WithdrawalRequest::try_deserialize(&mut account.data.as_slice()).expect("decode request")
+    }
+
+    /// `request_withdrawal` as the user, from their share ATA, paying their
+    /// deposit ATA, with no finalizer restriction.
+    pub fn request_withdrawal(
+        &mut self,
+        request_id: u64,
+        shares: u64,
+        min_assets_out: u64,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let user = self.user.insecure_clone();
+        let (share_account, recipient) = (self.user_share_ata, self.user_deposit_ata);
+        self.request_withdrawal_as(
+            &user,
+            share_account,
+            recipient,
+            request_id,
+            shares,
+            min_assets_out,
+            Pubkey::default(),
+        )
+    }
+
+    /// `request_withdrawal` with every account and argument chosen by the test.
+    #[allow(clippy::too_many_arguments)]
+    pub fn request_withdrawal_as(
+        &mut self,
+        owner: &Keypair,
+        owner_share_account: Pubkey,
+        recipient_token_account: Pubkey,
+        request_id: u64,
+        shares: u64,
+        min_assets_out: u64,
+        finalizer: Pubkey,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let accounts = q_accounts::RequestWithdrawal {
+            queue: self.withdrawal_queue_pda(),
+            vault_state: self.vault_state,
+            owner: owner.pubkey(),
+            owner_share_account,
+            escrow_shares: self.queue_escrow(&self.share_mint),
+            share_mint: self.share_mint,
+            recipient_token_account,
+            request: self.request_pda(&owner.pubkey(), request_id),
+            token_program: self.token_program.id(),
+            system_program: solana_sdk::system_program::ID,
+        }
+        .to_account_metas(None);
+        let ix = Instruction {
+            program_id: august_withdrawal_queue::ID,
+            accounts,
+            data: q_ix::RequestWithdrawal {
+                request_id,
+                shares,
+                min_assets_out,
+                finalizer,
+            }
+            .data(),
+        };
+        send_tx(&mut self.svm, owner, &[ix], &[owner])
+    }
+
+    /// `update_request` as the user on their own request.
+    pub fn update_request(
+        &mut self,
+        request_id: u64,
+        expected_sequence: u64,
+        min_assets_out: Option<u64>,
+        new_recipient: Option<Pubkey>,
+        finalizer: Option<Pubkey>,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let user = self.user.insecure_clone();
+        let owner = user.pubkey();
+        self.update_request_as(
+            &user,
+            &owner,
+            request_id,
+            expected_sequence,
+            min_assets_out,
+            new_recipient,
+            finalizer,
+        )
+    }
+
+    /// `update_request` signed by `signer` against `request_owner`'s request,
+    /// so a test can have the wrong person try.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_request_as(
+        &mut self,
+        signer: &Keypair,
+        request_owner: &Pubkey,
+        request_id: u64,
+        expected_sequence: u64,
+        min_assets_out: Option<u64>,
+        new_recipient: Option<Pubkey>,
+        finalizer: Option<Pubkey>,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let accounts = q_accounts::UpdateRequest {
+            queue: self.withdrawal_queue_pda(),
+            vault_state: self.vault_state,
+            owner: signer.pubkey(),
+            request: self.request_pda(request_owner, request_id),
+            new_recipient,
+        }
+        .to_account_metas(None);
+        let ix = Instruction {
+            program_id: august_withdrawal_queue::ID,
+            accounts,
+            data: q_ix::UpdateRequest {
+                expected_sequence,
+                min_assets_out,
+                finalizer,
+            }
+            .data(),
+        };
+        send_tx(&mut self.svm, signer, &[ix], &[signer])
     }
 
     /// Create and fund a throwaway keypair (for impostor-signer tests).

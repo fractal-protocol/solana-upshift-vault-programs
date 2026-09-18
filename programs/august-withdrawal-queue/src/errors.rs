@@ -32,6 +32,20 @@ pub enum ErrorCode {
     QueueNotActiveOnVault,
     #[msg("Deposit mint carries a Token-2022 extension the queue does not support")]
     UnsupportedDepositMint,
+    #[msg("The queue is not accepting new requests")]
+    NotAcceptingRequests,
+    #[msg("A request must escrow at least one share")]
+    ZeroShares,
+    #[msg(
+        "Recipient must be a deposit-mint token account that is not an escrow or the vault reserve"
+    )]
+    InvalidRecipient,
+    #[msg("Signer is not the request's owner")]
+    NotRequestOwner,
+    #[msg("The request's fulfillment window has closed; it can only be cancelled")]
+    RequestExpired,
+    #[msg("expected_sequence does not match the request; it may have been recreated")]
+    StaleRequestSequence,
 }
 
 /// Compile-time pin of the ABI above, generated from one list so completeness
@@ -74,6 +88,12 @@ pin_error_abi! {
     FulfillmentWindowOutOfBounds => 4,
     QueueNotActiveOnVault => 5,
     UnsupportedDepositMint => 6,
+    NotAcceptingRequests => 7,
+    ZeroShares => 8,
+    InvalidRecipient => 9,
+    NotRequestOwner => 10,
+    RequestExpired => 11,
+    StaleRequestSequence => 12,
 }
 
 #[cfg(test)]

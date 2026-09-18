@@ -7,6 +7,8 @@
 
 pub(crate) mod r#vault_state;
 pub(crate) mod r#withdrawal_queue;
+pub(crate) mod r#withdrawal_request;
 
 pub use self::r#vault_state::*;
 pub use self::r#withdrawal_queue::*;
+pub use self::r#withdrawal_request::*;
