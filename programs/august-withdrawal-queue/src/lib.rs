@@ -10,15 +10,15 @@
 //!
 //! The vault half is live: a vault whose `withdrawal_queue_authority` is set
 //! accepts redemptions from that key alone, and one left unset redeems instantly
-//! as before. What is missing is this side — holders will request a withdrawal
-//! here, wait out a cooldown, and the request will be finalized by CPI into the
-//! vault's `redeem_checked`, with this program's per-vault PDA signing as the
-//! authority the vault was pointed at.
+//! as before. Holders request a withdrawal here and wait out a cooldown;
+//! finalization by CPI into the vault's `redeem_checked`, with this program's
+//! per-vault PDA signing as the authority the vault was pointed at, is not yet
+//! implemented.
 //!
 //! This crate carries the program identity, the error ABI pin, the build wiring,
-//! the two state accounts (`state`), the admin check (`auth`) and the queue's
-//! admin instructions. Requests, finalization and release arrive with their own
-//! changes.
+//! the two state accounts (`state`), the admin check (`auth`), the queue's
+//! admin instructions, and the owner's request and update instructions.
+//! Finalization, cancellation and release arrive with their own changes.
 //!
 //! **Deployment blocker.** `initialize_queue` is what first makes a queue
 //! attachable on the vault side, and detaching needs `release_vault`, which does
@@ -30,10 +30,13 @@ pub mod errors;
 pub mod events;
 pub mod instructions;
 pub mod mint_policy;
+pub mod recipient;
 pub mod state;
 
 use instructions::initialize_queue::*;
 use instructions::queue_admin::*;
+use instructions::request_withdrawal::*;
+use instructions::update_request::*;
 
 use anchor_lang::prelude::*;
 
@@ -92,5 +95,56 @@ pub mod august_withdrawal_queue {
     /// drain mode, in which finalize and cancel keep working.
     pub fn set_accepting_requests(ctx: Context<QueueAdmin>, accepting: bool) -> Result<()> {
         return instructions::set_accepting_requests::handler(ctx, accepting);
+    }
+
+    /// A holder escrows `shares` and opens a request that becomes finalizable
+    /// after the queue's cooldown, paying `recipient_token_account` at least
+    /// `min_assets_out`. Requires the queue to be accepting and the vault's gate
+    /// to point at it.
+    ///
+    /// ### Parameters
+    /// - `request_id` - Owner-chosen id, unique per owner while the request exists
+    /// - `shares` - Shares to escrow, nonzero
+    /// - `min_assets_out` - Floor on the net payout
+    /// - `finalizer` - Who may finalize besides the owner; zero for no request-level
+    ///   restriction, the queue's `finalizer_authority` still applies
+    pub fn request_withdrawal(
+        ctx: Context<RequestWithdrawal>,
+        request_id: u64,
+        shares: u64,
+        min_assets_out: u64,
+        finalizer: Pubkey,
+    ) -> Result<()> {
+        return instructions::request_withdrawal::handler(
+            ctx,
+            request_id,
+            shares,
+            min_assets_out,
+            finalizer,
+        );
+    }
+
+    /// The owner changes a pending, unexpired request's floor, finalizer, or
+    /// recipient (passed as the optional `new_recipient` account). A field left
+    /// `None`, or a recipient left out, is unchanged; a call that would change
+    /// nothing is refused. `Some(Pubkey::default())` clears the finalizer.
+    ///
+    /// ### Parameters
+    /// - `expected_sequence` - The request's stamp, so a delayed call cannot land
+    ///   on a recreated request with the same id
+    /// - `min_assets_out` - New floor on the net payout, if changing
+    /// - `finalizer` - New request-level finalizer, if changing; zero clears it
+    pub fn update_request(
+        ctx: Context<UpdateRequest>,
+        expected_sequence: u64,
+        min_assets_out: Option<u64>,
+        finalizer: Option<Pubkey>,
+    ) -> Result<()> {
+        return instructions::update_request::handler(
+            ctx,
+            expected_sequence,
+            min_assets_out,
+            finalizer,
+        );
     }
 }

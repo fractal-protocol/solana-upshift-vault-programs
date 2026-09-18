@@ -6,13 +6,17 @@
 //!
 
 pub(crate) mod r#initialize_queue;
+pub(crate) mod r#request_withdrawal;
 pub(crate) mod r#set_accepting_requests;
 pub(crate) mod r#set_cooldown;
 pub(crate) mod r#set_finalizer_authority;
 pub(crate) mod r#set_fulfillment_window;
+pub(crate) mod r#update_request;
 
 pub use self::r#initialize_queue::*;
+pub use self::r#request_withdrawal::*;
 pub use self::r#set_accepting_requests::*;
 pub use self::r#set_cooldown::*;
 pub use self::r#set_finalizer_authority::*;
 pub use self::r#set_fulfillment_window::*;
+pub use self::r#update_request::*;

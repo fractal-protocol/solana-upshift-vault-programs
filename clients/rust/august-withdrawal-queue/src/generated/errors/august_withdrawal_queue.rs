@@ -31,6 +31,29 @@ pub enum AugustWithdrawalQueueError {
     /// 6006 - Deposit mint carries a Token-2022 extension the queue does not support
     #[error("Deposit mint carries a Token-2022 extension the queue does not support")]
     UnsupportedDepositMint = 0x1776,
+    /// 6007 - The queue is not accepting new requests
+    #[error("The queue is not accepting new requests")]
+    NotAcceptingRequests = 0x1777,
+    /// 6008 - A request must escrow at least one share
+    #[error("A request must escrow at least one share")]
+    ZeroShares = 0x1778,
+    /// 6009 - Recipient must be a deposit-mint token account that is not an escrow or the vault reserve
+    #[error(
+        "Recipient must be a deposit-mint token account that is not an escrow or the vault reserve"
+    )]
+    InvalidRecipient = 0x1779,
+    /// 6010 - Signer is not the request's owner
+    #[error("Signer is not the request's owner")]
+    NotRequestOwner = 0x177A,
+    /// 6011 - The request's fulfillment window has closed; it can only be cancelled
+    #[error("The request's fulfillment window has closed; it can only be cancelled")]
+    RequestExpired = 0x177B,
+    /// 6012 - expected_sequence does not match the request; it may have been recreated
+    #[error("expected_sequence does not match the request; it may have been recreated")]
+    StaleRequestSequence = 0x177C,
+    /// 6013 - update_request would change nothing; pass a field or the new recipient account
+    #[error("update_request would change nothing; pass a field or the new recipient account")]
+    NothingToUpdate = 0x177D,
 }
 
 impl From<AugustWithdrawalQueueError> for solana_program_error::ProgramError {

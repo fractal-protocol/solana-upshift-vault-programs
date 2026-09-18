@@ -6,9 +6,12 @@
 // As of 10 March 2036 (the "Change Date"), use of this software will be
 // governed by version 2.0 of the Apache License.
 
-//! Queue-level events. Request events arrive with the request instructions.
+//! Queue-level and request-level events. Every request event carries the
+//! request's full identity: vault, queue, request PDA, owner-scoped id, owner
+//! and sequence stamp, so history is keyed by (request, sequence); one
+//! transaction can finalize several requests, so a signature is not a key.
 
-use crate::state::WithdrawalQueue;
+use crate::state::{WithdrawalQueue, WithdrawalRequest};
 use anchor_lang::prelude::*;
 
 /// Emitted once per vault, when its queue is created.
@@ -33,6 +36,73 @@ pub struct QueueConfigUpdated {
     pub fulfillment_window_seconds: u64,
     pub finalizer_authority: Pubkey,
     pub accepting_requests: bool,
+}
+
+/// A request was created and its shares escrowed.
+#[event]
+pub struct WithdrawalRequested {
+    pub vault: Pubkey,
+    pub queue: Pubkey,
+    pub request: Pubkey,
+    pub request_id: u64,
+    pub owner: Pubkey,
+    pub sequence: u64,
+    pub shares: u64,
+    pub min_assets_out: u64,
+    pub recipient_token_account: Pubkey,
+    pub finalizer: Pubkey,
+    pub eligible_at: i64,
+    pub expires_at: i64,
+}
+
+impl WithdrawalRequested {
+    pub fn snapshot(request: &WithdrawalRequest, vault: Pubkey, key: Pubkey) -> Self {
+        Self {
+            vault,
+            queue: request.queue,
+            request: key,
+            request_id: request.request_id,
+            owner: request.owner,
+            sequence: request.sequence,
+            shares: request.shares,
+            min_assets_out: request.min_assets_out,
+            recipient_token_account: request.recipient_token_account,
+            finalizer: request.finalizer,
+            eligible_at: request.eligible_at,
+            expires_at: request.expires_at,
+        }
+    }
+}
+
+/// The owner changed a pending request. Carries the three updatable fields as
+/// they now stand, whether or not each changed.
+#[event]
+pub struct WithdrawalRequestUpdated {
+    pub vault: Pubkey,
+    pub queue: Pubkey,
+    pub request: Pubkey,
+    pub request_id: u64,
+    pub owner: Pubkey,
+    pub sequence: u64,
+    pub min_assets_out: u64,
+    pub recipient_token_account: Pubkey,
+    pub finalizer: Pubkey,
+}
+
+impl WithdrawalRequestUpdated {
+    pub fn snapshot(request: &WithdrawalRequest, vault: Pubkey, key: Pubkey) -> Self {
+        Self {
+            vault,
+            queue: request.queue,
+            request: key,
+            request_id: request.request_id,
+            owner: request.owner,
+            sequence: request.sequence,
+            min_assets_out: request.min_assets_out,
+            recipient_token_account: request.recipient_token_account,
+            finalizer: request.finalizer,
+        }
+    }
 }
 
 impl QueueConfigUpdated {

@@ -323,6 +323,46 @@ fn counters_move_together_and_refuse_to_wrap() {
 // ---- request helpers ----
 
 #[test]
+fn open_writes_every_field_and_the_schedule() {
+    let mut request = WithdrawalRequest {
+        padding: [7; 8],
+        ..Default::default()
+    };
+    request
+        .open(
+            pk(1),
+            pk(2),
+            pk(3),
+            pk(4),
+            500,
+            400,
+            9,
+            3,
+            0x55,
+            1_000,
+            600,
+            60,
+        )
+        .expect("open");
+    assert_eq!((request.queue, request.owner), (pk(1), pk(2)));
+    assert_eq!(
+        (request.recipient_token_account, request.finalizer),
+        (pk(3), pk(4))
+    );
+    assert_eq!((request.shares, request.min_assets_out), (500, 400));
+    assert_eq!(
+        (request.request_id, request.sequence, request.bump),
+        (9, 3, 0x55)
+    );
+    assert_eq!(
+        (request.requested_at, request.scheduled_eligible_at),
+        (1_000, 1_600)
+    );
+    assert_eq!((request.eligible_at, request.expires_at), (1_600, 1_660));
+    assert_eq!(request.padding, [0; 8]);
+}
+
+#[test]
 fn schedule_derives_every_timestamp_from_now() {
     let mut request = WithdrawalRequest::default();
     request.schedule(1_000, 600, 0).expect("no window");
