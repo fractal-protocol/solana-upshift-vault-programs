@@ -34,6 +34,10 @@ if [ -z "$PROGRAMS" ]; then
 fi
 LIB_RS_FOR() { echo "programs/$(echo "$1" | tr '_' '-')/src/lib.rs"; }
 PROGRAM_KP_FOR() { echo "target/deploy/${1}-keypair.json"; }
+# The vault hardcodes the queue's program id here, and `anchor keys sync` does
+# not know about it. It is rewritten to the fresh queue id below and restored on
+# exit, so a localnet queue's PDAs validate in the vault's attach.
+VAULT_STATE_RS="programs/august-vault/src/state/vault.rs"
 
 # The maintained TypeScript suites — kept in sync with Anchor.toml [scripts].test
 # (the set CI runs and keeps green). Suites 4-10 (admin, token-2022, metadata,
@@ -68,6 +72,10 @@ cleanup() {
     if [ -n "$ANCHOR_BAK" ] && [ -f "$ANCHOR_BAK" ]; then
         if cp "$ANCHOR_BAK" Anchor.toml 2>/dev/null && cmp -s "$ANCHOR_BAK" Anchor.toml; then rm -f "$ANCHOR_BAK"
         else echo -e "${RED}⚠ failed to restore Anchor.toml — backup kept at $ANCHOR_BAK${NC}"; fi
+    fi
+    if [ -n "$BAK_DIR" ] && [ -f "$BAK_DIR/vault_state.rs" ]; then
+        if cp "$BAK_DIR/vault_state.rs" "$VAULT_STATE_RS" 2>/dev/null && cmp -s "$BAK_DIR/vault_state.rs" "$VAULT_STATE_RS"; then rm -f "$BAK_DIR/vault_state.rs"
+        else echo -e "${RED}⚠ failed to restore $VAULT_STATE_RS — backup kept at $BAK_DIR/vault_state.rs${NC}"; fi
     fi
     if [ -n "$BAK_DIR" ] && [ -d "$BAK_DIR" ]; then
         for prog in $PROGRAMS; do
@@ -202,6 +210,14 @@ prepare_local_program() {
         rm -f "$anchorcand"; echo -e "${RED}✗ failed to back up Anchor.toml${NC}"; exit 1
     fi
     ANCHOR_BAK="$anchorcand"
+    local vaultcand
+    vaultcand="$(mktemp)"
+    if ! cp "$VAULT_STATE_RS" "$vaultcand" || ! cmp -s "$VAULT_STATE_RS" "$vaultcand"; then
+        rm -f "$vaultcand"; echo -e "${RED}✗ failed to back up $VAULT_STATE_RS${NC}"; exit 1
+    fi
+    if ! mv "$vaultcand" "$BAK_DIR/vault_state.rs"; then
+        rm -f "$vaultcand"; echo -e "${RED}✗ failed to store the backup of $VAULT_STATE_RS${NC}"; exit 1
+    fi
 
     # A fresh program id each run is fine because ensure_localnet guarantees a
     # clean (--reset) ledger — nothing from a prior run's id/PDAs lingers.
@@ -238,6 +254,21 @@ prepare_local_program() {
         fi
         echo -e "${GREEN}✓ Local program id synced for $prog: $pid${NC}"
     done
+
+    # The constant lives on the line after its declaration; rewrite only that
+    # literal, then confirm it landed, since awk exits 0 having matched nothing.
+    local queue_pid
+    queue_pid=$(solana-keygen pubkey "$(PROGRAM_KP_FOR august_withdrawal_queue)")
+    if ! awk -v id="$queue_pid" '
+        prev ~ /^pub const WITHDRAWAL_QUEUE_PROGRAM_ID: Pubkey =/ { sub(/pubkey!\("[1-9A-HJ-NP-Za-km-z]+"\)/, "pubkey!(\"" id "\")") }
+        { print; prev = $0 }' "$VAULT_STATE_RS" > "$VAULT_STATE_RS.tmp" || ! mv "$VAULT_STATE_RS.tmp" "$VAULT_STATE_RS"; then
+        rm -f "$VAULT_STATE_RS.tmp"
+        echo -e "${RED}✗ failed to rewrite WITHDRAWAL_QUEUE_PROGRAM_ID in $VAULT_STATE_RS${NC}"; exit 1
+    fi
+    if ! grep -q "pubkey!(\"$queue_pid\")" "$VAULT_STATE_RS"; then
+        echo -e "${RED}✗ WITHDRAWAL_QUEUE_PROGRAM_ID in $VAULT_STATE_RS was not synced to $queue_pid — a localnet queue could never attach.${NC}"; exit 1
+    fi
+    echo -e "${GREEN}✓ Vault's hardcoded queue id synced: $queue_pid${NC}"
 }
 
 # Run `anchor test` against ONLY the given files by rewriting the [scripts].test

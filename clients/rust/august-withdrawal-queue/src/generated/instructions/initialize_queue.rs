@@ -25,7 +25,13 @@ pub struct InitializeQueue {
     pub share_mint: solana_pubkey::Pubkey,
 
     pub queue: solana_pubkey::Pubkey,
-
+    /// `init_if_needed`, not `init`: an ATA's address is a pure function of
+    /// (owner, mint, token program) and anyone may create it, so a stranger who
+    /// created these two first would otherwise make every `initialize_queue`
+    /// for this vault fail in the create CPI. When the account exists, Anchor
+    /// checks its mint, authority and token program against these constraints,
+    /// which is exactly what a fresh create would have produced. A balance
+    /// someone already sent there is a donation; payouts are balance deltas.
     pub escrow_shares: solana_pubkey::Pubkey,
 
     pub escrow_assets: solana_pubkey::Pubkey,
@@ -208,6 +214,13 @@ impl InitializeQueueBuilder {
         self.queue = Some(queue);
         self
     }
+    /// `init_if_needed`, not `init`: an ATA's address is a pure function of
+    /// (owner, mint, token program) and anyone may create it, so a stranger who
+    /// created these two first would otherwise make every `initialize_queue`
+    /// for this vault fail in the create CPI. When the account exists, Anchor
+    /// checks its mint, authority and token program against these constraints,
+    /// which is exactly what a fresh create would have produced. A balance
+    /// someone already sent there is a donation; payouts are balance deltas.
     #[inline(always)]
     pub fn escrow_shares(&mut self, escrow_shares: solana_pubkey::Pubkey) -> &mut Self {
         self.escrow_shares = Some(escrow_shares);
@@ -307,7 +320,13 @@ pub struct InitializeQueueCpiAccounts<'a, 'b> {
     pub share_mint: &'b solana_account_info::AccountInfo<'a>,
 
     pub queue: &'b solana_account_info::AccountInfo<'a>,
-
+    /// `init_if_needed`, not `init`: an ATA's address is a pure function of
+    /// (owner, mint, token program) and anyone may create it, so a stranger who
+    /// created these two first would otherwise make every `initialize_queue`
+    /// for this vault fail in the create CPI. When the account exists, Anchor
+    /// checks its mint, authority and token program against these constraints,
+    /// which is exactly what a fresh create would have produced. A balance
+    /// someone already sent there is a donation; payouts are balance deltas.
     pub escrow_shares: &'b solana_account_info::AccountInfo<'a>,
 
     pub escrow_assets: &'b solana_account_info::AccountInfo<'a>,
@@ -336,7 +355,13 @@ pub struct InitializeQueueCpi<'a, 'b> {
     pub share_mint: &'b solana_account_info::AccountInfo<'a>,
 
     pub queue: &'b solana_account_info::AccountInfo<'a>,
-
+    /// `init_if_needed`, not `init`: an ATA's address is a pure function of
+    /// (owner, mint, token program) and anyone may create it, so a stranger who
+    /// created these two first would otherwise make every `initialize_queue`
+    /// for this vault fail in the create CPI. When the account exists, Anchor
+    /// checks its mint, authority and token program against these constraints,
+    /// which is exactly what a fresh create would have produced. A balance
+    /// someone already sent there is a donation; payouts are balance deltas.
     pub escrow_shares: &'b solana_account_info::AccountInfo<'a>,
 
     pub escrow_assets: &'b solana_account_info::AccountInfo<'a>,
@@ -558,6 +583,13 @@ impl<'a, 'b> InitializeQueueCpiBuilder<'a, 'b> {
         self.instruction.queue = Some(queue);
         self
     }
+    /// `init_if_needed`, not `init`: an ATA's address is a pure function of
+    /// (owner, mint, token program) and anyone may create it, so a stranger who
+    /// created these two first would otherwise make every `initialize_queue`
+    /// for this vault fail in the create CPI. When the account exists, Anchor
+    /// checks its mint, authority and token program against these constraints,
+    /// which is exactly what a fresh create would have produced. A balance
+    /// someone already sent there is a donation; payouts are balance deltas.
     #[inline(always)]
     pub fn escrow_shares(
         &mut self,
