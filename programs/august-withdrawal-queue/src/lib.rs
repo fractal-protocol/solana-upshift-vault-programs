@@ -15,13 +15,14 @@
 //! vault's `redeem_checked`, with this program's per-vault PDA signing as the
 //! authority the vault was pointed at.
 //!
-//! **This crate is a scaffold.** It carries the program identity, the error ABI
-//! pin and the build wiring; the state accounts and instructions arrive with
-//! their own changes. An empty `#[program]` module still produces a deployable
-//! artifact, which is what lets the two-program build, CI and test harness be
-//! stood up and reviewed before any queue logic exists.
+//! **No instructions yet.** The crate carries the program identity, the error ABI
+//! pin, the build wiring, the two state accounts (`state`) and the admin check
+//! (`auth`); the instructions arrive with their own changes. An empty
+//! `#[program]` module still produces a deployable artifact.
 
+pub mod auth;
 pub mod errors;
+pub mod state;
 
 use anchor_lang::prelude::*;
 

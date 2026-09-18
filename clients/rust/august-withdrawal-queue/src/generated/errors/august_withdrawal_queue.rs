@@ -16,6 +16,15 @@ pub enum AugustWithdrawalQueueError {
     /// 6001 - Math error
     #[error("Math error")]
     MathError = 0x1771,
+    /// 6002 - vault_state is not the vault this queue serves
+    #[error("vault_state is not the vault this queue serves")]
+    VaultMismatch = 0x1772,
+    /// 6003 - Cooldown exceeds the 30-day maximum
+    #[error("Cooldown exceeds the 30-day maximum")]
+    CooldownOutOfBounds = 0x1773,
+    /// 6004 - Fulfillment window exceeds the 90-day maximum
+    #[error("Fulfillment window exceeds the 90-day maximum")]
+    FulfillmentWindowOutOfBounds = 0x1774,
 }
 
 impl From<AugustWithdrawalQueueError> for solana_program_error::ProgramError {
