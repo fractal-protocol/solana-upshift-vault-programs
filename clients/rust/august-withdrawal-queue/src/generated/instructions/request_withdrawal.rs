@@ -26,10 +26,10 @@ pub struct RequestWithdrawal {
     pub escrow_shares: solana_pubkey::Pubkey,
 
     pub share_mint: solana_pubkey::Pubkey,
-    /// Where finalization pays. Validated in the handler, decision 5.
+    /// Deposit-mint token account paid at finalization; not an escrow or the
+    /// vault reserve.
     pub recipient_token_account: solana_pubkey::Pubkey,
-    /// `init` is what makes `request_id` unique per owner while the account
-    /// exists.
+    /// Created here; fails if this owner already has a request with this id.
     pub request: solana_pubkey::Pubkey,
 
     pub token_program: solana_pubkey::Pubkey,
@@ -206,7 +206,8 @@ impl RequestWithdrawalBuilder {
         self.share_mint = Some(share_mint);
         self
     }
-    /// Where finalization pays. Validated in the handler, decision 5.
+    /// Deposit-mint token account paid at finalization; not an escrow or the
+    /// vault reserve.
     #[inline(always)]
     pub fn recipient_token_account(
         &mut self,
@@ -215,8 +216,7 @@ impl RequestWithdrawalBuilder {
         self.recipient_token_account = Some(recipient_token_account);
         self
     }
-    /// `init` is what makes `request_id` unique per owner while the account
-    /// exists.
+    /// Created here; fails if this owner already has a request with this id.
     #[inline(always)]
     pub fn request(&mut self, request: solana_pubkey::Pubkey) -> &mut Self {
         self.request = Some(request);
@@ -319,10 +319,10 @@ pub struct RequestWithdrawalCpiAccounts<'a, 'b> {
     pub escrow_shares: &'b solana_account_info::AccountInfo<'a>,
 
     pub share_mint: &'b solana_account_info::AccountInfo<'a>,
-    /// Where finalization pays. Validated in the handler, decision 5.
+    /// Deposit-mint token account paid at finalization; not an escrow or the
+    /// vault reserve.
     pub recipient_token_account: &'b solana_account_info::AccountInfo<'a>,
-    /// `init` is what makes `request_id` unique per owner while the account
-    /// exists.
+    /// Created here; fails if this owner already has a request with this id.
     pub request: &'b solana_account_info::AccountInfo<'a>,
 
     pub token_program: &'b solana_account_info::AccountInfo<'a>,
@@ -347,10 +347,10 @@ pub struct RequestWithdrawalCpi<'a, 'b> {
     pub escrow_shares: &'b solana_account_info::AccountInfo<'a>,
 
     pub share_mint: &'b solana_account_info::AccountInfo<'a>,
-    /// Where finalization pays. Validated in the handler, decision 5.
+    /// Deposit-mint token account paid at finalization; not an escrow or the
+    /// vault reserve.
     pub recipient_token_account: &'b solana_account_info::AccountInfo<'a>,
-    /// `init` is what makes `request_id` unique per owner while the account
-    /// exists.
+    /// Created here; fails if this owner already has a request with this id.
     pub request: &'b solana_account_info::AccountInfo<'a>,
 
     pub token_program: &'b solana_account_info::AccountInfo<'a>,
@@ -566,7 +566,8 @@ impl<'a, 'b> RequestWithdrawalCpiBuilder<'a, 'b> {
         self.instruction.share_mint = Some(share_mint);
         self
     }
-    /// Where finalization pays. Validated in the handler, decision 5.
+    /// Deposit-mint token account paid at finalization; not an escrow or the
+    /// vault reserve.
     #[inline(always)]
     pub fn recipient_token_account(
         &mut self,
@@ -575,8 +576,7 @@ impl<'a, 'b> RequestWithdrawalCpiBuilder<'a, 'b> {
         self.instruction.recipient_token_account = Some(recipient_token_account);
         self
     }
-    /// `init` is what makes `request_id` unique per owner while the account
-    /// exists.
+    /// Created here; fails if this owner already has a request with this id.
     #[inline(always)]
     pub fn request(&mut self, request: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.request = Some(request);

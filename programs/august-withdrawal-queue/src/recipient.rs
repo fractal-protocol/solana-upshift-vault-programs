@@ -12,28 +12,32 @@ use crate::errors::ErrorCode;
 use crate::state::WithdrawalQueue;
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::TokenAccount;
-use august_vault::state::vault::VaultState;
 
-/// The recipient must hold the deposit mint and must not belong to the queue or
-/// the vault. Paying an escrow would make the payout an SPL self-transfer that
-/// succeeds without moving anything, shares burned and assets stranded; paying
-/// the vault's reserve would hand the payout straight back. Authority is what
-/// identifies both: every token account the queue or the vault controls has one
-/// of them as owner, whatever its address.
+/// Must hold the deposit mint and be owned by neither PDA. Paying `escrow_assets`
+/// would turn finalize's payout into an SPL self-transfer, a successful no-op with
+/// shares burned and assets stranded; paying the reserve would return it to the
+/// vault. The authority check covers every account either PDA controls, whatever
+/// its address; the address check names the one account the hazard is about. A
+/// classic-SPL recipient can be reassigned to a PDA afterwards, which strands
+/// only the owner's own payout; finalize re-validates before paying.
 pub fn require_valid_recipient(
     recipient: &InterfaceAccount<'_, TokenAccount>,
     queue: &Account<'_, WithdrawalQueue>,
-    vault_state: &Account<'_, VaultState>,
 ) -> Result<()> {
     require_keys_eq!(
         recipient.mint,
         queue.deposit_mint,
         ErrorCode::InvalidRecipient
     );
+    require_keys_neq!(
+        recipient.key(),
+        queue.escrow_assets,
+        ErrorCode::InvalidRecipient
+    );
     require_keys_neq!(recipient.owner, queue.key(), ErrorCode::InvalidRecipient);
     require_keys_neq!(
         recipient.owner,
-        vault_state.key(),
+        queue.vault_state,
         ErrorCode::InvalidRecipient
     );
     Ok(())

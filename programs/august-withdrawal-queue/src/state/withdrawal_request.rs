@@ -80,6 +80,37 @@ const _: () = assert!(
 impl WithdrawalRequest {
     pub const LEN: usize = 8 + Self::INIT_SPACE;
 
+    /// Fills a freshly created request and stamps its schedule. The one writer of
+    /// a request's identity, so a handler cannot forget a field.
+    #[allow(clippy::too_many_arguments)]
+    pub fn open(
+        &mut self,
+        queue: Pubkey,
+        owner: Pubkey,
+        recipient_token_account: Pubkey,
+        finalizer: Pubkey,
+        shares: u64,
+        min_assets_out: u64,
+        request_id: u64,
+        sequence: u64,
+        bump: u8,
+        now: i64,
+        cooldown_seconds: u64,
+        window_seconds: u64,
+    ) -> Result<()> {
+        self.queue = queue;
+        self.owner = owner;
+        self.recipient_token_account = recipient_token_account;
+        self.finalizer = finalizer;
+        self.shares = shares;
+        self.min_assets_out = min_assets_out;
+        self.request_id = request_id;
+        self.sequence = sequence;
+        self.bump = bump;
+        self.padding = [0; 8];
+        self.schedule(now, cooldown_seconds, window_seconds)
+    }
+
     /// Writes every timestamp from one `now` and the queue's current settings.
     /// This is the only place the `expires_at` zero sentinel is decided: a
     /// disabled window stores `0`, never `scheduled_eligible_at + 0`.

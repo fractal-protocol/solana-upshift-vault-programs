@@ -42,8 +42,8 @@ use spl_token::state::{Account as SplAccount, Mint as SplMint};
 
 pub const VAULT_VERSION: u8 = 0;
 /// Unix time every fresh SVM starts at. LiteSVM's clock begins at 0, where a
-/// forgotten `eligible_at` (still 0) and a correct one under a zero cooldown are
-/// the same byte; a real epoch keeps that class of bug visible.
+/// forgotten timestamp (still 0) and a correct one under a zero cooldown are the
+/// same value; a real epoch keeps that class of bug visible.
 pub const HARNESS_EPOCH: i64 = 1_790_000_000;
 /// Offset the harness vaults are created with. Uses the program's own default so
 /// the suite exercises the value real vaults get unless a test says otherwise.
@@ -1062,6 +1062,33 @@ impl VaultCtx {
         create_ata(&mut self.svm, &payer, owner, mint, self.token_program)
     }
 
+    /// Creates a plain (non-associated) token account for `mint` with `owner` as
+    /// its authority, under this vault's token program. Anyone can do this for
+    /// any authority, PDAs included, which is why recipient checks look at the
+    /// authority rather than the address.
+    pub fn create_token_account_for(&mut self, owner: &Pubkey, mint: &Pubkey) -> Pubkey {
+        let payer = self.payer.insecure_clone();
+        let account = Keypair::new();
+        let len = spl_token_2022::state::Account::LEN;
+        let create = system_instruction::create_account(
+            &payer.pubkey(),
+            &account.pubkey(),
+            Rent::default().minimum_balance(len),
+            len as u64,
+            &self.token_program.id(),
+        );
+        let init = spl_token_2022::instruction::initialize_account3(
+            &self.token_program.id(),
+            &account.pubkey(),
+            mint,
+            owner,
+        )
+        .expect("initialize_account3");
+        send_tx(&mut self.svm, &payer, &[create, init], &[&payer, &account])
+            .expect("create token account");
+        account.pubkey()
+    }
+
     /// Mints `amount` of the deposit token straight into `destination`.
     pub fn mint_deposit_to(&mut self, destination: &Pubkey, amount: u64) {
         let ix = mint_to_ix(
@@ -1138,7 +1165,8 @@ impl VaultCtx {
         )
     }
 
-    /// `request_withdrawal` with every account and argument chosen by the test.
+    /// `request_withdrawal` with the owner, share account, recipient and
+    /// finalizer chosen by the test; every other account is the genuine one.
     #[allow(clippy::too_many_arguments)]
     pub fn request_withdrawal_as(
         &mut self,
@@ -1150,22 +1178,59 @@ impl VaultCtx {
         min_assets_out: u64,
         finalizer: Pubkey,
     ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
-        let accounts = q_accounts::RequestWithdrawal {
+        let accounts = self.request_withdrawal_accounts(
+            &owner.pubkey(),
+            owner_share_account,
+            recipient_token_account,
+            request_id,
+        );
+        self.send_request_withdrawal(
+            owner,
+            accounts,
+            request_id,
+            shares,
+            min_assets_out,
+            finalizer,
+        )
+    }
+
+    /// The genuine account set for a `request_withdrawal`. Tests that need to
+    /// substitute one account take this and overwrite a field before sending.
+    pub fn request_withdrawal_accounts(
+        &self,
+        owner: &Pubkey,
+        owner_share_account: Pubkey,
+        recipient_token_account: Pubkey,
+        request_id: u64,
+    ) -> q_accounts::RequestWithdrawal {
+        q_accounts::RequestWithdrawal {
             queue: self.withdrawal_queue_pda(),
             vault_state: self.vault_state,
-            owner: owner.pubkey(),
+            owner: *owner,
             owner_share_account,
             escrow_shares: self.queue_escrow(&self.share_mint),
             share_mint: self.share_mint,
             recipient_token_account,
-            request: self.request_pda(&owner.pubkey(), request_id),
+            request: self.request_pda(owner, request_id),
             token_program: self.token_program.id(),
             system_program: solana_sdk::system_program::ID,
         }
-        .to_account_metas(None);
+    }
+
+    /// Sends `request_withdrawal` with an explicit account set, signed and paid
+    /// by `owner`.
+    pub fn send_request_withdrawal(
+        &mut self,
+        owner: &Keypair,
+        accounts: q_accounts::RequestWithdrawal,
+        request_id: u64,
+        shares: u64,
+        min_assets_out: u64,
+        finalizer: Pubkey,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
         let ix = Instruction {
             program_id: august_withdrawal_queue::ID,
-            accounts,
+            accounts: accounts.to_account_metas(None),
             data: q_ix::RequestWithdrawal {
                 request_id,
                 shares,
@@ -1214,7 +1279,6 @@ impl VaultCtx {
     ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
         let accounts = q_accounts::UpdateRequest {
             queue: self.withdrawal_queue_pda(),
-            vault_state: self.vault_state,
             owner: signer.pubkey(),
             request: self.request_pda(request_owner, request_id),
             new_recipient,

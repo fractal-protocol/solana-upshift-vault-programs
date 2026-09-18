@@ -16,12 +16,8 @@ pub const UPDATE_REQUEST_DISCRIMINATOR: [u8; 8] = [0, 229, 201, 79, 235, 123, 13
 pub struct UpdateRequest {
     pub queue: solana_pubkey::Pubkey,
 
-    pub vault_state: solana_pubkey::Pubkey,
-
     pub owner: solana_pubkey::Pubkey,
-    /// Seeds are taken from the request's own stored fields, so a wrong signer
-    /// is reported by `has_one = owner` as `NotRequestOwner` rather than as a
-    /// seeds mismatch.
+    /// The owner's request; the signer must be its owner.
     pub request: solana_pubkey::Pubkey,
     /// Present to change where the request pays; validated like the original.
     pub new_recipient: Option<solana_pubkey::Pubkey>,
@@ -41,13 +37,9 @@ impl UpdateRequest {
         args: UpdateRequestInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
-        let mut accounts = Vec::with_capacity(5 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(4 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.queue, false,
-        ));
-        accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.vault_state,
-            false,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.owner, true,
@@ -120,14 +112,12 @@ impl UpdateRequestInstructionArgs {
 /// ### Accounts:
 ///
 ///   0. `[]` queue
-///   1. `[]` vault_state
-///   2. `[signer]` owner
-///   3. `[writable]` request
-///   4. `[optional]` new_recipient
+///   1. `[signer]` owner
+///   2. `[writable]` request
+///   3. `[optional]` new_recipient
 #[derive(Clone, Debug, Default)]
 pub struct UpdateRequestBuilder {
     queue: Option<solana_pubkey::Pubkey>,
-    vault_state: Option<solana_pubkey::Pubkey>,
     owner: Option<solana_pubkey::Pubkey>,
     request: Option<solana_pubkey::Pubkey>,
     new_recipient: Option<solana_pubkey::Pubkey>,
@@ -147,18 +137,11 @@ impl UpdateRequestBuilder {
         self
     }
     #[inline(always)]
-    pub fn vault_state(&mut self, vault_state: solana_pubkey::Pubkey) -> &mut Self {
-        self.vault_state = Some(vault_state);
-        self
-    }
-    #[inline(always)]
     pub fn owner(&mut self, owner: solana_pubkey::Pubkey) -> &mut Self {
         self.owner = Some(owner);
         self
     }
-    /// Seeds are taken from the request's own stored fields, so a wrong signer
-    /// is reported by `has_one = owner` as `NotRequestOwner` rather than as a
-    /// seeds mismatch.
+    /// The owner's request; the signer must be its owner.
     #[inline(always)]
     pub fn request(&mut self, request: solana_pubkey::Pubkey) -> &mut Self {
         self.request = Some(request);
@@ -207,7 +190,6 @@ impl UpdateRequestBuilder {
     pub fn instruction(&self) -> solana_instruction::Instruction {
         let accounts = UpdateRequest {
             queue: self.queue.expect("queue is not set"),
-            vault_state: self.vault_state.expect("vault_state is not set"),
             owner: self.owner.expect("owner is not set"),
             request: self.request.expect("request is not set"),
             new_recipient: self.new_recipient,
@@ -229,12 +211,8 @@ impl UpdateRequestBuilder {
 pub struct UpdateRequestCpiAccounts<'a, 'b> {
     pub queue: &'b solana_account_info::AccountInfo<'a>,
 
-    pub vault_state: &'b solana_account_info::AccountInfo<'a>,
-
     pub owner: &'b solana_account_info::AccountInfo<'a>,
-    /// Seeds are taken from the request's own stored fields, so a wrong signer
-    /// is reported by `has_one = owner` as `NotRequestOwner` rather than as a
-    /// seeds mismatch.
+    /// The owner's request; the signer must be its owner.
     pub request: &'b solana_account_info::AccountInfo<'a>,
     /// Present to change where the request pays; validated like the original.
     pub new_recipient: Option<&'b solana_account_info::AccountInfo<'a>>,
@@ -247,12 +225,8 @@ pub struct UpdateRequestCpi<'a, 'b> {
 
     pub queue: &'b solana_account_info::AccountInfo<'a>,
 
-    pub vault_state: &'b solana_account_info::AccountInfo<'a>,
-
     pub owner: &'b solana_account_info::AccountInfo<'a>,
-    /// Seeds are taken from the request's own stored fields, so a wrong signer
-    /// is reported by `has_one = owner` as `NotRequestOwner` rather than as a
-    /// seeds mismatch.
+    /// The owner's request; the signer must be its owner.
     pub request: &'b solana_account_info::AccountInfo<'a>,
     /// Present to change where the request pays; validated like the original.
     pub new_recipient: Option<&'b solana_account_info::AccountInfo<'a>>,
@@ -269,7 +243,6 @@ impl<'a, 'b> UpdateRequestCpi<'a, 'b> {
         Self {
             __program: program,
             queue: accounts.queue,
-            vault_state: accounts.vault_state,
             owner: accounts.owner,
             request: accounts.request,
             new_recipient: accounts.new_recipient,
@@ -299,13 +272,9 @@ impl<'a, 'b> UpdateRequestCpi<'a, 'b> {
         signers_seeds: &[&[&[u8]]],
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
-        let mut accounts = Vec::with_capacity(5 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(4 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.queue.key,
-            false,
-        ));
-        accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.vault_state.key,
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
@@ -343,10 +312,9 @@ impl<'a, 'b> UpdateRequestCpi<'a, 'b> {
             accounts,
             data,
         };
-        let mut account_infos = Vec::with_capacity(6 + remaining_accounts.len());
+        let mut account_infos = Vec::with_capacity(5 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
         account_infos.push(self.queue.clone());
-        account_infos.push(self.vault_state.clone());
         account_infos.push(self.owner.clone());
         account_infos.push(self.request.clone());
         if let Some(new_recipient) = self.new_recipient {
@@ -369,10 +337,9 @@ impl<'a, 'b> UpdateRequestCpi<'a, 'b> {
 /// ### Accounts:
 ///
 ///   0. `[]` queue
-///   1. `[]` vault_state
-///   2. `[signer]` owner
-///   3. `[writable]` request
-///   4. `[optional]` new_recipient
+///   1. `[signer]` owner
+///   2. `[writable]` request
+///   3. `[optional]` new_recipient
 #[derive(Clone, Debug)]
 pub struct UpdateRequestCpiBuilder<'a, 'b> {
     instruction: Box<UpdateRequestCpiBuilderInstruction<'a, 'b>>,
@@ -383,7 +350,6 @@ impl<'a, 'b> UpdateRequestCpiBuilder<'a, 'b> {
         let instruction = Box::new(UpdateRequestCpiBuilderInstruction {
             __program: program,
             queue: None,
-            vault_state: None,
             owner: None,
             request: None,
             new_recipient: None,
@@ -400,21 +366,11 @@ impl<'a, 'b> UpdateRequestCpiBuilder<'a, 'b> {
         self
     }
     #[inline(always)]
-    pub fn vault_state(
-        &mut self,
-        vault_state: &'b solana_account_info::AccountInfo<'a>,
-    ) -> &mut Self {
-        self.instruction.vault_state = Some(vault_state);
-        self
-    }
-    #[inline(always)]
     pub fn owner(&mut self, owner: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.owner = Some(owner);
         self
     }
-    /// Seeds are taken from the request's own stored fields, so a wrong signer
-    /// is reported by `has_one = owner` as `NotRequestOwner` rather than as a
-    /// seeds mismatch.
+    /// The owner's request; the signer must be its owner.
     #[inline(always)]
     pub fn request(&mut self, request: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.request = Some(request);
@@ -495,11 +451,6 @@ impl<'a, 'b> UpdateRequestCpiBuilder<'a, 'b> {
 
             queue: self.instruction.queue.expect("queue is not set"),
 
-            vault_state: self
-                .instruction
-                .vault_state
-                .expect("vault_state is not set"),
-
             owner: self.instruction.owner.expect("owner is not set"),
 
             request: self.instruction.request.expect("request is not set"),
@@ -518,7 +469,6 @@ impl<'a, 'b> UpdateRequestCpiBuilder<'a, 'b> {
 struct UpdateRequestCpiBuilderInstruction<'a, 'b> {
     __program: &'b solana_account_info::AccountInfo<'a>,
     queue: Option<&'b solana_account_info::AccountInfo<'a>>,
-    vault_state: Option<&'b solana_account_info::AccountInfo<'a>>,
     owner: Option<&'b solana_account_info::AccountInfo<'a>>,
     request: Option<&'b solana_account_info::AccountInfo<'a>>,
     new_recipient: Option<&'b solana_account_info::AccountInfo<'a>>,
