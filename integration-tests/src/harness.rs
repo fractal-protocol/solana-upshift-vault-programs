@@ -1,7 +1,9 @@
 //! Test harness: fresh LiteSVM + initialized vault + helper functions for
 //! every instruction the pilot tests need.
 
-use anchor_lang::{InstructionData, ToAccountMetas};
+use anchor_lang::{
+    AccountDeserialize, AnchorDeserialize, Discriminator, InstructionData, ToAccountMetas,
+};
 use august_vault::{
     accounts as ix_accounts,
     errors::ErrorCode,
@@ -9,8 +11,12 @@ use august_vault::{
     state::config::PROGRAM_CONFIG_SEED,
     state::nominated_admin::NOMINATED_ADMIN_PDA_SEED,
     state::vault::{
-        FEE_RATE_DENOMINATOR_VALUE, SHARE_MINT_SEED, VAULT_STATE_SEED, VAULT_TOKEN_SEED,
+        withdrawal_queue_pda, FEE_RATE_DENOMINATOR_VALUE, SHARE_MINT_SEED, VAULT_STATE_SEED,
+        VAULT_TOKEN_SEED,
     },
+};
+use august_withdrawal_queue::{
+    accounts as q_accounts, instruction as q_ix, state::WithdrawalQueue,
 };
 use litesvm::{types::FailedTransactionMetadata, LiteSVM};
 // `solana_sdk::bpf_loader_upgradeable` is deprecated in favour of the
@@ -77,6 +83,15 @@ impl TokenProgramKind {
     }
 }
 
+/// Token-2022 mint extensions the harness can create a deposit mint with. One
+/// the queue allows and one it refuses, so the allow-list can be tested from
+/// both sides.
+#[derive(Clone, Copy, Debug)]
+pub enum MintExtension {
+    MetadataPointer,
+    DefaultAccountStateFrozen,
+}
+
 /// A live vault + every key the tests need to interact with it.
 pub struct VaultCtx {
     pub svm: LiteSVM,
@@ -116,7 +131,18 @@ impl VaultCtx {
         Self::fresh_with_token_program(TokenProgramKind::Token2022)
     }
 
+    /// Fresh Token-2022 vault whose deposit mint carries `extensions`. Nothing
+    /// in the vault itself minds them; this exists so the queue's deposit-mint
+    /// allow-list can be exercised against real mint bytes.
+    pub fn fresh_token_2022_with_extensions(extensions: &[MintExtension]) -> Self {
+        Self::fresh_inner(TokenProgramKind::Token2022, extensions)
+    }
+
     fn fresh_with_token_program(token_program: TokenProgramKind) -> Self {
+        Self::fresh_inner(token_program, &[])
+    }
+
+    fn fresh_inner(token_program: TokenProgramKind, extensions: &[MintExtension]) -> Self {
         let mut svm = LiteSVM::new();
 
         svm.add_program(
@@ -148,14 +174,29 @@ impl VaultCtx {
         let user = airdrop_keypair(&mut svm, 1_000_000_000);
 
         let deposit_mint_kp = Keypair::new();
-        create_mint(
-            &mut svm,
-            &payer,
-            &deposit_mint_kp,
-            &payer.pubkey(),
-            DEPOSIT_DECIMALS,
-            token_program,
-        );
+        if extensions.is_empty() {
+            create_mint(
+                &mut svm,
+                &payer,
+                &deposit_mint_kp,
+                &payer.pubkey(),
+                DEPOSIT_DECIMALS,
+                token_program,
+            );
+        } else {
+            assert!(
+                matches!(token_program, TokenProgramKind::Token2022),
+                "mint extensions exist only on Token-2022"
+            );
+            create_mint_2022_with_extensions(
+                &mut svm,
+                &payer,
+                &deposit_mint_kp,
+                &payer.pubkey(),
+                DEPOSIT_DECIMALS,
+                extensions,
+            );
+        }
         let deposit_mint = deposit_mint_kp.pubkey();
 
         let (vault_state, _) = derive_vault_state(&deposit_mint, VAULT_VERSION);
@@ -698,6 +739,334 @@ impl VaultCtx {
         .0
     }
 
+    // ---- withdrawal queue authority ----
+
+    /// Returns this vault's queue PDA under the hardcoded queue program, which is
+    /// the one key `attach_withdrawal_queue` will store.
+    pub fn withdrawal_queue_pda(&self) -> Pubkey {
+        withdrawal_queue_pda(&self.vault_state)
+    }
+
+    /// Plants a non-empty account at `address` owned by `owner`, standing in for
+    /// the queue program's `initialize_queue`. The vault checks only the owner and
+    /// that the data is non-empty, never the contents.
+    pub fn install_queue_account(&mut self, address: Pubkey, owner: Pubkey) {
+        self.install_queue_account_of_len(address, owner, 64);
+    }
+
+    /// Plants the same account with an explicit data length. A length of `0` is
+    /// the only state the `!data_is_empty()` check can catch.
+    pub fn install_queue_account_of_len(&mut self, address: Pubkey, owner: Pubkey, len: usize) {
+        let data = vec![0xA5u8; len];
+        let lamports = Rent::default().minimum_balance(data.len());
+        self.svm
+            .set_account(
+                address,
+                SolanaAccount {
+                    lamports,
+                    data,
+                    owner,
+                    executable: false,
+                    rent_epoch: 0,
+                },
+            )
+            .unwrap_or_else(|e| panic!("set_account failed for {address}: {e:?}"));
+    }
+
+    /// Calls `attach_withdrawal_queue` as the admin with `queue` in the queue
+    /// slot.
+    pub fn attach_withdrawal_queue(
+        &mut self,
+        queue: Pubkey,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let admin = self.admin.insecure_clone();
+        self.attach_withdrawal_queue_as(&admin, queue)
+    }
+
+    /// Calls `attach_withdrawal_queue` signed by `signer`. The transaction
+    /// metadata is returned so that tests can read the emitted event.
+    pub fn attach_withdrawal_queue_as(
+        &mut self,
+        signer: &Keypair,
+        queue: Pubkey,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let accounts = ix_accounts::AttachWithdrawalQueue {
+            vault_state: self.vault_state,
+            deposit_mint: self.deposit_mint,
+            admin: signer.pubkey(),
+            queue,
+        }
+        .to_account_metas(None);
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts,
+            data: ix_data::AttachWithdrawalQueue {}.data(),
+        };
+        send_tx(&mut self.svm, signer, &[ix], &[signer])
+    }
+
+    /// Calls `detach_withdrawal_queue` as the admin. `queue` says which account
+    /// fills the queue slot and whether it signs.
+    pub fn detach_withdrawal_queue(
+        &mut self,
+        queue: QueueCoSigner<'_>,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let admin = self.admin.insecure_clone();
+        self.detach_withdrawal_queue_as(&admin, queue)
+    }
+
+    /// Calls `detach_withdrawal_queue` signed by `signer`. The transaction
+    /// metadata is returned so that tests can read the emitted event.
+    pub fn detach_withdrawal_queue_as(
+        &mut self,
+        signer: &Keypair,
+        queue: QueueCoSigner<'_>,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let mut accounts = ix_accounts::DetachWithdrawalQueue {
+            vault_state: self.vault_state,
+            deposit_mint: self.deposit_mint,
+            admin: signer.pubkey(),
+            queue: queue.key(),
+        }
+        .to_account_metas(None);
+        let mut signers: Vec<&Keypair> = vec![signer];
+        match queue {
+            QueueCoSigner::Signing(kp) => signers.push(kp),
+            // The program types this slot as `Signer`, so the generated meta
+            // already demands a signature. Clearing the flag sends the account
+            // unsigned, which is the shape a caller who forgot the signature
+            // produces. The slot is found by position: `queue` is declared last.
+            QueueCoSigner::Unsigned(key) => {
+                // The message compiler ORs `is_signer` per pubkey, so an unsigned
+                // slot that aliases the payer would still arrive signed.
+                assert_ne!(key, signer.pubkey(), "Unsigned cannot alias the payer");
+                let slot = accounts.last_mut().expect("metas are never empty");
+                assert_eq!(
+                    slot.pubkey, key,
+                    "queue is not the last meta; the accounts struct was reordered"
+                );
+                slot.is_signer = false;
+            }
+        }
+        let ix = Instruction {
+            program_id: august_vault::ID,
+            accounts,
+            data: ix_data::DetachWithdrawalQueue {}.data(),
+        };
+        send_tx(&mut self.svm, signer, &[ix], &signers)
+    }
+
+    // ---- the queue program's admin instructions ----
+
+    /// The queue's escrow ATA for `mint`, under this vault's token program.
+    pub fn queue_escrow(&self, mint: &Pubkey) -> Pubkey {
+        get_associated_token_address_with_program_id(
+            &self.withdrawal_queue_pda(),
+            mint,
+            &self.token_program.id(),
+        )
+    }
+
+    /// Decodes this vault's queue account. Panics if it does not exist.
+    pub fn queue_state_data(&self) -> WithdrawalQueue {
+        let account = self
+            .svm
+            .get_account(&self.withdrawal_queue_pda())
+            .expect("queue account exists");
+        WithdrawalQueue::try_deserialize(&mut account.data.as_slice()).expect("decode queue")
+    }
+
+    /// `initialize_queue` as the admin, with the harness payer funding it.
+    pub fn initialize_queue(
+        &mut self,
+        cooldown_seconds: u64,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let admin = self.admin.insecure_clone();
+        let payer = self.payer.insecure_clone();
+        self.initialize_queue_as(&admin, &payer, cooldown_seconds)
+    }
+
+    /// `initialize_queue` for this vault, signed by `admin` and funded by `payer`.
+    pub fn initialize_queue_as(
+        &mut self,
+        admin: &Keypair,
+        payer: &Keypair,
+        cooldown_seconds: u64,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let (vault_state, deposit_mint, share_mint) =
+            (self.vault_state, self.deposit_mint, self.share_mint);
+        self.initialize_queue_for_vault_as(
+            admin,
+            payer,
+            vault_state,
+            deposit_mint,
+            share_mint,
+            cooldown_seconds,
+        )
+    }
+
+    /// `initialize_queue` against arbitrary vault and mint accounts, so a test
+    /// can hand the program something that is not a vault.
+    pub fn initialize_queue_for_vault_as(
+        &mut self,
+        admin: &Keypair,
+        payer: &Keypair,
+        vault_state: Pubkey,
+        deposit_mint: Pubkey,
+        share_mint: Pubkey,
+        cooldown_seconds: u64,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let queue = withdrawal_queue_pda(&vault_state);
+        let token_program = self.token_program.id();
+        let accounts = q_accounts::InitializeQueue {
+            vault_state,
+            admin: admin.pubkey(),
+            payer: payer.pubkey(),
+            deposit_mint,
+            share_mint,
+            queue,
+            escrow_shares: get_associated_token_address_with_program_id(
+                &queue,
+                &share_mint,
+                &token_program,
+            ),
+            escrow_assets: get_associated_token_address_with_program_id(
+                &queue,
+                &deposit_mint,
+                &token_program,
+            ),
+            token_program,
+            associated_token_program: spl_associated_token_account::ID,
+            system_program: solana_sdk::system_program::ID,
+        }
+        .to_account_metas(None);
+        let ix = Instruction {
+            program_id: august_withdrawal_queue::ID,
+            accounts,
+            data: q_ix::InitializeQueue { cooldown_seconds }.data(),
+        };
+        // `payer` pays the fee so an intentionally-broke `admin` still reaches
+        // the program instead of failing pre-flight.
+        send_tx(&mut self.svm, payer, &[ix], &[payer, admin])
+    }
+
+    pub fn set_cooldown(
+        &mut self,
+        seconds: u64,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let admin = self.admin.insecure_clone();
+        self.set_cooldown_as(&admin, seconds)
+    }
+
+    pub fn set_cooldown_as(
+        &mut self,
+        admin: &Keypair,
+        seconds: u64,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        self.queue_admin_call_as(admin, q_ix::SetCooldown { seconds }.data())
+    }
+
+    pub fn set_fulfillment_window(
+        &mut self,
+        seconds: u64,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let admin = self.admin.insecure_clone();
+        self.set_fulfillment_window_as(&admin, seconds)
+    }
+
+    pub fn set_fulfillment_window_as(
+        &mut self,
+        admin: &Keypair,
+        seconds: u64,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        self.queue_admin_call_as(admin, q_ix::SetFulfillmentWindow { seconds }.data())
+    }
+
+    pub fn set_finalizer_authority(
+        &mut self,
+        authority: Pubkey,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let admin = self.admin.insecure_clone();
+        self.set_finalizer_authority_as(&admin, authority)
+    }
+
+    pub fn set_finalizer_authority_as(
+        &mut self,
+        admin: &Keypair,
+        authority: Pubkey,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        self.queue_admin_call_as(admin, q_ix::SetFinalizerAuthority { authority }.data())
+    }
+
+    pub fn set_accepting_requests(
+        &mut self,
+        accepting: bool,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let admin = self.admin.insecure_clone();
+        self.set_accepting_requests_as(&admin, accepting)
+    }
+
+    pub fn set_accepting_requests_as(
+        &mut self,
+        admin: &Keypair,
+        accepting: bool,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        self.queue_admin_call_as(admin, q_ix::SetAcceptingRequests { accepting }.data())
+    }
+
+    /// One of the four admin setters, against this vault's queue and vault.
+    fn queue_admin_call_as(
+        &mut self,
+        admin: &Keypair,
+        data: Vec<u8>,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let (queue, vault_state) = (self.withdrawal_queue_pda(), self.vault_state);
+        self.queue_admin_call_with_accounts_as(admin, queue, vault_state, data)
+    }
+
+    /// One of the four admin setters, against arbitrary queue and vault
+    /// accounts, so a test can pair a queue with the wrong vault.
+    pub fn queue_admin_call_with_accounts_as(
+        &mut self,
+        admin: &Keypair,
+        queue: Pubkey,
+        vault_state: Pubkey,
+        data: Vec<u8>,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let accounts = q_accounts::QueueAdmin {
+            queue,
+            vault_state,
+            admin: admin.pubkey(),
+        }
+        .to_account_metas(None);
+        let ix = Instruction {
+            program_id: august_withdrawal_queue::ID,
+            accounts,
+            data,
+        };
+        send_tx(&mut self.svm, admin, &[ix], &[admin])
+    }
+
+    /// Creates the ATA of `owner` for `mint` under this vault's token program,
+    /// paid by the harness payer, as anyone may. Returns its address.
+    pub fn create_ata_for(&mut self, owner: &Pubkey, mint: &Pubkey) -> Pubkey {
+        let payer = self.payer.insecure_clone();
+        create_ata(&mut self.svm, &payer, owner, mint, self.token_program)
+    }
+
+    /// Mints `amount` of the deposit token straight into `destination`.
+    pub fn mint_deposit_to(&mut self, destination: &Pubkey, amount: u64) {
+        let ix = mint_to_ix(
+            self.token_program,
+            &self.deposit_mint,
+            destination,
+            &self.payer.pubkey(),
+            amount,
+        );
+        let payer = self.payer.insecure_clone();
+        send_tx(&mut self.svm, &payer, &[ix], &[&payer]).expect("mint to destination");
+    }
+
     /// Create and fund a throwaway keypair (for impostor-signer tests).
     pub fn new_funded_keypair(&mut self, lamports: u64) -> Keypair {
         airdrop_keypair(&mut self.svm, lamports)
@@ -1230,6 +1599,27 @@ impl VaultCtx {
             share_supply: self.share_mint_supply(),
             local_aum: state.local_aum,
             deployed_aum: state.deployed_aum,
+            withdrawal_queue_authority: state.withdrawal_queue_authority,
+        }
+    }
+}
+
+/// Describes how a test fills the `queue` slot of `detach_withdrawal_queue`.
+pub enum QueueCoSigner<'a> {
+    /// The account is present and signs. This stands in for the signature
+    /// `release_vault` will produce by CPI, which is faithful because the vault
+    /// compares a signature against a stored key and never asks whether that key
+    /// is a PDA.
+    Signing(&'a Keypair),
+    /// The account is present but does not sign.
+    Unsigned(Pubkey),
+}
+
+impl QueueCoSigner<'_> {
+    fn key(&self) -> Pubkey {
+        match self {
+            Self::Signing(kp) => kp.pubkey(),
+            Self::Unsigned(k) => *k,
         }
     }
 }
@@ -1379,6 +1769,9 @@ pub struct CeiSnapshot {
     pub share_supply: u64,
     pub local_aum: u64,
     pub deployed_aum: u64,
+    /// Not a balance, but it decides who may redeem, so an unintended change here
+    /// is an exit freeze.
+    pub withdrawal_queue_authority: Pubkey,
 }
 
 /// The on-chain custom error code for an `ErrorCode` variant.
@@ -1406,6 +1799,26 @@ pub fn vault_error_code(expected: ErrorCode) -> u32 {
 pub fn expected_withdrawal_fee(assets: u64, fee_rate: u32) -> u64 {
     let numerator = (assets as u128) * (fee_rate as u128);
     numerator.div_ceil(FEE_RATE_DENOMINATOR_VALUE as u128) as u64
+}
+
+/// Every event of type `E` the transaction emitted, decoded from its
+/// `Program data:` logs, in order.
+pub fn events_of<E: AnchorDeserialize + Discriminator>(
+    meta: &litesvm::types::TransactionMetadata,
+) -> Vec<E> {
+    use base64::Engine;
+    let disc = E::DISCRIMINATOR;
+    meta.logs
+        .iter()
+        .filter_map(|line| line.strip_prefix("Program data: "))
+        .map(|b64| {
+            base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .expect("Program data line is base64")
+        })
+        .filter(|bytes| bytes.starts_with(disc))
+        .map(|bytes| E::try_from_slice(&bytes[disc.len()..]).expect("event body decodes"))
+        .collect()
 }
 
 /// Assert a raw Anchor **framework** error code (the 2000/3000 ranges), for
@@ -1500,6 +1913,73 @@ fn create_mint(
         &token_program.id(),
     );
     send_tx(svm, payer, &[create_ix, init_ix], &[payer, mint_kp]).expect("create mint");
+}
+
+/// A Token-2022 mint carrying `extensions`, initialized in the order the token
+/// program requires: account, extension initializers, then the mint itself.
+fn create_mint_2022_with_extensions(
+    svm: &mut LiteSVM,
+    payer: &Keypair,
+    mint_kp: &Keypair,
+    mint_authority: &Pubkey,
+    decimals: u8,
+    extensions: &[MintExtension],
+) {
+    use spl_token_2022::extension::{default_account_state, metadata_pointer, ExtensionType};
+    use spl_token_2022::state::{AccountState, Mint as Mint2022};
+
+    let types: Vec<ExtensionType> = extensions
+        .iter()
+        .map(|e| match e {
+            MintExtension::MetadataPointer => ExtensionType::MetadataPointer,
+            MintExtension::DefaultAccountStateFrozen => ExtensionType::DefaultAccountState,
+        })
+        .collect();
+    let size = ExtensionType::try_calculate_account_len::<Mint2022>(&types).expect("mint size");
+    let mint = mint_kp.pubkey();
+    let mut ixs = vec![system_instruction::create_account(
+        &payer.pubkey(),
+        &mint,
+        Rent::default().minimum_balance(size),
+        size as u64,
+        &spl_token_2022::ID,
+    )];
+    for e in extensions {
+        ixs.push(match e {
+            MintExtension::MetadataPointer => metadata_pointer::instruction::initialize(
+                &spl_token_2022::ID,
+                &mint,
+                Some(*mint_authority),
+                Some(mint),
+            )
+            .unwrap(),
+            MintExtension::DefaultAccountStateFrozen => {
+                default_account_state::instruction::initialize_default_account_state(
+                    &spl_token_2022::ID,
+                    &mint,
+                    &AccountState::Frozen,
+                )
+                .unwrap()
+            }
+        });
+    }
+    // A frozen default state is only meaningful with a freeze authority to thaw
+    // accounts, and Token-2022 refuses the mint without one.
+    let freeze_authority = extensions
+        .iter()
+        .any(|e| matches!(e, MintExtension::DefaultAccountStateFrozen))
+        .then_some(mint_authority);
+    ixs.push(
+        spl_token_2022::instruction::initialize_mint2(
+            &spl_token_2022::ID,
+            &mint,
+            mint_authority,
+            freeze_authority,
+            decimals,
+        )
+        .unwrap(),
+    );
+    send_tx(svm, payer, &ixs, &[payer, mint_kp]).expect("create Token-2022 mint with extensions");
 }
 
 fn create_ata(

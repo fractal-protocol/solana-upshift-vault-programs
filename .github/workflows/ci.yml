@@ -47,12 +47,17 @@ jobs:
               with:
                   components: rustfmt
             # `--all` only covers the root workspace (programs/*). The
-            # integration-tests + clients/rust workspaces are excluded from it,
-            # so check integration-tests separately (clients/rust is generated).
+            # integration-tests and clients/rust workspaces are excluded from it,
+            # so each is checked separately. The clients are generated, and the
+            # generator formats its output, so an unformatted regeneration fails here.
             - name: Rustfmt (root workspace)
               run: cargo fmt --all --check
             - name: Rustfmt (integration-tests workspace)
               run: cargo fmt --manifest-path integration-tests/Cargo.toml --all --check
+            - name: Rustfmt (generated clients)
+              run: |
+                  cargo fmt --manifest-path clients/rust/august-vault/Cargo.toml --all --check
+                  cargo fmt --manifest-path clients/rust/august-withdrawal-queue/Cargo.toml --all --check
 
     # NOTE: this job cannot detect an author's untracked file. GitHub Actions
     # checks out committed state, so `git ls-files --others` is always empty
@@ -273,6 +278,13 @@ jobs:
                     grep -q "^${prog} = \"$PROGRAM_ID\"" Anchor.toml \
                       || { echo "::error::Anchor.toml has no '${prog} = ...' entry to sync"; exit 1; }
                   done
+                  # The vault hardcodes the queue's id (state/vault.rs) and `anchor keys
+                  # sync` does not know about it; without this a localnet queue's PDAs
+                  # would never validate in the vault's attach.
+                  QUEUE_ID=$(solana-keygen pubkey target/deploy/august_withdrawal_queue-keypair.json)
+                  sed -i "/^pub const WITHDRAWAL_QUEUE_PROGRAM_ID: Pubkey =/{n;s/pubkey!(\"[1-9A-HJ-NP-Za-km-z]*\")/pubkey!(\"$QUEUE_ID\")/}" programs/august-vault/src/state/vault.rs
+                  grep -q "pubkey!(\"$QUEUE_ID\")" programs/august-vault/src/state/vault.rs \
+                    || { echo "::error::WITHDRAWAL_QUEUE_PROGRAM_ID in state/vault.rs was not synced to the localnet queue id"; exit 1; }
 
             - name: Rebuild with localnet program ID
               run: anchor build

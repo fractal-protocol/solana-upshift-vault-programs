@@ -13,19 +13,43 @@
 //!
 //! Hand-written helpers belong here, outside `generated/`, the way the vault
 //! client carries `resolved_share_offset` and `min_first_deposit`. There are
-//! none yet. The program's `WithdrawalQueue` and `WithdrawalRequest` accounts
-//! exist but are absent from `generated/` for now: Anchor writes an account type
-//! into the IDL only once an instruction references it, so they arrive with
-//! `initialize_queue` and `request_withdrawal`.
+//! none yet. `WithdrawalRequest` is absent from `generated/` for now: Anchor
+//! writes an account type into the IDL only once an instruction references it,
+//! so it arrives with `request_withdrawal`.
 
-// Public, unlike the vault client's, because nothing here would catch a missed
-// re-export: this crate sets `unused = "allow"` for Codama's output, so an
-// unreachable `pub mod accounts;` raises no `dead_code` warning and `cargo check
-// -D warnings` stays green while the client exposes nothing. Keeping the module
-// public makes the re-export below a convenience rather than the only way in.
 pub mod generated;
 
-// Only `errors` and `programs` exist while the program has no instructions. Codama emits
-// `accounts` and `instructions` modules as soon as there are any; widen this then.
-pub use generated::{errors::*, programs::*};
+pub use generated::{accounts::*, errors::*, instructions::*, programs::*};
 pub use solana_pubkey::Pubkey;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The generated struct derives no `Default`, so build it field-by-field:
+    /// adding a field to `WithdrawalQueue` then fails to compile here rather than
+    /// silently skipping the new field.
+    #[test]
+    fn a_fresh_queue_literal_is_in_drain_mode() {
+        let zero = Pubkey::default();
+        let queue = WithdrawalQueue {
+            discriminator: [0; 8],
+            vault_state: zero,
+            deposit_mint: zero,
+            share_mint: zero,
+            escrow_shares: zero,
+            escrow_assets: zero,
+            finalizer_authority: zero,
+            cooldown_seconds: 0,
+            fulfillment_window_seconds: 0,
+            sequence: 0,
+            pending_requests: 0,
+            pending_shares: 0,
+            accepting_requests: false,
+            bump: 0,
+            padding: [0; 16],
+        };
+        assert!(!queue.accepting_requests);
+        assert_eq!(queue.finalizer_authority, zero, "zero means no restriction");
+    }
+}

@@ -5,11 +5,10 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
-  pub(crate) mod r#nominated_admin;
-  pub(crate) mod r#program_config;
-  pub(crate) mod r#vault_state;
+pub(crate) mod r#nominated_admin;
+pub(crate) mod r#program_config;
+pub(crate) mod r#vault_state;
 
-  pub use self::r#nominated_admin::*;
-  pub use self::r#program_config::*;
-  pub use self::r#vault_state::*;
-
+pub use self::r#nominated_admin::*;
+pub use self::r#program_config::*;
+pub use self::r#vault_state::*;

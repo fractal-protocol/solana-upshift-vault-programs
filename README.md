@@ -7,7 +7,7 @@ This workspace builds two programs:
 | Crate | Artifact | Status |
 |---|---|---|
 | `programs/august-vault` | `august_vault.so` | Live on mainnet and devnet. Everything below describes this program. |
-| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | **No instructions yet.** Carries the program identity, the error-ABI pin, the build wiring and the `WithdrawalQueue` / `WithdrawalRequest` state accounts; nothing on-chain can create those accounts until the instructions land. |
+| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | **Admin instructions only** (`initialize_queue` and four config setters) over the `WithdrawalQueue` / `WithdrawalRequest` state accounts. Requests, finalization and `release_vault` are not implemented. **Not deployed anywhere, and must not be until `release_vault` lands.** |
 
 The queue will let a vault route redemptions through a request-and-cooldown flow
 instead of paying out instantly. The vault side of that is already in place: a
@@ -72,6 +72,8 @@ so each deposit mint has a finite number of vault lifecycles.
 | `set_operator`           | Admin    | Assign new operator                                  |
 | `set_fee_recipient`      | Admin    | Change fee recipient                                 |
 | `set_aum_limits`         | Admin    | Configure AUM limits                                 |
+| `attach_withdrawal_queue` | Admin    | Attach this vault's withdrawal queue, once the queue has initialized it |
+| `detach_withdrawal_queue` | Admin, plus the attached queue | Detach the queue once drained, restoring direct redemption |
 | `pause` / `unpause`      | Admin    | Emergency pause/unpause                              |
 | `close_vault`            | Admin    | Close an empty vault                                 |
 | `create_share_token_metadata` | Admin | Create token metadata for share mint            |
@@ -173,9 +175,42 @@ requesting through the queue and waiting out its cooldown, and the queue redeems
 on their behalf by CPI, signing as that PDA. It is a per-vault setting, not a
 program-wide one: vaults on the same program can differ.
 
-The queue program, the instruction that sets this field, and the request/cooldown
-semantics are none of them implemented yet; this release adds only the field and
-the gate.
+Two instructions write the field. `attach_withdrawal_queue` takes no key
+argument: the only key it can store is this vault's queue PDA,
+`["withdrawal_queue", vault_state]` under the queue program id hardcoded in the
+vault, and it stores that key only once the queue program has initialized the
+account there. The `queue` account passed must sit at that address, be owned by
+the queue program and hold data, or the call fails with
+`InvalidWithdrawalQueueAuthority` (6022); a vault that already has a queue
+attached fails with `WithdrawalQueueAlreadyAttached` (6024). Because the PDA is a
+pure function of the vault, there is no swap to a different queue, only attach
+and detach. `detach_withdrawal_queue` clears the field and needs the attached
+queue's signature: a different signer fails with `WrongWithdrawalQueueSigner`
+(6023), an unsigned slot with Anchor's 3010, and a vault with no queue with
+`WithdrawalQueueNotAttached` (6025). The queue will give that signature only from
+its `release_vault`, after every pending request has been finalized or cancelled.
+Together those rules mean the field can only ever hold a key under the queue
+program's control, so no admin mistake can freeze exits while deposits keep
+working.
+Attach emits `WithdrawalQueueAttached { vault, queue }` and detach emits
+`WithdrawalQueueDetached { vault, queue }`.
+
+The queue program's admin side exists in source: `initialize_queue` creates the
+queue PDA and its two escrow token accounts in drain mode, for a classic SPL mint
+or a Token-2022 mint carrying at most the two metadata extensions
+(`UnsupportedDepositMint`, 6006, otherwise); `set_cooldown` (at most 30 days),
+`set_fulfillment_window` (zero disables expiry, else at most 90 days),
+`set_finalizer_authority` (zero lifts the restriction) and
+`set_accepting_requests` configure it. Opening the queue requires the vault's
+gate to already point at it (`QueueNotActiveOnVault`, 6005). Requests,
+finalization and `release_vault` are not implemented yet.
+
+**Do not deploy the queue program, or attach a queue, on any cluster yet.** Once
+`initialize_queue` is deployable the queue PDA can be created, so attaching
+becomes possible, while detaching needs `release_vault`, which does not exist.
+Attaching before it lands would be a one-way door: a gated vault could be
+reopened only by a vault program upgrade. Recorded as a merge blocker on
+AUGUST-7669 and AUGUST-7672.
 
 ## Security
 

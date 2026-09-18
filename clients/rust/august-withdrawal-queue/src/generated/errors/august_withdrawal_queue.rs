@@ -25,6 +25,12 @@ pub enum AugustWithdrawalQueueError {
     /// 6004 - Fulfillment window exceeds the 90-day maximum
     #[error("Fulfillment window exceeds the 90-day maximum")]
     FulfillmentWindowOutOfBounds = 0x1774,
+    /// 6005 - The vault's withdrawal_queue_authority does not point at this queue
+    #[error("The vault's withdrawal_queue_authority does not point at this queue")]
+    QueueNotActiveOnVault = 0x1775,
+    /// 6006 - Deposit mint carries a Token-2022 extension the queue does not support
+    #[error("Deposit mint carries a Token-2022 extension the queue does not support")]
+    UnsupportedDepositMint = 0x1776,
 }
 
 impl From<AugustWithdrawalQueueError> for solana_program_error::ProgramError {
@@ -32,4 +38,3 @@ impl From<AugustWithdrawalQueueError> for solana_program_error::ProgramError {
         solana_program_error::ProgramError::Custom(e as u32)
     }
 }
-
