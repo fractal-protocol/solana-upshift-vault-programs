@@ -28,6 +28,10 @@ pub enum ErrorCode {
     CooldownOutOfBounds,
     #[msg("Fulfillment window exceeds the 90-day maximum")]
     FulfillmentWindowOutOfBounds,
+    #[msg("The vault's withdrawal_queue_authority does not point at this queue")]
+    QueueNotActiveOnVault,
+    #[msg("Deposit mint carries a Token-2022 extension the queue does not support")]
+    UnsupportedDepositMint,
 }
 
 /// Compile-time pin of the ABI above, generated from one list so completeness
@@ -68,6 +72,8 @@ pin_error_abi! {
     VaultMismatch => 2,
     CooldownOutOfBounds => 3,
     FulfillmentWindowOutOfBounds => 4,
+    QueueNotActiveOnVault => 5,
+    UnsupportedDepositMint => 6,
 }
 
 #[cfg(test)]
