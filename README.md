@@ -7,7 +7,7 @@ This workspace builds two programs:
 | Crate | Artifact | Status |
 |---|---|---|
 | `programs/august-vault` | `august_vault.so` | Live on mainnet and devnet. Everything below describes this program. |
-| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | **Scaffold only.** Carries the program identity, the error-ABI pin and the build wiring; no state accounts or instructions yet. |
+| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | **No instructions yet.** Carries the program identity, the error-ABI pin, the build wiring and the `WithdrawalQueue` / `WithdrawalRequest` state accounts; nothing on-chain can create those accounts until the instructions land. |
 
 The queue will let a vault route redemptions through a request-and-cooldown flow
 instead of paying out instantly. The vault side of that is already in place: a

@@ -22,6 +22,12 @@ pub enum ErrorCode {
     NotVaultAdmin,
     #[msg("Math error")]
     MathError,
+    #[msg("vault_state is not the vault this queue serves")]
+    VaultMismatch,
+    #[msg("Cooldown exceeds the 30-day maximum")]
+    CooldownOutOfBounds,
+    #[msg("Fulfillment window exceeds the 90-day maximum")]
+    FulfillmentWindowOutOfBounds,
 }
 
 /// Compile-time pin of the ABI above, generated from one list so completeness
@@ -59,6 +65,9 @@ pub const ANCHOR_USER_ERROR_OFFSET: u32 = 6000;
 pin_error_abi! {
     NotVaultAdmin => 0,
     MathError => 1,
+    VaultMismatch => 2,
+    CooldownOutOfBounds => 3,
+    FulfillmentWindowOutOfBounds => 4,
 }
 
 #[cfg(test)]
