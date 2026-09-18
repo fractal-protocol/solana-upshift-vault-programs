@@ -27,12 +27,6 @@ use anchor_spl::token_interface::Mint;
 /// extension is refused until someone has reasoned about it.
 pub fn require_supported_deposit_mint(mint: &InterfaceAccount<'_, Mint>) -> Result<()> {
     let info = mint.to_account_info();
-    msg!(
-        "DEBUG mint owner {} token id {} 2022 id {}",
-        info.owner,
-        anchor_spl::token::ID,
-        anchor_spl::token_2022::ID
-    );
     if *info.owner == anchor_spl::token::ID {
         return Ok(());
     }
