@@ -20,9 +20,8 @@ use anchor_spl::token_interface::{
 };
 use august_vault::state::vault::VaultState;
 
-/// Checks first, then state, then the transfer. The gate check (decision 13)
-/// is what stops requests being escrowed into a cooldown that direct redeemers
-/// bypass: the vault must already redeem only for this queue.
+/// Checks first, then state, then the transfer. The gate check is decision 13 as
+/// defence in depth: `set_accepting_requests(true)` already requires it.
 pub fn handler(
     ctx: Context<RequestWithdrawal>,
     request_id: u64,
@@ -40,27 +39,21 @@ pub fn handler(
         ErrorCode::QueueNotActiveOnVault
     );
     require!(shares > 0, ErrorCode::ZeroShares);
-    require_valid_recipient(
-        &ctx.accounts.recipient_token_account,
-        &ctx.accounts.queue,
-        &ctx.accounts.vault_state,
-    )?;
+    require_valid_recipient(&ctx.accounts.recipient_token_account, &ctx.accounts.queue)?;
 
     let now = Clock::get()?.unix_timestamp;
     let sequence = ctx.accounts.queue.open_request(shares)?;
     let request_key = ctx.accounts.request.key();
-    let request = &mut ctx.accounts.request;
-    request.queue = queue_key;
-    request.owner = ctx.accounts.owner.key();
-    request.recipient_token_account = ctx.accounts.recipient_token_account.key();
-    request.finalizer = finalizer;
-    request.shares = shares;
-    request.min_assets_out = min_assets_out;
-    request.request_id = request_id;
-    request.sequence = sequence;
-    request.bump = ctx.bumps.request;
-    request.padding = [0; 8];
-    request.schedule(
+    ctx.accounts.request.open(
+        queue_key,
+        ctx.accounts.owner.key(),
+        ctx.accounts.recipient_token_account.key(),
+        finalizer,
+        shares,
+        min_assets_out,
+        request_id,
+        sequence,
+        ctx.bumps.request,
         now,
         ctx.accounts.queue.cooldown_seconds,
         ctx.accounts.queue.fulfillment_window_seconds,
@@ -80,20 +73,11 @@ pub fn handler(
         ctx.accounts.share_mint.decimals,
     )?;
 
-    emit!(WithdrawalRequested {
-        vault: ctx.accounts.queue.vault_state,
-        queue: queue_key,
-        request: request_key,
-        request_id,
-        owner: ctx.accounts.owner.key(),
-        sequence,
-        shares,
-        min_assets_out,
-        recipient_token_account: ctx.accounts.recipient_token_account.key(),
-        finalizer,
-        eligible_at: ctx.accounts.request.eligible_at,
-        expires_at: ctx.accounts.request.expires_at,
-    });
+    emit!(WithdrawalRequested::snapshot(
+        &ctx.accounts.request,
+        ctx.accounts.queue.vault_state,
+        request_key,
+    ));
     Ok(())
 }
 
@@ -126,11 +110,11 @@ pub struct RequestWithdrawal<'info> {
 
     pub share_mint: Box<InterfaceAccount<'info, Mint>>,
 
-    /// Where finalization pays. Validated in the handler, decision 5.
+    /// Deposit-mint token account paid at finalization; not an escrow or the
+    /// vault reserve.
     pub recipient_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
 
-    /// `init` is what makes `request_id` unique per owner while the account
-    /// exists.
+    /// Created here; fails if this owner already has a request with this id.
     #[account(
         init,
         payer = owner,

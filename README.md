@@ -214,11 +214,12 @@ window in force at that moment. It requires the queue to be accepting
 nonzero amount (`ZeroShares`, 6008), and a recipient that holds the deposit mint
 and belongs to neither the queue nor the vault (`InvalidRecipient`, 6009).
 `update_request(expected_sequence, min?, finalizer?)` plus an optional new
-recipient account lets the owner adjust those three fields while the request is
-pending and unexpired (`RequestExpired`, 6011); the sequence stamp must match
-(`StaleRequestSequence`, 6012) so a delayed instruction cannot land on a
-recreated request. Finalization, cancellation and `release_vault` are not
-implemented yet.
+recipient account lets the owner (`NotRequestOwner`, 6010, otherwise) adjust
+those three fields while the request is pending and unexpired (`RequestExpired`,
+6011); the sequence stamp must match (`StaleRequestSequence`, 6012) so a delayed
+instruction cannot land on a recreated request, and a call that would change
+nothing is refused (`NothingToUpdate`, 6013). Finalization, cancellation and
+`release_vault` are not implemented yet.
 
 **Do not deploy the queue program, or attach a queue, on any cluster yet.** Once
 `initialize_queue` is deployable the queue PDA can be created, so attaching

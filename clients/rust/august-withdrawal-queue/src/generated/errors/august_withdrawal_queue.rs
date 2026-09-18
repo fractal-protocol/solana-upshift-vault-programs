@@ -51,6 +51,9 @@ pub enum AugustWithdrawalQueueError {
     /// 6012 - expected_sequence does not match the request; it may have been recreated
     #[error("expected_sequence does not match the request; it may have been recreated")]
     StaleRequestSequence = 0x177C,
+    /// 6013 - update_request would change nothing; pass a field or the new recipient account
+    #[error("update_request would change nothing; pass a field or the new recipient account")]
+    NothingToUpdate = 0x177D,
 }
 
 impl From<AugustWithdrawalQueueError> for solana_program_error::ProgramError {

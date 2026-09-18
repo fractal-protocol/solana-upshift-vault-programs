@@ -46,6 +46,8 @@ pub enum ErrorCode {
     RequestExpired,
     #[msg("expected_sequence does not match the request; it may have been recreated")]
     StaleRequestSequence,
+    #[msg("update_request would change nothing; pass a field or the new recipient account")]
+    NothingToUpdate,
 }
 
 /// Compile-time pin of the ABI above, generated from one list so completeness
@@ -94,6 +96,7 @@ pin_error_abi! {
     NotRequestOwner => 10,
     RequestExpired => 11,
     StaleRequestSequence => 12,
+    NothingToUpdate => 13,
 }
 
 #[cfg(test)]

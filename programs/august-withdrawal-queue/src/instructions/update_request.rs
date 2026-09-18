@@ -15,13 +15,13 @@ use crate::recipient::require_valid_recipient;
 use crate::state::*;
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::TokenAccount;
-use august_vault::state::vault::VaultState;
 
-/// `expected_sequence` pins the instruction to the request it was signed for:
-/// an id can be reused once its account closes, and a delayed update for the
-/// old request must not land on the new one (decision 11). An expired request
-/// can only be cancelled. A field left `None`, or a recipient account left
-/// out, is unchanged.
+/// `expected_sequence` must match the request's stamp; see
+/// `WithdrawalRequest::sequence`. An expired request is refused. A field left
+/// `None`, or a recipient account left out, is unchanged, and a call that would
+/// change nothing is refused rather than confirmed: the generated client sends
+/// an omitted account as the program id, so a client that meant to change the
+/// recipient and dropped the account would otherwise read a success.
 pub fn handler(
     ctx: Context<UpdateRequest>,
     expected_sequence: u64,
@@ -38,8 +38,12 @@ pub fn handler(
         !ctx.accounts.request.is_expired(now),
         ErrorCode::RequestExpired
     );
+    require!(
+        min_assets_out.is_some() || finalizer.is_some() || ctx.accounts.new_recipient.is_some(),
+        ErrorCode::NothingToUpdate
+    );
     if let Some(recipient) = &ctx.accounts.new_recipient {
-        require_valid_recipient(recipient, &ctx.accounts.queue, &ctx.accounts.vault_state)?;
+        require_valid_recipient(recipient, &ctx.accounts.queue)?;
     }
 
     let request = &mut ctx.accounts.request;
@@ -66,17 +70,15 @@ pub struct UpdateRequest<'info> {
     #[account(
         seeds = [WITHDRAWAL_QUEUE_SEED, queue.vault_state.as_ref()],
         bump = queue.bump,
-        has_one = vault_state @ ErrorCode::VaultMismatch,
     )]
     pub queue: Box<Account<'info, WithdrawalQueue>>,
 
-    pub vault_state: Box<Account<'info, VaultState>>,
-
     pub owner: Signer<'info>,
 
-    /// Seeds are taken from the request's own stored fields, so a wrong signer
-    /// is reported by `has_one = owner` as `NotRequestOwner` rather than as a
-    /// seeds mismatch.
+    /// The owner's request; the signer must be its owner.
+    // Seeds come from the request's own stored fields, so a wrong signer is
+    // reported by `has_one = owner` as `NotRequestOwner` rather than as a seeds
+    // mismatch (Anchor evaluates seeds before has_one).
     #[account(
         mut,
         seeds = [

@@ -10,10 +10,10 @@
 //!
 //! The vault half is live: a vault whose `withdrawal_queue_authority` is set
 //! accepts redemptions from that key alone, and one left unset redeems instantly
-//! as before. What is missing is this side — holders will request a withdrawal
-//! here, wait out a cooldown, and the request will be finalized by CPI into the
-//! vault's `redeem_checked`, with this program's per-vault PDA signing as the
-//! authority the vault was pointed at.
+//! as before. Holders request a withdrawal here and wait out a cooldown;
+//! finalization by CPI into the vault's `redeem_checked`, with this program's
+//! per-vault PDA signing as the authority the vault was pointed at, is not yet
+//! implemented.
 //!
 //! This crate carries the program identity, the error ABI pin, the build wiring,
 //! the two state accounts (`state`), the admin check (`auth`), the queue's
@@ -94,7 +94,8 @@ pub mod august_withdrawal_queue {
     /// - `request_id` - Owner-chosen id, unique per owner while the request exists
     /// - `shares` - Shares to escrow, nonzero
     /// - `min_assets_out` - Floor on the net payout
-    /// - `finalizer` - Who may finalize besides the owner; zero for anyone
+    /// - `finalizer` - Who may finalize besides the owner; zero for no request-level
+    ///   restriction, the queue's `finalizer_authority` still applies
     pub fn request_withdrawal(
         ctx: Context<RequestWithdrawal>,
         request_id: u64,
@@ -111,9 +112,16 @@ pub mod august_withdrawal_queue {
         );
     }
 
-    /// The owner changes a pending request's floor, finalizer, or recipient
-    /// (passed as the optional `new_recipient` account). `expected_sequence`
-    /// must match the request's stamp.
+    /// The owner changes a pending, unexpired request's floor, finalizer, or
+    /// recipient (passed as the optional `new_recipient` account). A field left
+    /// `None`, or a recipient left out, is unchanged; a call that would change
+    /// nothing is refused. `Some(Pubkey::default())` clears the finalizer.
+    ///
+    /// ### Parameters
+    /// - `expected_sequence` - The request's stamp, so a delayed call cannot land
+    ///   on a recreated request with the same id
+    /// - `min_assets_out` - New floor on the net payout, if changing
+    /// - `finalizer` - New request-level finalizer, if changing; zero clears it
     pub fn update_request(
         ctx: Context<UpdateRequest>,
         expected_sequence: u64,
