@@ -50,9 +50,9 @@ solana-sdk = "2.2.1"
 spl-token = "8.0.0"
 spl-token-2022 = "8.0.1"
 spl-associated-token-account = "6"
+# Decodes `Program data:` logs so the harness can hand tests their emitted events.
+base64 = "0.21"
 
 [dev-dependencies]
-# Decodes `Program data:` logs so tests can assert on emitted events.
-base64 = "0.21"
 proptest = "1"
 test-case = "3.3.1"

@@ -5,10 +5,8 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
-pub mod accounts;
-pub mod errors;
-pub mod instructions;
-pub mod programs;
-pub mod shared;
+pub(crate) mod r#vault_state;
+pub(crate) mod r#withdrawal_queue;
 
-pub(crate) use programs::*;
+pub use self::r#vault_state::*;
+pub use self::r#withdrawal_queue::*;
