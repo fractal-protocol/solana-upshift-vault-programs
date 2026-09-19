@@ -628,6 +628,8 @@ fn every_field_stays_at_its_byte_offset() {
     const DEC: u32 = 0x5555_5555;
     const OFFSET: u64 = 0x8888_8888_8888_8888;
     const PAD: u64 = 0x9999_9999_9999_9999;
+    const PRINCIPAL: u64 = 0x0A0B_0C0D_0E0F_1011;
+    const COUNT: u64 = 0x1213_1415_1617_1819;
 
     let state = VaultState {
         operator: pk(1),
@@ -645,7 +647,9 @@ fn every_field_stays_at_its_byte_offset() {
         paused: true,
         share_offset: OFFSET,
         withdrawal_queue_authority: pk(9),
-        padding: [PAD; 27],
+        subaccount_count: COUNT,
+        deployed_principal: PRINCIPAL,
+        padding: [PAD; 25],
     };
     let mut bytes = Vec::new();
     state.try_serialize(&mut bytes).expect("serialize");
@@ -667,10 +671,12 @@ fn every_field_stays_at_its_byte_offset() {
         ("paused", 198, vec![1]),
         ("share_offset", 199, OFFSET.to_le_bytes().to_vec()),
         ("withdrawal_queue_authority", 207, pk(9).to_bytes().to_vec()),
+        ("subaccount_count", 239, COUNT.to_le_bytes().to_vec()),
+        ("deployed_principal", 247, PRINCIPAL.to_le_bytes().to_vec()),
         (
             "padding",
-            239,
-            [PAD; 27].iter().flat_map(|w| w.to_le_bytes()).collect(),
+            255,
+            [PAD; 25].iter().flat_map(|w| w.to_le_bytes()).collect(),
         ),
     ];
 
@@ -789,6 +795,71 @@ fn legacy_zero_padding_decodes_as_no_queue() {
     );
 }
 
+/// `subaccount_count` must stay at byte 239.
+///
+/// Zero means "no registered destinations", so a field shifted into untouched
+/// padding makes a vault with registrations resume paying the operator's own
+/// ATA.
+#[test]
+fn subaccount_count_stays_at_its_byte_offset() {
+    use anchor_lang::AccountSerialize;
+
+    const SENTINEL: u64 = 0x00A9_B8C7_D6E5_F403;
+    const QUEUE_SENTINEL: [u8; 32] = [0x3D; 32];
+    let state = VaultState {
+        subaccount_count: SENTINEL,
+        withdrawal_queue_authority: Pubkey::new_from_array(QUEUE_SENTINEL),
+        ..Default::default()
+    };
+    let mut bytes = Vec::new();
+    state.try_serialize(&mut bytes).expect("serialize");
+
+    let at = bytes
+        .windows(8)
+        .position(|w| w == SENTINEL.to_le_bytes())
+        .expect("sentinel must appear in the serialized account");
+    assert_eq!(
+        at, 239,
+        "subaccount_count moved from byte 239 to {at}. A vault with registered \
+         destinations would read zero and pay the operator's own ATA again."
+    );
+    let queue_at = bytes
+        .windows(32)
+        .position(|w| w == QUEUE_SENTINEL)
+        .expect("withdrawal_queue_authority sentinel must appear too");
+    assert_eq!(at, queue_at + 32, "a gap opened before subaccount_count");
+}
+
+/// A vault created before these fields existed pays the operator's own ATA.
+#[test]
+fn legacy_zero_padding_decodes_as_no_subaccounts() {
+    use anchor_lang::{AccountDeserialize, Discriminator};
+
+    let mut raw = VaultState::DISCRIMINATOR.to_vec();
+    raw.resize(VaultState::LEN, 0);
+    let state = VaultState::try_deserialize(&mut raw.as_slice())
+        .expect("a zero-padded legacy account must still deserialize");
+
+    assert_eq!(state.subaccount_count, 0);
+    assert!(
+        !state.requires_subaccount(),
+        "a legacy vault must keep paying the operator's own ATA"
+    );
+    assert_eq!(state.deployed_principal, 0);
+}
+
+/// Registering flips the vault into naming a destination; deregistering the
+/// last one flips it back.
+#[test]
+fn the_count_decides_whether_a_destination_is_required() {
+    let mut state = VaultState::default();
+    assert!(!state.requires_subaccount());
+    state.subaccount_count = 1;
+    assert!(state.requires_subaccount());
+    state.subaccount_count = 0;
+    assert!(!state.requires_subaccount());
+}
+
 /// Only powers of ten inside the permitted band may be stored on a vault.
 #[test]
 fn share_offset_validation_is_exact() {
@@ -849,4 +920,36 @@ fn min_first_deposit_dominates_the_offsets() {
             );
         }
     }
+}
+
+/// `deployed_principal` must stay at byte 247, immediately after
+/// `subaccount_count`.
+#[test]
+fn deployed_principal_stays_at_its_byte_offset() {
+    use anchor_lang::AccountSerialize;
+
+    const SENTINEL: u64 = 0x00C1_D2E3_F405_1627;
+    const COUNT_SENTINEL: u64 = 0x0011_2233_4455_6677;
+    let state = VaultState {
+        deployed_principal: SENTINEL,
+        subaccount_count: COUNT_SENTINEL,
+        ..Default::default()
+    };
+    let mut bytes = Vec::new();
+    state.try_serialize(&mut bytes).expect("serialize");
+
+    let at = bytes
+        .windows(8)
+        .position(|w| w == SENTINEL.to_le_bytes())
+        .expect("sentinel must appear in the serialized account");
+    assert_eq!(
+        at, 247,
+        "deployed_principal moved from byte 247 to {at}. Carve new fields from \
+         the END of `padding`."
+    );
+    let count_at = bytes
+        .windows(8)
+        .position(|w| w == COUNT_SENTINEL.to_le_bytes())
+        .expect("subaccount_count sentinel must appear too");
+    assert_eq!(at, count_at + 8, "a gap opened before deployed_principal");
 }

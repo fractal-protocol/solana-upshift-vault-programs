@@ -7,8 +7,10 @@
 // governed by version 2.0 of the Apache License.
 
 use crate::errors::ErrorCode;
+use crate::state::subaccount::*;
 use crate::state::vault::*;
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::program_option::COption;
 use anchor_spl::token_interface::{
     transfer_checked, Mint, TokenAccount, TokenInterface, TransferChecked,
 };
@@ -18,15 +20,42 @@ pub fn handler(ctx: Context<OperatorDeposit>, amount: u64) -> Result<()> {
 
     let state = &mut ctx.accounts.vault_state;
 
+    require!(
+        state.requires_subaccount() == ctx.accounts.subaccount.is_some(),
+        ErrorCode::InvalidSubaccount
+    );
+
+    // Who signs follows from who owns the source: an unconfigured vault pulls
+    // from the operator's own ATA; a registered destination is custody the
+    // operator cannot sign for, so the vault PDA pulls against its delegation.
+    // Signature and delegation check share a branch, so neither happens alone.
+    let seeds = state.seeds();
+    let vault_signer: [&[&[u8]]; 1] = [&seeds];
+    let (authority, signer_seeds): (_, &[&[&[u8]]]) = if ctx.accounts.subaccount.is_some() {
+        // Covers the delegation only. A short balance or a frozen source still
+        // surfaces as SPL's own error.
+        let source = &ctx.accounts.operator_token_account;
+        require!(
+            source.delegate == COption::Some(state.key()) && source.delegated_amount >= amount,
+            ErrorCode::SubaccountDelegationMissing
+        );
+        (state.to_account_info(), vault_signer.as_slice())
+    } else {
+        // Empty seeds make `new_with_signer` equivalent to `new`: the vault PDA
+        // grants no signature on the unconfigured path.
+        (ctx.accounts.operator.to_account_info(), &[])
+    };
+
     transfer_checked(
-        CpiContext::new(
+        CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
             TransferChecked {
                 from: ctx.accounts.operator_token_account.to_account_info(),
                 to: ctx.accounts.vault_deposit_ata.to_account_info(),
-                authority: ctx.accounts.operator.to_account_info(),
+                authority,
                 mint: ctx.accounts.deposit_mint.to_account_info(),
             },
+            signer_seeds,
         ),
         amount,
         ctx.accounts.deposit_mint.decimals,
@@ -39,6 +68,17 @@ pub fn handler(ctx: Context<OperatorDeposit>, amount: u64) -> Result<()> {
     };
 
     state.local_aum += amount;
+
+    // The total drops only by what this destination owed: subtracting the full
+    // amount would erase other destinations' exposure.
+    let repaid = match &ctx.accounts.subaccount {
+        Some(sub) => amount.min(sub.principal),
+        None => amount,
+    };
+    state.deployed_principal = state.deployed_principal.saturating_sub(repaid);
+    if let Some(sub) = &mut ctx.accounts.subaccount {
+        sub.principal = sub.principal.saturating_sub(amount);
+    }
 
     Ok(())
 }
@@ -57,10 +97,12 @@ pub struct OperatorDeposit<'info> {
     )]
     pub vault_deposit_ata: InterfaceAccount<'info, TokenAccount>,
 
+    /// Source: a registered subaccount's ATA, else the operator's own. Keeps the
+    /// old name for wire compatibility.
     #[account(
         mut,
         associated_token::mint = deposit_mint,
-        associated_token::authority = operator,
+        associated_token::authority = subaccount.as_ref().map(|s| s.address).unwrap_or_else(|| operator.key()),
         associated_token::token_program = token_program,
     )]
     pub operator_token_account: InterfaceAccount<'info, TokenAccount>,
@@ -68,9 +110,22 @@ pub struct OperatorDeposit<'info> {
     #[account(mut)]
     pub deposit_mint: InterfaceAccount<'info, Mint>,
 
+    /// Still the operator: the destination changed, not who may move funds.
     #[account(
         constraint = vault_state.operator == operator.key() @ ErrorCode::NotOperator
     )]
     pub operator: Signer<'info>,
     pub token_program: Interface<'info, TokenInterface>,
+
+    /// The source's registry entry, required exactly when the vault has
+    /// registrations. Its PDA binds it to this vault.
+    ///
+    /// **Last, and omittable.** Inserted mid-struct it would shift
+    /// `deposit_mint`, breaking every pre-registry operator call on upgrade.
+    #[account(
+        mut,
+        seeds = [SUBACCOUNT_SEED, vault_state.key().as_ref(), subaccount.address.as_ref()],
+        bump = subaccount.bump,
+    )]
+    pub subaccount: Option<Account<'info, Subaccount>>,
 }

@@ -201,18 +201,37 @@ pub struct VaultState {
     /// Read this field via [`Self::withdrawal_queue`] at every decision point.
     /// The only raw accesses are the two writers' own writes.
     pub withdrawal_queue_authority: Pubkey,
+    /// Registered operator destinations. Nonzero means operator transfers must
+    /// name one; zero means the operator's own ATA.
+    ///
+    /// Zero on every vault created before the registry existed, so it arrives
+    /// without a migration. A count rather than an address because the
+    /// destination is always passed as a PDA — this only decides *whether* one
+    /// is required. Its safety rests on the addresses being custody the
+    /// operator cannot sweep, and on the admin being a different party from
+    /// the operator. One address serves one vault per deposit mint, since an
+    /// ATA has a single delegate slot.
+    pub subaccount_count: u64,
+    /// Total principal taken out and not returned, across destinations.
+    ///
+    /// Distinct from `deployed_aum`, which `operator_update_aum` marks with no
+    /// tokens moving. Informational: coverage reads the destination's own
+    /// `Subaccount::principal`, so nothing on-chain trusts this.
+    pub deployed_principal: u64,
     /// Reserved. Carve new fields **out of** this array so `LEN` stays 455, the
     /// size of the live mainnet accounts — enforced by the `const` assertion below.
     ///
     /// **Declare a new field immediately before `padding`.** Anything inserted
-    /// earlier shifts the fields after it, silently: `share_offset` off byte 199
-    /// re-prices every vault that set one, and `withdrawal_queue_authority` off
-    /// byte 207 is worse — shifted into untouched padding it reads zeroes, so a
-    /// gated vault quietly reopens to direct redemption. Pinned by
-    /// `share_offset_stays_at_its_byte_offset`,
-    /// `withdrawal_queue_authority_stays_at_its_byte_offset` and
+    /// earlier shifts the fields after it silently, and each then reads zero:
+    /// `share_offset` (199) re-prices the vault, `withdrawal_queue_authority`
+    /// (207) reopens a gated vault, `subaccount_count` (239) reads as no
+    /// subaccounts and pays the operator again, `deployed_principal` (247)
+    /// reads as nothing owed. Pinned by the per-field
+    /// `*_stays_at_its_byte_offset` tests plus
     /// `every_field_stays_at_its_byte_offset`.
-    pub padding: [u64; 27],
+    ///
+    /// Shrinks in 8-byte steps only: it is an array of `u64`.
+    pub padding: [u64; 25],
 }
 
 /// **Compile-time layout guard.** Three live mainnet vaults are 455-byte accounts
@@ -258,9 +277,11 @@ impl VaultState {
         self.pda_bump = pda_bump;
         self.vault_version = vault_version;
         self.share_offset = share_offset;
-        // `withdrawal_queue_authority` is left unassigned: a vault opens ungated,
-        // and Anchor's `init` constraint has already zeroed the allocation. Unlike
-        // the explicit zeroing above, this field relies on that.
+        // `withdrawal_queue_authority`, `subaccount_count` and
+        // `deployed_principal` are left unassigned: a vault opens ungated and
+        // paying the operator's own ATA, and Anchor's `init` constraint has
+        // already zeroed the allocation. Unlike the explicit zeroing above,
+        // these rely on that.
     }
 
     /// The queue that must handle this vault's redemptions, if any.
@@ -276,6 +297,11 @@ impl VaultState {
     /// Derived from [`Self::withdrawal_queue`] so the two cannot disagree.
     pub fn requires_withdrawal_queue(&self) -> bool {
         self.withdrawal_queue().is_some()
+    }
+
+    /// Whether operator transfers must name a registered subaccount.
+    pub fn requires_subaccount(&self) -> bool {
+        self.subaccount_count > 0
     }
 
     /// Get the seed for the vault state PDA

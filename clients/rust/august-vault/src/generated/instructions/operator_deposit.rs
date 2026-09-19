@@ -16,14 +16,21 @@ pub struct OperatorDeposit {
     pub vault_state: solana_pubkey::Pubkey,
 
     pub vault_deposit_ata: solana_pubkey::Pubkey,
-
+    /// Source: a registered subaccount's ATA, else the operator's own. Keeps the
+    /// old name for wire compatibility.
     pub operator_token_account: solana_pubkey::Pubkey,
 
     pub deposit_mint: solana_pubkey::Pubkey,
-
+    /// Still the operator: the destination changed, not who may move funds.
     pub operator: solana_pubkey::Pubkey,
 
     pub token_program: solana_pubkey::Pubkey,
+    /// The source's registry entry, required exactly when the vault has
+    /// registrations. Its PDA binds it to this vault.
+    ///
+    /// **Last, and omittable.** Inserted mid-struct it would shift
+    /// `deposit_mint`, breaking every pre-registry operator call on upgrade.
+    pub subaccount: Option<solana_pubkey::Pubkey>,
 }
 
 impl OperatorDeposit {
@@ -40,7 +47,7 @@ impl OperatorDeposit {
         args: OperatorDepositInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
-        let mut accounts = Vec::with_capacity(6 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(7 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(
             self.vault_state,
             false,
@@ -65,6 +72,14 @@ impl OperatorDeposit {
             self.token_program,
             false,
         ));
+        if let Some(subaccount) = self.subaccount {
+            accounts.push(solana_instruction::AccountMeta::new(subaccount, false));
+        } else {
+            accounts.push(solana_instruction::AccountMeta::new_readonly(
+                crate::AUGUST_VAULT_ID,
+                false,
+            ));
+        }
         accounts.extend_from_slice(remaining_accounts);
         let mut data = OperatorDepositInstructionData::new().try_to_vec().unwrap();
         let mut args = args.try_to_vec().unwrap();
@@ -124,6 +139,7 @@ impl OperatorDepositInstructionArgs {
 ///   3. `[writable]` deposit_mint
 ///   4. `[signer]` operator
 ///   5. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
+///   6. `[writable, optional]` subaccount
 #[derive(Clone, Debug, Default)]
 pub struct OperatorDepositBuilder {
     vault_state: Option<solana_pubkey::Pubkey>,
@@ -132,6 +148,7 @@ pub struct OperatorDepositBuilder {
     deposit_mint: Option<solana_pubkey::Pubkey>,
     operator: Option<solana_pubkey::Pubkey>,
     token_program: Option<solana_pubkey::Pubkey>,
+    subaccount: Option<solana_pubkey::Pubkey>,
     amount: Option<u64>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
@@ -150,6 +167,8 @@ impl OperatorDepositBuilder {
         self.vault_deposit_ata = Some(vault_deposit_ata);
         self
     }
+    /// Source: a registered subaccount's ATA, else the operator's own. Keeps the
+    /// old name for wire compatibility.
     #[inline(always)]
     pub fn operator_token_account(
         &mut self,
@@ -163,6 +182,7 @@ impl OperatorDepositBuilder {
         self.deposit_mint = Some(deposit_mint);
         self
     }
+    /// Still the operator: the destination changed, not who may move funds.
     #[inline(always)]
     pub fn operator(&mut self, operator: solana_pubkey::Pubkey) -> &mut Self {
         self.operator = Some(operator);
@@ -172,6 +192,17 @@ impl OperatorDepositBuilder {
     #[inline(always)]
     pub fn token_program(&mut self, token_program: solana_pubkey::Pubkey) -> &mut Self {
         self.token_program = Some(token_program);
+        self
+    }
+    /// `[optional account]`
+    /// The source's registry entry, required exactly when the vault has
+    /// registrations. Its PDA binds it to this vault.
+    ///
+    /// **Last, and omittable.** Inserted mid-struct it would shift
+    /// `deposit_mint`, breaking every pre-registry operator call on upgrade.
+    #[inline(always)]
+    pub fn subaccount(&mut self, subaccount: Option<solana_pubkey::Pubkey>) -> &mut Self {
+        self.subaccount = subaccount;
         self
     }
     #[inline(always)]
@@ -209,6 +240,7 @@ impl OperatorDepositBuilder {
             token_program: self.token_program.unwrap_or(solana_pubkey::pubkey!(
                 "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
             )),
+            subaccount: self.subaccount,
         };
         let args = OperatorDepositInstructionArgs {
             amount: self.amount.clone().expect("amount is not set"),
@@ -223,14 +255,21 @@ pub struct OperatorDepositCpiAccounts<'a, 'b> {
     pub vault_state: &'b solana_account_info::AccountInfo<'a>,
 
     pub vault_deposit_ata: &'b solana_account_info::AccountInfo<'a>,
-
+    /// Source: a registered subaccount's ATA, else the operator's own. Keeps the
+    /// old name for wire compatibility.
     pub operator_token_account: &'b solana_account_info::AccountInfo<'a>,
 
     pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
-
+    /// Still the operator: the destination changed, not who may move funds.
     pub operator: &'b solana_account_info::AccountInfo<'a>,
 
     pub token_program: &'b solana_account_info::AccountInfo<'a>,
+    /// The source's registry entry, required exactly when the vault has
+    /// registrations. Its PDA binds it to this vault.
+    ///
+    /// **Last, and omittable.** Inserted mid-struct it would shift
+    /// `deposit_mint`, breaking every pre-registry operator call on upgrade.
+    pub subaccount: Option<&'b solana_account_info::AccountInfo<'a>>,
 }
 
 /// `operator_deposit` CPI instruction.
@@ -241,14 +280,21 @@ pub struct OperatorDepositCpi<'a, 'b> {
     pub vault_state: &'b solana_account_info::AccountInfo<'a>,
 
     pub vault_deposit_ata: &'b solana_account_info::AccountInfo<'a>,
-
+    /// Source: a registered subaccount's ATA, else the operator's own. Keeps the
+    /// old name for wire compatibility.
     pub operator_token_account: &'b solana_account_info::AccountInfo<'a>,
 
     pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
-
+    /// Still the operator: the destination changed, not who may move funds.
     pub operator: &'b solana_account_info::AccountInfo<'a>,
 
     pub token_program: &'b solana_account_info::AccountInfo<'a>,
+    /// The source's registry entry, required exactly when the vault has
+    /// registrations. Its PDA binds it to this vault.
+    ///
+    /// **Last, and omittable.** Inserted mid-struct it would shift
+    /// `deposit_mint`, breaking every pre-registry operator call on upgrade.
+    pub subaccount: Option<&'b solana_account_info::AccountInfo<'a>>,
     /// The arguments for the instruction.
     pub __args: OperatorDepositInstructionArgs,
 }
@@ -267,6 +313,7 @@ impl<'a, 'b> OperatorDepositCpi<'a, 'b> {
             deposit_mint: accounts.deposit_mint,
             operator: accounts.operator,
             token_program: accounts.token_program,
+            subaccount: accounts.subaccount,
             __args: args,
         }
     }
@@ -293,7 +340,7 @@ impl<'a, 'b> OperatorDepositCpi<'a, 'b> {
         signers_seeds: &[&[&[u8]]],
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
-        let mut accounts = Vec::with_capacity(6 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(7 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(
             *self.vault_state.key,
             false,
@@ -318,6 +365,14 @@ impl<'a, 'b> OperatorDepositCpi<'a, 'b> {
             *self.token_program.key,
             false,
         ));
+        if let Some(subaccount) = self.subaccount {
+            accounts.push(solana_instruction::AccountMeta::new(*subaccount.key, false));
+        } else {
+            accounts.push(solana_instruction::AccountMeta::new_readonly(
+                crate::AUGUST_VAULT_ID,
+                false,
+            ));
+        }
         remaining_accounts.iter().for_each(|remaining_account| {
             accounts.push(solana_instruction::AccountMeta {
                 pubkey: *remaining_account.0.key,
@@ -334,7 +389,7 @@ impl<'a, 'b> OperatorDepositCpi<'a, 'b> {
             accounts,
             data,
         };
-        let mut account_infos = Vec::with_capacity(7 + remaining_accounts.len());
+        let mut account_infos = Vec::with_capacity(8 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
         account_infos.push(self.vault_state.clone());
         account_infos.push(self.vault_deposit_ata.clone());
@@ -342,6 +397,9 @@ impl<'a, 'b> OperatorDepositCpi<'a, 'b> {
         account_infos.push(self.deposit_mint.clone());
         account_infos.push(self.operator.clone());
         account_infos.push(self.token_program.clone());
+        if let Some(subaccount) = self.subaccount {
+            account_infos.push(subaccount.clone());
+        }
         remaining_accounts
             .iter()
             .for_each(|remaining_account| account_infos.push(remaining_account.0.clone()));
@@ -364,6 +422,7 @@ impl<'a, 'b> OperatorDepositCpi<'a, 'b> {
 ///   3. `[writable]` deposit_mint
 ///   4. `[signer]` operator
 ///   5. `[]` token_program
+///   6. `[writable, optional]` subaccount
 #[derive(Clone, Debug)]
 pub struct OperatorDepositCpiBuilder<'a, 'b> {
     instruction: Box<OperatorDepositCpiBuilderInstruction<'a, 'b>>,
@@ -379,6 +438,7 @@ impl<'a, 'b> OperatorDepositCpiBuilder<'a, 'b> {
             deposit_mint: None,
             operator: None,
             token_program: None,
+            subaccount: None,
             amount: None,
             __remaining_accounts: Vec::new(),
         });
@@ -400,6 +460,8 @@ impl<'a, 'b> OperatorDepositCpiBuilder<'a, 'b> {
         self.instruction.vault_deposit_ata = Some(vault_deposit_ata);
         self
     }
+    /// Source: a registered subaccount's ATA, else the operator's own. Keeps the
+    /// old name for wire compatibility.
     #[inline(always)]
     pub fn operator_token_account(
         &mut self,
@@ -416,6 +478,7 @@ impl<'a, 'b> OperatorDepositCpiBuilder<'a, 'b> {
         self.instruction.deposit_mint = Some(deposit_mint);
         self
     }
+    /// Still the operator: the destination changed, not who may move funds.
     #[inline(always)]
     pub fn operator(&mut self, operator: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.operator = Some(operator);
@@ -427,6 +490,20 @@ impl<'a, 'b> OperatorDepositCpiBuilder<'a, 'b> {
         token_program: &'b solana_account_info::AccountInfo<'a>,
     ) -> &mut Self {
         self.instruction.token_program = Some(token_program);
+        self
+    }
+    /// `[optional account]`
+    /// The source's registry entry, required exactly when the vault has
+    /// registrations. Its PDA binds it to this vault.
+    ///
+    /// **Last, and omittable.** Inserted mid-struct it would shift
+    /// `deposit_mint`, breaking every pre-registry operator call on upgrade.
+    #[inline(always)]
+    pub fn subaccount(
+        &mut self,
+        subaccount: Option<&'b solana_account_info::AccountInfo<'a>>,
+    ) -> &mut Self {
+        self.instruction.subaccount = subaccount;
         self
     }
     #[inline(always)]
@@ -500,6 +577,8 @@ impl<'a, 'b> OperatorDepositCpiBuilder<'a, 'b> {
                 .instruction
                 .token_program
                 .expect("token_program is not set"),
+
+            subaccount: self.instruction.subaccount,
             __args: args,
         };
         instruction.invoke_signed_with_remaining_accounts(
@@ -518,6 +597,7 @@ struct OperatorDepositCpiBuilderInstruction<'a, 'b> {
     deposit_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
     operator: Option<&'b solana_account_info::AccountInfo<'a>>,
     token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
+    subaccount: Option<&'b solana_account_info::AccountInfo<'a>>,
     amount: Option<u64>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,

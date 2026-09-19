@@ -83,6 +83,14 @@ pub enum ErrorCode {
     WithdrawalQueueAlreadyAttached,
     #[msg("No withdrawal queue is attached to this vault")]
     WithdrawalQueueNotAttached,
+    #[msg("A subaccount must differ from the operator, belong to this vault, and be passed whenever the vault has any registered")]
+    InvalidSubaccount,
+    #[msg("The named address's ATA must have this vault approved as delegate, with an allowance covering the transfer")]
+    SubaccountDelegationMissing,
+    #[msg("A subaccount still holds outstanding principal and cannot be deregistered")]
+    SubaccountNotEmpty,
+    #[msg("A loss settlement may not exceed the principal that is not sitting at the destination")]
+    LossExceedsShortfall,
 }
 
 /// Compile-time pin of the ABI described above, placed next to the enum it
@@ -159,4 +167,8 @@ pin_error_abi! {
     WrongWithdrawalQueueSigner => 23,
     WithdrawalQueueAlreadyAttached => 24,
     WithdrawalQueueNotAttached => 25,
+    InvalidSubaccount => 26,
+    SubaccountDelegationMissing => 27,
+    SubaccountNotEmpty => 28,
+    LossExceedsShortfall => 29,
 }

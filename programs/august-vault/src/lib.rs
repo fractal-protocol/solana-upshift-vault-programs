@@ -13,6 +13,7 @@ use instructions::attach_withdrawal_queue::*;
 use instructions::close_vault::*;
 use instructions::create_metadata::*;
 use instructions::deposit::*;
+use instructions::deregister_subaccount::*;
 use instructions::detach_withdrawal_queue::*;
 use instructions::initialize::*;
 use instructions::initialize_config::*;
@@ -23,11 +24,13 @@ use instructions::operator_withdraw::*;
 use instructions::override_config_authority::*;
 use instructions::pause::*;
 use instructions::redeem::*;
+use instructions::register_subaccount::*;
 use instructions::set_aum_limits::*;
 use instructions::set_config_authority::*;
 use instructions::set_fee_recipient::*;
 use instructions::set_operator::*;
 use instructions::set_withdrawal_fee::*;
+use instructions::settle_subaccount_loss::*;
 use instructions::unpause::*;
 use instructions::update_metadata::*;
 pub mod instructions;
@@ -181,7 +184,12 @@ pub mod august_vault {
     }
     /// Operator withdraw funds from the Vault
     ///
-    /// Get tokens out
+    /// Get tokens out, to the named registered subaccount's ATA once the vault
+    /// has any, else the operator's own; the account must already exist. The
+    /// subaccount's delegation must cover its outstanding principal plus
+    /// `amount`, else `SubaccountDelegationMissing` (6023). A wrong-party ATA
+    /// fails `ConstraintTokenOwner` (2015); a non-derived token account, 2009.
+    ///
     /// ### Parameters
     /// - `amount` - The amount of tokens to get out of the Vault
     pub fn operator_withdraw(ctx: Context<OperatorWithdraw>, amount: u64) -> Result<()> {
@@ -189,7 +197,11 @@ pub mod august_vault {
     }
     /// Operator deposit funds in the Vault
     ///
-    /// Get tokens in
+    /// Get tokens in, from the named registered subaccount's ATA once the vault
+    /// has any, else the operator's own. From a subaccount the vault PDA — not
+    /// the operator — signs against the granted delegation; a missing or short
+    /// allowance fails `SubaccountDelegationMissing` (6023).
+    ///
     /// ### Parameters
     /// - `amount` - The amount of tokens to get in the Vault
     pub fn operator_deposit(ctx: Context<OperatorDeposit>, amount: u64) -> Result<()> {
@@ -204,6 +216,45 @@ pub mod august_vault {
     /// - `new_aum` - The new deployed AUM value
     pub fn operator_update_aum(ctx: Context<OperatorUpdateAum>, new_aum: u64) -> Result<()> {
         return instructions::operator_update_aum::handler(ctx, new_aum);
+    }
+
+    /// Register a permitted operator destination. Admin only. Once any exists,
+    /// both operator transfers must name one and the operator's own ATA is
+    /// refused.
+    ///
+    /// The address's ATA must already delegate to this vault
+    /// (`approve(subaccount_ata, vault_state, n)`) — the only on-chain proof it
+    /// can return funds. `n` also caps deployments to that destination, is spent
+    /// down by returns, and SPL clears it at zero, so it needs re-granting per
+    /// cycle; short or lapsed fails `SubaccountDelegationMissing` (6023). The
+    /// first registration adopts the vault's outstanding principal and must
+    /// cover it.
+    ///
+    /// ### Parameters
+    /// - `address` - The receiving address. Must not be the operator
+    pub fn register_subaccount(ctx: Context<RegisterSubaccount>, address: Pubkey) -> Result<()> {
+        return instructions::register_subaccount::handler(ctx, address);
+    }
+
+    /// Write down principal a destination will never return, after a realized
+    /// loss. Admin only; the operator reducing principal would reopen
+    /// deployment capacity.
+    ///
+    /// Bounded by `principal - ata.amount`, so funds still sitting there must be
+    /// returned rather than written off. Leaves `deployed_aum` alone. Without
+    /// this a vault that took a loss could never be closed.
+    ///
+    /// ### Parameters
+    /// - `amount` - Principal to write down
+    pub fn settle_subaccount_loss(ctx: Context<SettleSubaccountLoss>, amount: u64) -> Result<()> {
+        return instructions::settle_subaccount_loss::handler(ctx, amount);
+    }
+
+    /// Remove a registered destination, refunding its rent. Admin only, and
+    /// only once its outstanding principal is zero. Removing the last one
+    /// returns the vault to the operator's own ATA.
+    pub fn deregister_subaccount(ctx: Context<DeregisterSubaccount>) -> Result<()> {
+        return instructions::deregister_subaccount::handler(ctx);
     }
 
     /// Admin Updates the Withdrawal Fee

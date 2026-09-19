@@ -702,6 +702,7 @@ describe("version-security", () => {
                         vaultState: v1StatePda, // Wrong version PDA
                         vaultDepositAta: v1TokenAta, // Wrong version
                         operatorTokenAccount: operatorDepositAta,
+                        subaccount: null,
                         depositMint: depositMint,
                         operator: operator.publicKey,
                         tokenProgram: token.TOKEN_PROGRAM_ID,
@@ -730,6 +731,7 @@ describe("version-security", () => {
                         vaultState: v1StatePda, // Wrong version PDA
                         vaultDepositAta: v1TokenAta, // Wrong version
                         operatorTokenAccount: operatorDepositAta,
+                        subaccount: null,
                         depositMint: depositMint,
                         operator: operator.publicKey,
                         tokenProgram: token.TOKEN_PROGRAM_ID,

@@ -8,35 +8,29 @@
 use borsh::BorshDeserialize;
 use borsh::BorshSerialize;
 
-pub const OPERATOR_WITHDRAW_DISCRIMINATOR: [u8; 8] = [204, 93, 227, 34, 168, 109, 25, 130];
+pub const SETTLE_SUBACCOUNT_LOSS_DISCRIMINATOR: [u8; 8] = [0, 151, 152, 213, 157, 238, 7, 62];
 
 /// Accounts.
 #[derive(Debug)]
-pub struct OperatorWithdraw {
+pub struct SettleSubaccountLoss {
     pub vault_state: solana_pubkey::Pubkey,
 
-    pub vault_deposit_ata: solana_pubkey::Pubkey,
-    /// Destination: a registered subaccount's ATA, else the operator's own.
-    /// Keeps the old name for wire compatibility.
-    pub operator_token_account: solana_pubkey::Pubkey,
+    pub subaccount: solana_pubkey::Pubkey,
 
     pub deposit_mint: solana_pubkey::Pubkey,
-
-    pub operator: solana_pubkey::Pubkey,
+    /// Read for its balance, to bound the write-down. Derived, so it cannot be
+    /// substituted.
+    pub subaccount_ata: solana_pubkey::Pubkey,
 
     pub token_program: solana_pubkey::Pubkey,
-    /// The destination's registry entry, required exactly when the vault has
-    /// registrations. Its PDA binds it to this vault.
-    ///
-    /// **Last, and omittable.** Inserted mid-struct it would shift
-    /// `deposit_mint`, breaking every pre-registry operator call on upgrade.
-    pub subaccount: Option<solana_pubkey::Pubkey>,
+
+    pub admin: solana_pubkey::Pubkey,
 }
 
-impl OperatorWithdraw {
+impl SettleSubaccountLoss {
     pub fn instruction(
         &self,
-        args: OperatorWithdrawInstructionArgs,
+        args: SettleSubaccountLossInstructionArgs,
     ) -> solana_instruction::Instruction {
         self.instruction_with_remaining_accounts(args, &[])
     }
@@ -44,44 +38,34 @@ impl OperatorWithdraw {
     #[allow(clippy::vec_init_then_push)]
     pub fn instruction_with_remaining_accounts(
         &self,
-        args: OperatorWithdrawInstructionArgs,
+        args: SettleSubaccountLossInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
-        let mut accounts = Vec::with_capacity(7 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(6 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(
             self.vault_state,
             false,
         ));
-        accounts.push(solana_instruction::AccountMeta::new(
-            self.vault_deposit_ata,
-            false,
-        ));
-        accounts.push(solana_instruction::AccountMeta::new(
-            self.operator_token_account,
-            false,
-        ));
-        accounts.push(solana_instruction::AccountMeta::new(
+        accounts.push(solana_instruction::AccountMeta::new(self.subaccount, false));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.deposit_mint,
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.operator,
-            true,
+            self.subaccount_ata,
+            false,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.token_program,
             false,
         ));
-        if let Some(subaccount) = self.subaccount {
-            accounts.push(solana_instruction::AccountMeta::new(subaccount, false));
-        } else {
-            accounts.push(solana_instruction::AccountMeta::new_readonly(
-                crate::AUGUST_VAULT_ID,
-                false,
-            ));
-        }
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.admin, true,
+        ));
         accounts.extend_from_slice(remaining_accounts);
-        let mut data = OperatorWithdrawInstructionData::new().try_to_vec().unwrap();
+        let mut data = SettleSubaccountLossInstructionData::new()
+            .try_to_vec()
+            .unwrap();
         let mut args = args.try_to_vec().unwrap();
         data.append(&mut args);
 
@@ -95,14 +79,14 @@ impl OperatorWithdraw {
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct OperatorWithdrawInstructionData {
+pub struct SettleSubaccountLossInstructionData {
     discriminator: [u8; 8],
 }
 
-impl OperatorWithdrawInstructionData {
+impl SettleSubaccountLossInstructionData {
     pub fn new() -> Self {
         Self {
-            discriminator: [204, 93, 227, 34, 168, 109, 25, 130],
+            discriminator: [0, 151, 152, 213, 157, 238, 7, 62],
         }
     }
 
@@ -111,7 +95,7 @@ impl OperatorWithdrawInstructionData {
     }
 }
 
-impl Default for OperatorWithdrawInstructionData {
+impl Default for SettleSubaccountLossInstructionData {
     fn default() -> Self {
         Self::new()
     }
@@ -119,41 +103,39 @@ impl Default for OperatorWithdrawInstructionData {
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct OperatorWithdrawInstructionArgs {
+pub struct SettleSubaccountLossInstructionArgs {
     pub amount: u64,
 }
 
-impl OperatorWithdrawInstructionArgs {
+impl SettleSubaccountLossInstructionArgs {
     pub(crate) fn try_to_vec(&self) -> Result<Vec<u8>, std::io::Error> {
         borsh::to_vec(self)
     }
 }
 
-/// Instruction builder for `OperatorWithdraw`.
+/// Instruction builder for `SettleSubaccountLoss`.
 ///
 /// ### Accounts:
 ///
 ///   0. `[writable]` vault_state
-///   1. `[writable]` vault_deposit_ata
-///   2. `[writable]` operator_token_account
-///   3. `[writable]` deposit_mint
-///   4. `[signer]` operator
-///   5. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
-///   6. `[writable, optional]` subaccount
+///   1. `[writable]` subaccount
+///   2. `[]` deposit_mint
+///   3. `[]` subaccount_ata
+///   4. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
+///   5. `[signer]` admin
 #[derive(Clone, Debug, Default)]
-pub struct OperatorWithdrawBuilder {
+pub struct SettleSubaccountLossBuilder {
     vault_state: Option<solana_pubkey::Pubkey>,
-    vault_deposit_ata: Option<solana_pubkey::Pubkey>,
-    operator_token_account: Option<solana_pubkey::Pubkey>,
-    deposit_mint: Option<solana_pubkey::Pubkey>,
-    operator: Option<solana_pubkey::Pubkey>,
-    token_program: Option<solana_pubkey::Pubkey>,
     subaccount: Option<solana_pubkey::Pubkey>,
+    deposit_mint: Option<solana_pubkey::Pubkey>,
+    subaccount_ata: Option<solana_pubkey::Pubkey>,
+    token_program: Option<solana_pubkey::Pubkey>,
+    admin: Option<solana_pubkey::Pubkey>,
     amount: Option<u64>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
-impl OperatorWithdrawBuilder {
+impl SettleSubaccountLossBuilder {
     pub fn new() -> Self {
         Self::default()
     }
@@ -163,18 +145,8 @@ impl OperatorWithdrawBuilder {
         self
     }
     #[inline(always)]
-    pub fn vault_deposit_ata(&mut self, vault_deposit_ata: solana_pubkey::Pubkey) -> &mut Self {
-        self.vault_deposit_ata = Some(vault_deposit_ata);
-        self
-    }
-    /// Destination: a registered subaccount's ATA, else the operator's own.
-    /// Keeps the old name for wire compatibility.
-    #[inline(always)]
-    pub fn operator_token_account(
-        &mut self,
-        operator_token_account: solana_pubkey::Pubkey,
-    ) -> &mut Self {
-        self.operator_token_account = Some(operator_token_account);
+    pub fn subaccount(&mut self, subaccount: solana_pubkey::Pubkey) -> &mut Self {
+        self.subaccount = Some(subaccount);
         self
     }
     #[inline(always)]
@@ -182,9 +154,11 @@ impl OperatorWithdrawBuilder {
         self.deposit_mint = Some(deposit_mint);
         self
     }
+    /// Read for its balance, to bound the write-down. Derived, so it cannot be
+    /// substituted.
     #[inline(always)]
-    pub fn operator(&mut self, operator: solana_pubkey::Pubkey) -> &mut Self {
-        self.operator = Some(operator);
+    pub fn subaccount_ata(&mut self, subaccount_ata: solana_pubkey::Pubkey) -> &mut Self {
+        self.subaccount_ata = Some(subaccount_ata);
         self
     }
     /// `[optional account, default to 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA']`
@@ -193,15 +167,9 @@ impl OperatorWithdrawBuilder {
         self.token_program = Some(token_program);
         self
     }
-    /// `[optional account]`
-    /// The destination's registry entry, required exactly when the vault has
-    /// registrations. Its PDA binds it to this vault.
-    ///
-    /// **Last, and omittable.** Inserted mid-struct it would shift
-    /// `deposit_mint`, breaking every pre-registry operator call on upgrade.
     #[inline(always)]
-    pub fn subaccount(&mut self, subaccount: Option<solana_pubkey::Pubkey>) -> &mut Self {
-        self.subaccount = subaccount;
+    pub fn admin(&mut self, admin: solana_pubkey::Pubkey) -> &mut Self {
+        self.admin = Some(admin);
         self
     }
     #[inline(always)]
@@ -226,22 +194,17 @@ impl OperatorWithdrawBuilder {
     }
     #[allow(clippy::clone_on_copy)]
     pub fn instruction(&self) -> solana_instruction::Instruction {
-        let accounts = OperatorWithdraw {
+        let accounts = SettleSubaccountLoss {
             vault_state: self.vault_state.expect("vault_state is not set"),
-            vault_deposit_ata: self
-                .vault_deposit_ata
-                .expect("vault_deposit_ata is not set"),
-            operator_token_account: self
-                .operator_token_account
-                .expect("operator_token_account is not set"),
+            subaccount: self.subaccount.expect("subaccount is not set"),
             deposit_mint: self.deposit_mint.expect("deposit_mint is not set"),
-            operator: self.operator.expect("operator is not set"),
+            subaccount_ata: self.subaccount_ata.expect("subaccount_ata is not set"),
             token_program: self.token_program.unwrap_or(solana_pubkey::pubkey!(
                 "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
             )),
-            subaccount: self.subaccount,
+            admin: self.admin.expect("admin is not set"),
         };
-        let args = OperatorWithdrawInstructionArgs {
+        let args = SettleSubaccountLossInstructionArgs {
             amount: self.amount.clone().expect("amount is not set"),
         };
 
@@ -249,70 +212,57 @@ impl OperatorWithdrawBuilder {
     }
 }
 
-/// `operator_withdraw` CPI accounts.
-pub struct OperatorWithdrawCpiAccounts<'a, 'b> {
+/// `settle_subaccount_loss` CPI accounts.
+pub struct SettleSubaccountLossCpiAccounts<'a, 'b> {
     pub vault_state: &'b solana_account_info::AccountInfo<'a>,
 
-    pub vault_deposit_ata: &'b solana_account_info::AccountInfo<'a>,
-    /// Destination: a registered subaccount's ATA, else the operator's own.
-    /// Keeps the old name for wire compatibility.
-    pub operator_token_account: &'b solana_account_info::AccountInfo<'a>,
+    pub subaccount: &'b solana_account_info::AccountInfo<'a>,
 
     pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
-
-    pub operator: &'b solana_account_info::AccountInfo<'a>,
+    /// Read for its balance, to bound the write-down. Derived, so it cannot be
+    /// substituted.
+    pub subaccount_ata: &'b solana_account_info::AccountInfo<'a>,
 
     pub token_program: &'b solana_account_info::AccountInfo<'a>,
-    /// The destination's registry entry, required exactly when the vault has
-    /// registrations. Its PDA binds it to this vault.
-    ///
-    /// **Last, and omittable.** Inserted mid-struct it would shift
-    /// `deposit_mint`, breaking every pre-registry operator call on upgrade.
-    pub subaccount: Option<&'b solana_account_info::AccountInfo<'a>>,
+
+    pub admin: &'b solana_account_info::AccountInfo<'a>,
 }
 
-/// `operator_withdraw` CPI instruction.
-pub struct OperatorWithdrawCpi<'a, 'b> {
+/// `settle_subaccount_loss` CPI instruction.
+pub struct SettleSubaccountLossCpi<'a, 'b> {
     /// The program to invoke.
     pub __program: &'b solana_account_info::AccountInfo<'a>,
 
     pub vault_state: &'b solana_account_info::AccountInfo<'a>,
 
-    pub vault_deposit_ata: &'b solana_account_info::AccountInfo<'a>,
-    /// Destination: a registered subaccount's ATA, else the operator's own.
-    /// Keeps the old name for wire compatibility.
-    pub operator_token_account: &'b solana_account_info::AccountInfo<'a>,
+    pub subaccount: &'b solana_account_info::AccountInfo<'a>,
 
     pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
-
-    pub operator: &'b solana_account_info::AccountInfo<'a>,
+    /// Read for its balance, to bound the write-down. Derived, so it cannot be
+    /// substituted.
+    pub subaccount_ata: &'b solana_account_info::AccountInfo<'a>,
 
     pub token_program: &'b solana_account_info::AccountInfo<'a>,
-    /// The destination's registry entry, required exactly when the vault has
-    /// registrations. Its PDA binds it to this vault.
-    ///
-    /// **Last, and omittable.** Inserted mid-struct it would shift
-    /// `deposit_mint`, breaking every pre-registry operator call on upgrade.
-    pub subaccount: Option<&'b solana_account_info::AccountInfo<'a>>,
+
+    pub admin: &'b solana_account_info::AccountInfo<'a>,
     /// The arguments for the instruction.
-    pub __args: OperatorWithdrawInstructionArgs,
+    pub __args: SettleSubaccountLossInstructionArgs,
 }
 
-impl<'a, 'b> OperatorWithdrawCpi<'a, 'b> {
+impl<'a, 'b> SettleSubaccountLossCpi<'a, 'b> {
     pub fn new(
         program: &'b solana_account_info::AccountInfo<'a>,
-        accounts: OperatorWithdrawCpiAccounts<'a, 'b>,
-        args: OperatorWithdrawInstructionArgs,
+        accounts: SettleSubaccountLossCpiAccounts<'a, 'b>,
+        args: SettleSubaccountLossInstructionArgs,
     ) -> Self {
         Self {
             __program: program,
             vault_state: accounts.vault_state,
-            vault_deposit_ata: accounts.vault_deposit_ata,
-            operator_token_account: accounts.operator_token_account,
-            deposit_mint: accounts.deposit_mint,
-            operator: accounts.operator,
-            token_program: accounts.token_program,
             subaccount: accounts.subaccount,
+            deposit_mint: accounts.deposit_mint,
+            subaccount_ata: accounts.subaccount_ata,
+            token_program: accounts.token_program,
+            admin: accounts.admin,
             __args: args,
         }
     }
@@ -339,39 +289,31 @@ impl<'a, 'b> OperatorWithdrawCpi<'a, 'b> {
         signers_seeds: &[&[&[u8]]],
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
-        let mut accounts = Vec::with_capacity(7 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(6 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(
             *self.vault_state.key,
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new(
-            *self.vault_deposit_ata.key,
+            *self.subaccount.key,
             false,
         ));
-        accounts.push(solana_instruction::AccountMeta::new(
-            *self.operator_token_account.key,
-            false,
-        ));
-        accounts.push(solana_instruction::AccountMeta::new(
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.deposit_mint.key,
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.operator.key,
-            true,
+            *self.subaccount_ata.key,
+            false,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.token_program.key,
             false,
         ));
-        if let Some(subaccount) = self.subaccount {
-            accounts.push(solana_instruction::AccountMeta::new(*subaccount.key, false));
-        } else {
-            accounts.push(solana_instruction::AccountMeta::new_readonly(
-                crate::AUGUST_VAULT_ID,
-                false,
-            ));
-        }
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.admin.key,
+            true,
+        ));
         remaining_accounts.iter().for_each(|remaining_account| {
             accounts.push(solana_instruction::AccountMeta {
                 pubkey: *remaining_account.0.key,
@@ -379,7 +321,9 @@ impl<'a, 'b> OperatorWithdrawCpi<'a, 'b> {
                 is_writable: remaining_account.2,
             })
         });
-        let mut data = OperatorWithdrawInstructionData::new().try_to_vec().unwrap();
+        let mut data = SettleSubaccountLossInstructionData::new()
+            .try_to_vec()
+            .unwrap();
         let mut args = self.__args.try_to_vec().unwrap();
         data.append(&mut args);
 
@@ -388,17 +332,14 @@ impl<'a, 'b> OperatorWithdrawCpi<'a, 'b> {
             accounts,
             data,
         };
-        let mut account_infos = Vec::with_capacity(8 + remaining_accounts.len());
+        let mut account_infos = Vec::with_capacity(7 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
         account_infos.push(self.vault_state.clone());
-        account_infos.push(self.vault_deposit_ata.clone());
-        account_infos.push(self.operator_token_account.clone());
+        account_infos.push(self.subaccount.clone());
         account_infos.push(self.deposit_mint.clone());
-        account_infos.push(self.operator.clone());
+        account_infos.push(self.subaccount_ata.clone());
         account_infos.push(self.token_program.clone());
-        if let Some(subaccount) = self.subaccount {
-            account_infos.push(subaccount.clone());
-        }
+        account_infos.push(self.admin.clone());
         remaining_accounts
             .iter()
             .for_each(|remaining_account| account_infos.push(remaining_account.0.clone()));
@@ -411,33 +352,31 @@ impl<'a, 'b> OperatorWithdrawCpi<'a, 'b> {
     }
 }
 
-/// Instruction builder for `OperatorWithdraw` via CPI.
+/// Instruction builder for `SettleSubaccountLoss` via CPI.
 ///
 /// ### Accounts:
 ///
 ///   0. `[writable]` vault_state
-///   1. `[writable]` vault_deposit_ata
-///   2. `[writable]` operator_token_account
-///   3. `[writable]` deposit_mint
-///   4. `[signer]` operator
-///   5. `[]` token_program
-///   6. `[writable, optional]` subaccount
+///   1. `[writable]` subaccount
+///   2. `[]` deposit_mint
+///   3. `[]` subaccount_ata
+///   4. `[]` token_program
+///   5. `[signer]` admin
 #[derive(Clone, Debug)]
-pub struct OperatorWithdrawCpiBuilder<'a, 'b> {
-    instruction: Box<OperatorWithdrawCpiBuilderInstruction<'a, 'b>>,
+pub struct SettleSubaccountLossCpiBuilder<'a, 'b> {
+    instruction: Box<SettleSubaccountLossCpiBuilderInstruction<'a, 'b>>,
 }
 
-impl<'a, 'b> OperatorWithdrawCpiBuilder<'a, 'b> {
+impl<'a, 'b> SettleSubaccountLossCpiBuilder<'a, 'b> {
     pub fn new(program: &'b solana_account_info::AccountInfo<'a>) -> Self {
-        let instruction = Box::new(OperatorWithdrawCpiBuilderInstruction {
+        let instruction = Box::new(SettleSubaccountLossCpiBuilderInstruction {
             __program: program,
             vault_state: None,
-            vault_deposit_ata: None,
-            operator_token_account: None,
-            deposit_mint: None,
-            operator: None,
-            token_program: None,
             subaccount: None,
+            deposit_mint: None,
+            subaccount_ata: None,
+            token_program: None,
+            admin: None,
             amount: None,
             __remaining_accounts: Vec::new(),
         });
@@ -452,21 +391,11 @@ impl<'a, 'b> OperatorWithdrawCpiBuilder<'a, 'b> {
         self
     }
     #[inline(always)]
-    pub fn vault_deposit_ata(
+    pub fn subaccount(
         &mut self,
-        vault_deposit_ata: &'b solana_account_info::AccountInfo<'a>,
+        subaccount: &'b solana_account_info::AccountInfo<'a>,
     ) -> &mut Self {
-        self.instruction.vault_deposit_ata = Some(vault_deposit_ata);
-        self
-    }
-    /// Destination: a registered subaccount's ATA, else the operator's own.
-    /// Keeps the old name for wire compatibility.
-    #[inline(always)]
-    pub fn operator_token_account(
-        &mut self,
-        operator_token_account: &'b solana_account_info::AccountInfo<'a>,
-    ) -> &mut Self {
-        self.instruction.operator_token_account = Some(operator_token_account);
+        self.instruction.subaccount = Some(subaccount);
         self
     }
     #[inline(always)]
@@ -477,9 +406,14 @@ impl<'a, 'b> OperatorWithdrawCpiBuilder<'a, 'b> {
         self.instruction.deposit_mint = Some(deposit_mint);
         self
     }
+    /// Read for its balance, to bound the write-down. Derived, so it cannot be
+    /// substituted.
     #[inline(always)]
-    pub fn operator(&mut self, operator: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-        self.instruction.operator = Some(operator);
+    pub fn subaccount_ata(
+        &mut self,
+        subaccount_ata: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.subaccount_ata = Some(subaccount_ata);
         self
     }
     #[inline(always)]
@@ -490,18 +424,9 @@ impl<'a, 'b> OperatorWithdrawCpiBuilder<'a, 'b> {
         self.instruction.token_program = Some(token_program);
         self
     }
-    /// `[optional account]`
-    /// The destination's registry entry, required exactly when the vault has
-    /// registrations. Its PDA binds it to this vault.
-    ///
-    /// **Last, and omittable.** Inserted mid-struct it would shift
-    /// `deposit_mint`, breaking every pre-registry operator call on upgrade.
     #[inline(always)]
-    pub fn subaccount(
-        &mut self,
-        subaccount: Option<&'b solana_account_info::AccountInfo<'a>>,
-    ) -> &mut Self {
-        self.instruction.subaccount = subaccount;
+    pub fn admin(&mut self, admin: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
+        self.instruction.admin = Some(admin);
         self
     }
     #[inline(always)]
@@ -543,10 +468,10 @@ impl<'a, 'b> OperatorWithdrawCpiBuilder<'a, 'b> {
     #[allow(clippy::clone_on_copy)]
     #[allow(clippy::vec_init_then_push)]
     pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
-        let args = OperatorWithdrawInstructionArgs {
+        let args = SettleSubaccountLossInstructionArgs {
             amount: self.instruction.amount.clone().expect("amount is not set"),
         };
-        let instruction = OperatorWithdrawCpi {
+        let instruction = SettleSubaccountLossCpi {
             __program: self.instruction.__program,
 
             vault_state: self
@@ -554,29 +479,24 @@ impl<'a, 'b> OperatorWithdrawCpiBuilder<'a, 'b> {
                 .vault_state
                 .expect("vault_state is not set"),
 
-            vault_deposit_ata: self
-                .instruction
-                .vault_deposit_ata
-                .expect("vault_deposit_ata is not set"),
-
-            operator_token_account: self
-                .instruction
-                .operator_token_account
-                .expect("operator_token_account is not set"),
+            subaccount: self.instruction.subaccount.expect("subaccount is not set"),
 
             deposit_mint: self
                 .instruction
                 .deposit_mint
                 .expect("deposit_mint is not set"),
 
-            operator: self.instruction.operator.expect("operator is not set"),
+            subaccount_ata: self
+                .instruction
+                .subaccount_ata
+                .expect("subaccount_ata is not set"),
 
             token_program: self
                 .instruction
                 .token_program
                 .expect("token_program is not set"),
 
-            subaccount: self.instruction.subaccount,
+            admin: self.instruction.admin.expect("admin is not set"),
             __args: args,
         };
         instruction.invoke_signed_with_remaining_accounts(
@@ -587,15 +507,14 @@ impl<'a, 'b> OperatorWithdrawCpiBuilder<'a, 'b> {
 }
 
 #[derive(Clone, Debug)]
-struct OperatorWithdrawCpiBuilderInstruction<'a, 'b> {
+struct SettleSubaccountLossCpiBuilderInstruction<'a, 'b> {
     __program: &'b solana_account_info::AccountInfo<'a>,
     vault_state: Option<&'b solana_account_info::AccountInfo<'a>>,
-    vault_deposit_ata: Option<&'b solana_account_info::AccountInfo<'a>>,
-    operator_token_account: Option<&'b solana_account_info::AccountInfo<'a>>,
-    deposit_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
-    operator: Option<&'b solana_account_info::AccountInfo<'a>>,
-    token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
     subaccount: Option<&'b solana_account_info::AccountInfo<'a>>,
+    deposit_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
+    subaccount_ata: Option<&'b solana_account_info::AccountInfo<'a>>,
+    token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
+    admin: Option<&'b solana_account_info::AccountInfo<'a>>,
     amount: Option<u64>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,

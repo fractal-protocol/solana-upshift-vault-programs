@@ -756,6 +756,7 @@ describe("multi-vault", () => {
                         vaultState: vault1StatePda,
                         vaultDepositAta: vault1TokenAta,
                         operatorTokenAccount: operatorUsdtAta, // Wrong token
+                        subaccount: null,
                         depositMint: usdtMint, // Wrong mint for Vault 1
                         operator: operator.publicKey,
                         tokenProgram: token.TOKEN_PROGRAM_ID,
@@ -779,6 +780,7 @@ describe("multi-vault", () => {
                         vaultState: vault1StatePda,
                         vaultDepositAta: vault1TokenAta,
                         operatorTokenAccount: operatorUsdtAta, // Wrong token
+                        subaccount: null,
                         depositMint: usdtMint, // Wrong mint for Vault 1
                         operator: operator.publicKey,
                         tokenProgram: token.TOKEN_PROGRAM_ID,
@@ -868,6 +870,7 @@ describe("multi-vault", () => {
                         vaultState: vault1StatePda,
                         vaultDepositAta: vault1TokenAta,
                         operatorTokenAccount: operatorUsdcAta,
+                        subaccount: null,
                         depositMint: usdcMint,
                         operator: operator.publicKey,
                         tokenProgram: token.TOKEN_PROGRAM_ID,
@@ -892,6 +895,7 @@ describe("multi-vault", () => {
                     vaultState: vault1StatePda,
                     vaultDepositAta: vault1TokenAta,
                     operatorTokenAccount: operatorUsdcAta,
+                    subaccount: null,
                     depositMint: usdcMint,
                     operator: operator.publicKey,
                     tokenProgram: token.TOKEN_PROGRAM_ID,
@@ -939,6 +943,7 @@ describe("multi-vault", () => {
                     vaultState: vault1StatePda,
                     vaultDepositAta: vault1TokenAta,
                     operatorTokenAccount: operatorUsdcAta,
+                    subaccount: null,
                     depositMint: usdcMint,
                     operator: operator.publicKey,
                     tokenProgram: token.TOKEN_PROGRAM_ID,
