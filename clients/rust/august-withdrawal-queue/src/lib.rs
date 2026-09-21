@@ -39,7 +39,6 @@ mod tests {
             share_mint: zero,
             escrow_shares: zero,
             escrow_assets: zero,
-            finalizer_authority: zero,
             cooldown_seconds: 0,
             fulfillment_window_seconds: 0,
             sequence: 0,
@@ -47,9 +46,8 @@ mod tests {
             pending_shares: 0,
             accepting_requests: false,
             bump: 0,
-            padding: [0; 16],
+            padding: [0; 20],
         };
         assert!(!queue.accepting_requests);
-        assert_eq!(queue.finalizer_authority, zero, "zero means no restriction");
     }
 }

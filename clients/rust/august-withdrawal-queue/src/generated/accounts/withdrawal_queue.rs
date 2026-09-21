@@ -45,15 +45,6 @@ pub struct WithdrawalQueue {
         serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
     )]
     pub escrow_assets: Pubkey,
-    /// Optional ops restriction on who may finalize any request. Zero is no
-    /// queue-level restriction; `WithdrawalRequest::finalizer` still applies, and
-    /// the request owner may always finalize their own. Read it through
-    /// [`Self::allowed_finalizer`], or better, `WithdrawalRequest::may_finalize`.
-    #[cfg_attr(
-        feature = "serde",
-        serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
-    )]
-    pub finalizer_authority: Pubkey,
     /// Wait between request and eligibility, `0 ..= MAX_COOLDOWN_SECONDS`. Stamped
     /// per request at creation, so a change applies to new requests only.
     pub cooldown_seconds: u64,
@@ -80,7 +71,7 @@ pub struct WithdrawalQueue {
     /// Reserved. Carve new fields **out of** this array so `LEN` stays 370. A
     /// field carved later reads zero on every queue that already exists, so zero
     /// must mean "legacy behaviour" for it, as it does for every field above.
-    pub padding: [u64; 16],
+    pub padding: [u64; 20],
 }
 
 pub const WITHDRAWAL_QUEUE_DISCRIMINATOR: [u8; 8] = [54, 56, 158, 88, 232, 203, 241, 163];

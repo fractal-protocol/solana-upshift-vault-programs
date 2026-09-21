@@ -60,7 +60,6 @@ fn assert_config_snapshot(meta: &litesvm::types::TransactionMetadata, ctx: &Vaul
     assert_eq!(e.queue, ctx.withdrawal_queue_pda());
     assert_eq!(e.cooldown_seconds, q.cooldown_seconds);
     assert_eq!(e.fulfillment_window_seconds, q.fulfillment_window_seconds);
-    assert_eq!(e.finalizer_authority, q.finalizer_authority);
     assert_eq!(e.accepting_requests, q.accepting_requests);
 }
 
@@ -80,7 +79,6 @@ fn the_admin_creates_a_queue_in_drain_mode() {
     assert_eq!(q.escrow_assets, ctx.queue_escrow(&ctx.deposit_mint));
     assert_eq!(q.cooldown_seconds, DAY);
     assert_eq!(q.fulfillment_window_seconds, 0);
-    assert_eq!(q.allowed_finalizer(), None);
     assert_eq!(
         (q.sequence, q.pending_requests, q.pending_shares),
         (0, 0, 0)
@@ -305,7 +303,7 @@ fn opening_before_the_vault_points_here_is_refused() {
     assert_config_snapshot(&meta, &ctx);
 }
 
-// ---- set_cooldown / set_fulfillment_window / set_finalizer_authority ----
+// ---- set_cooldown / set_fulfillment_window ----
 
 #[test]
 fn set_cooldown_is_bounded_and_snapshots_the_config() {
@@ -351,23 +349,6 @@ fn set_fulfillment_window_is_bounded_with_zero_meaning_never() {
     assert_eq!(ctx.queue_state_data().fulfillment_window_seconds, 0);
 }
 
-#[test]
-fn set_finalizer_authority_round_trips_through_zero() {
-    let mut ctx = VaultCtx::fresh();
-    ctx.initialize_queue(DAY).expect("initialize_queue");
-    let ops = Pubkey::new_unique();
-
-    let meta = ctx.set_finalizer_authority(ops).expect("restrict");
-    assert_eq!(ctx.queue_state_data().allowed_finalizer(), Some(ops));
-    assert_config_snapshot(&meta, &ctx);
-
-    let meta = ctx
-        .set_finalizer_authority(Pubkey::default())
-        .expect("zero lifts the restriction");
-    assert_eq!(ctx.queue_state_data().allowed_finalizer(), None);
-    assert_config_snapshot(&meta, &ctx);
-}
-
 // ---- every setter: admin-only, bound to the queue's vault, on an existing queue ----
 
 #[test]
@@ -377,10 +358,9 @@ fn setters_are_admin_only() {
     let impostor = ctx.new_funded_keypair(1_000_000_000);
     let before = ctx.queue_state_data();
 
-    let attempts: [Result<_, FailedTransactionMetadata>; 4] = [
+    let attempts: [Result<_, FailedTransactionMetadata>; 3] = [
         ctx.set_cooldown_as(&impostor, 2 * DAY),
         ctx.set_fulfillment_window_as(&impostor, DAY),
-        ctx.set_finalizer_authority_as(&impostor, impostor.pubkey()),
         ctx.set_accepting_requests_as(&impostor, false),
     ];
     for attempt in attempts {
@@ -392,13 +372,11 @@ fn setters_are_admin_only() {
         (
             after.cooldown_seconds,
             after.fulfillment_window_seconds,
-            after.finalizer_authority,
             after.accepting_requests
         ),
         (
             before.cooldown_seconds,
             before.fulfillment_window_seconds,
-            before.finalizer_authority,
             before.accepting_requests
         ),
         "refused calls change nothing"

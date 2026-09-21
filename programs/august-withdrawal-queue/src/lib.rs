@@ -81,12 +81,6 @@ pub mod august_withdrawal_queue {
         return instructions::set_fulfillment_window::handler(ctx, seconds);
     }
 
-    /// Admin restricts who may finalize any request to `authority`; zero lifts
-    /// the restriction. Owners may always finalize their own requests.
-    pub fn set_finalizer_authority(ctx: Context<QueueAdmin>, authority: Pubkey) -> Result<()> {
-        return instructions::set_finalizer_authority::handler(ctx, authority);
-    }
-
     /// Admin opens or closes the queue to new requests. Opening requires the
     /// vault's `withdrawal_queue_authority` to point at this queue; closing is
     /// drain mode, in which finalize and cancel keep working.

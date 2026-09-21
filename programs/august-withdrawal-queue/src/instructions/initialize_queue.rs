@@ -21,7 +21,7 @@ use august_vault::state::vault::VaultState;
 
 /// The deposit mint must pass the extension allow-list, and the cooldown its
 /// bound. Everything else about a new queue is fixed: escrows are this PDA's
-/// ATAs, and it starts in drain mode with no restriction and no expiry window.
+/// ATAs, and it starts in drain mode with no expiry window.
 pub fn handler(ctx: Context<InitializeQueue>, cooldown_seconds: u64) -> Result<()> {
     require_supported_deposit_mint(&ctx.accounts.deposit_mint)?;
 
