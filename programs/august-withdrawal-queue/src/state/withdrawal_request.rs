@@ -109,7 +109,13 @@ impl WithdrawalRequest {
     /// Design decision 14. The owner may always finalize; anyone else must be
     /// the key the request names, if it names one. A restriction, never a grant.
     pub fn may_finalize(&self, caller: &Pubkey) -> bool {
-        *caller == self.owner || self.allowed_finalizer().map_or(true, |f| f == *caller)
+        if *caller == self.owner {
+            return true;
+        }
+        match self.allowed_finalizer() {
+            None => true,
+            Some(finalizer) => finalizer == *caller,
+        }
     }
 
     /// Whether finalization may begin at `now`. Reads the movable `eligible_at`,
