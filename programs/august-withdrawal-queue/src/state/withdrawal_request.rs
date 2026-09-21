@@ -52,9 +52,8 @@ pub struct WithdrawalRequest {
     pub sequence: u64,
     /// Unix time the request was created.
     pub requested_at: i64,
-    /// `requested_at + cooldown` at creation. Never changes: admin cancel's
-    /// maturity check and `expires_at` are both measured from it, so expediting
-    /// can neither unlock a force-cancel nor move a deadline.
+    /// `requested_at + cooldown` at creation. Never changes: `expires_at` is
+    /// measured from it, so expediting cannot move a deadline.
     pub scheduled_eligible_at: i64,
     /// Unix time finalization may begin. Equals `scheduled_eligible_at` unless
     /// `expedite_request` moved it earlier; it only ever moves earlier.
@@ -122,14 +121,6 @@ impl WithdrawalRequest {
     /// which `expedite_request` may have brought forward.
     pub fn is_eligible(&self, now: i64) -> bool {
         now >= self.eligible_at
-    }
-
-    /// Whether the original cooldown has run at `now`, on the immutable
-    /// `scheduled_eligible_at`. This is admin cancel's precondition, and it is
-    /// deliberately not [`Self::is_eligible`]: expediting must never make a
-    /// request force-cancellable.
-    pub fn is_mature(&self, now: i64) -> bool {
-        now >= self.scheduled_eligible_at
     }
 
     /// Whether the fulfillment window has closed at `now`. A zero `expires_at`

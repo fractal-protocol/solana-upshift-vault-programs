@@ -84,7 +84,6 @@ fn withdrawal_queue_every_field_stays_at_its_byte_offset() {
         sequence: SEQ,
         pending_requests: PENDING,
         pending_shares: SHARES,
-        accepting_requests: true,
         bump: 0x77,
         padding: [PAD; 20],
     };
@@ -106,11 +105,10 @@ fn withdrawal_queue_every_field_stays_at_its_byte_offset() {
         ("sequence", 184, SEQ.to_le_bytes().to_vec()),
         ("pending_requests", 192, PENDING.to_le_bytes().to_vec()),
         ("pending_shares", 200, SHARES.to_le_bytes().to_vec()),
-        ("accepting_requests", 208, vec![1]),
-        ("bump", 209, vec![0x77]),
+        ("bump", 208, vec![0x77]),
         (
             "padding",
-            210,
+            209,
             [PAD; 20].iter().flat_map(|w| w.to_le_bytes()).collect(),
         ),
     ];
@@ -201,14 +199,13 @@ fn signer_seeds_reproduce_the_canonical_queue_pda() {
 }
 
 #[test]
-fn init_starts_in_drain_mode_with_empty_counters() {
+fn init_starts_with_empty_counters() {
     let mut queue = WithdrawalQueue {
         // Dirty every field init must reset, to prove it does.
         fulfillment_window_seconds: 5,
         sequence: 5,
         pending_requests: 5,
         pending_shares: 5,
-        accepting_requests: true,
         padding: [7; 20],
         ..Default::default()
     };
@@ -227,7 +224,6 @@ fn init_starts_in_drain_mode_with_empty_counters() {
     assert_eq!(queue.sequence, 0);
     assert_eq!(queue.pending_requests, 0);
     assert_eq!(queue.pending_shares, 0);
-    assert!(!queue.accepting_requests, "a new queue is in drain mode");
     assert_eq!(queue.padding, [0; 20]);
 
     let err = WithdrawalQueue::default()
@@ -348,12 +344,11 @@ fn schedule_derives_every_timestamp_from_now() {
 fn a_zero_filled_request_is_the_most_permissive_state() {
     let request = WithdrawalRequest::default();
     assert!(request.is_eligible(0));
-    assert!(request.is_mature(0));
     assert!(!request.is_expired(i64::MAX));
 }
 
 #[test]
-fn eligibility_maturity_and_expiry_boundaries() {
+fn eligibility_and_expiry_boundaries() {
     let request = WithdrawalRequest {
         scheduled_eligible_at: 1_500,
         eligible_at: 1_000,
@@ -363,11 +358,6 @@ fn eligibility_maturity_and_expiry_boundaries() {
     assert!(!request.is_eligible(999));
     assert!(request.is_eligible(1_000), "eligible at the instant");
     assert!(request.is_eligible(1_001));
-
-    // Expedited to 1_000, but maturity stays on the original 1_500.
-    assert!(!request.is_mature(1_499));
-    assert!(request.is_mature(1_500));
-    assert!(request.is_mature(1_501));
 
     assert!(!request.is_expired(1_999));
     assert!(request.is_expired(2_000), "now == expires_at is expired");
