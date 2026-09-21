@@ -47,11 +47,6 @@ pub struct WithdrawalQueue {
     /// ATA of this PDA for `deposit_mint`. Transit only: the payout is the balance
     /// delta across the CPI, forwarded to the recipient in the same instruction.
     pub escrow_assets: Pubkey,
-    /// Optional ops restriction on who may finalize any request. Zero is no
-    /// queue-level restriction; `WithdrawalRequest::finalizer` still applies, and
-    /// the request owner may always finalize their own. Read it through
-    /// [`Self::allowed_finalizer`], or better, `WithdrawalRequest::may_finalize`.
-    pub finalizer_authority: Pubkey,
     /// Wait between request and eligibility, `0 ..= MAX_COOLDOWN_SECONDS`. Stamped
     /// per request at creation, so a change applies to new requests only.
     pub cooldown_seconds: u64,
@@ -78,7 +73,7 @@ pub struct WithdrawalQueue {
     /// Reserved. Carve new fields **out of** this array so `LEN` stays 370. A
     /// field carved later reads zero on every queue that already exists, so zero
     /// must mean "legacy behaviour" for it, as it does for every field above.
-    pub padding: [u64; 16],
+    pub padding: [u64; 20],
 }
 
 const _: () = assert!(
@@ -108,14 +103,13 @@ impl WithdrawalQueue {
         self.share_mint = share_mint;
         self.escrow_shares = escrow_shares;
         self.escrow_assets = escrow_assets;
-        self.finalizer_authority = Pubkey::default();
         self.fulfillment_window_seconds = 0;
         self.sequence = 0;
         self.pending_requests = 0;
         self.pending_shares = 0;
         self.accepting_requests = false;
         self.bump = bump;
-        self.padding = [0; 16];
+        self.padding = [0; 20];
         self.set_cooldown(cooldown_seconds)
     }
 
@@ -174,13 +168,6 @@ impl WithdrawalQueue {
         self.pending_requests = pending_requests;
         self.pending_shares = pending_shares;
         Ok(())
-    }
-
-    /// The queue-level finalizer restriction: `None` is no restriction at this
-    /// level. Named apart from the field so the raw key cannot be compared by
-    /// mistake, which would read "anyone" as "nobody".
-    pub fn allowed_finalizer(&self) -> Option<Pubkey> {
-        (self.finalizer_authority != Pubkey::default()).then_some(self.finalizer_authority)
     }
 
     /// Seeds this PDA signs with, for `invoke_signed` into the vault and the token

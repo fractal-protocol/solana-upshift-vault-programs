@@ -79,7 +79,6 @@ fn withdrawal_queue_every_field_stays_at_its_byte_offset() {
         share_mint: pk(3),
         escrow_shares: pk(4),
         escrow_assets: pk(5),
-        finalizer_authority: pk(6),
         cooldown_seconds: COOLDOWN,
         fulfillment_window_seconds: WINDOW,
         sequence: SEQ,
@@ -87,7 +86,7 @@ fn withdrawal_queue_every_field_stays_at_its_byte_offset() {
         pending_shares: SHARES,
         accepting_requests: true,
         bump: 0x77,
-        padding: [PAD; 16],
+        padding: [PAD; 20],
     };
     let mut bytes = Vec::new();
     queue.try_serialize(&mut bytes).expect("serialize");
@@ -98,22 +97,21 @@ fn withdrawal_queue_every_field_stays_at_its_byte_offset() {
         ("share_mint", 72, pk(3).to_bytes().to_vec()),
         ("escrow_shares", 104, pk(4).to_bytes().to_vec()),
         ("escrow_assets", 136, pk(5).to_bytes().to_vec()),
-        ("finalizer_authority", 168, pk(6).to_bytes().to_vec()),
-        ("cooldown_seconds", 200, COOLDOWN.to_le_bytes().to_vec()),
+        ("cooldown_seconds", 168, COOLDOWN.to_le_bytes().to_vec()),
         (
             "fulfillment_window_seconds",
-            208,
+            176,
             WINDOW.to_le_bytes().to_vec(),
         ),
-        ("sequence", 216, SEQ.to_le_bytes().to_vec()),
-        ("pending_requests", 224, PENDING.to_le_bytes().to_vec()),
-        ("pending_shares", 232, SHARES.to_le_bytes().to_vec()),
-        ("accepting_requests", 240, vec![1]),
-        ("bump", 241, vec![0x77]),
+        ("sequence", 184, SEQ.to_le_bytes().to_vec()),
+        ("pending_requests", 192, PENDING.to_le_bytes().to_vec()),
+        ("pending_shares", 200, SHARES.to_le_bytes().to_vec()),
+        ("accepting_requests", 208, vec![1]),
+        ("bump", 209, vec![0x77]),
         (
             "padding",
-            242,
-            [PAD; 16].iter().flat_map(|w| w.to_le_bytes()).collect(),
+            210,
+            [PAD; 20].iter().flat_map(|w| w.to_le_bytes()).collect(),
         ),
     ];
     // sha256("account:WithdrawalQueue")[..8]
@@ -206,13 +204,12 @@ fn signer_seeds_reproduce_the_canonical_queue_pda() {
 fn init_starts_in_drain_mode_with_empty_counters() {
     let mut queue = WithdrawalQueue {
         // Dirty every field init must reset, to prove it does.
-        finalizer_authority: pk(9),
         fulfillment_window_seconds: 5,
         sequence: 5,
         pending_requests: 5,
         pending_shares: 5,
         accepting_requests: true,
-        padding: [7; 16],
+        padding: [7; 20],
         ..Default::default()
     };
     queue
@@ -226,13 +223,12 @@ fn init_starts_in_drain_mode_with_empty_counters() {
     assert_eq!(queue.escrow_assets, pk(5));
     assert_eq!(queue.bump, 0x42);
     assert_eq!(queue.cooldown_seconds, 3_600);
-    assert_eq!(queue.allowed_finalizer(), None);
     assert_eq!(queue.fulfillment_window_seconds, 0);
     assert_eq!(queue.sequence, 0);
     assert_eq!(queue.pending_requests, 0);
     assert_eq!(queue.pending_shares, 0);
     assert!(!queue.accepting_requests, "a new queue is in drain mode");
-    assert_eq!(queue.padding, [0; 16]);
+    assert_eq!(queue.padding, [0; 20]);
 
     let err = WithdrawalQueue::default()
         .init(
@@ -385,16 +381,7 @@ fn eligibility_maturity_and_expiry_boundaries() {
 }
 
 #[test]
-fn zero_finalizer_keys_read_as_no_restriction() {
-    assert_eq!(WithdrawalQueue::default().allowed_finalizer(), None);
-    assert_eq!(
-        WithdrawalQueue {
-            finalizer_authority: pk(7),
-            ..Default::default()
-        }
-        .allowed_finalizer(),
-        Some(pk(7))
-    );
+fn a_zero_finalizer_reads_as_no_restriction() {
     assert_eq!(WithdrawalRequest::default().allowed_finalizer(), None);
     assert_eq!(
         WithdrawalRequest {
@@ -406,45 +393,34 @@ fn zero_finalizer_keys_read_as_no_restriction() {
     );
 }
 
-/// The five rows of the design doc's finalization-permission table, each checked
-/// for the owner, the request's key `F`, the queue's key `K` and a stranger. Row
-/// 4 (`F != K`) is the one an ad-hoc `||` gets wrong: the intersection is empty,
-/// so only the owner may finalize.
+/// The two rows of the design doc's finalization-permission table, each checked
+/// for the owner, the named key `F` and a stranger. The restriction narrows who
+/// may finalize; it never removes the owner.
 #[test]
 fn may_finalize_follows_the_permission_table() {
     let owner = pk(1);
     let f = pk(2);
-    let k = pk(3);
-    let stranger = pk(4);
-    let zero = Pubkey::default();
+    let stranger = pk(3);
 
-    // (request.finalizer, queue.finalizer_authority, [F allowed, K allowed, stranger allowed])
+    // (request.finalizer, [F allowed, stranger allowed])
     let rows = [
-        (zero, zero, [true, true, true]), // anyone
-        (zero, k, [false, true, false]),  // only K, and the owner
-        (f, zero, [true, false, false]),  // only F, and the owner
-        (f, k, [false, false, false]),    // F != K: owner only
-        (f, f, [true, false, false]),     // F == K: that key, and the owner
+        (Pubkey::default(), [true, true]), // anyone
+        (f, [true, false]),                // only F, and the owner
     ];
-    for (i, (finalizer, authority, [f_ok, k_ok, stranger_ok])) in rows.into_iter().enumerate() {
+    for (i, (finalizer, [f_ok, stranger_ok])) in rows.into_iter().enumerate() {
         let request = WithdrawalRequest {
             owner,
             finalizer,
             ..Default::default()
         };
-        let queue = WithdrawalQueue {
-            finalizer_authority: authority,
-            ..Default::default()
-        };
         let row = i + 1;
         assert!(
-            request.may_finalize(&queue, &owner),
+            request.may_finalize(&owner),
             "row {row}: the owner always may"
         );
-        assert_eq!(request.may_finalize(&queue, &f), f_ok, "row {row}: F");
-        assert_eq!(request.may_finalize(&queue, &k), k_ok, "row {row}: K");
+        assert_eq!(request.may_finalize(&f), f_ok, "row {row}: F");
         assert_eq!(
-            request.may_finalize(&queue, &stranger),
+            request.may_finalize(&stranger),
             stranger_ok,
             "row {row}: stranger"
         );

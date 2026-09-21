@@ -6,7 +6,6 @@
 // As of 10 March 2036 (the "Change Date"), use of this software will be
 // governed by version 2.0 of the Apache License.
 
-use super::WithdrawalQueue;
 use crate::errors::ErrorCode;
 use anchor_lang::prelude::*;
 
@@ -37,8 +36,7 @@ pub struct WithdrawalRequest {
     /// Deposit-mint token account paid at finalization. Never an escrow or the
     /// vault reserve, checked at request and update. Owner may update.
     pub recipient_token_account: Pubkey,
-    /// Who may finalize besides the owner. Zero is no request-level restriction;
-    /// `WithdrawalQueue::finalizer_authority` still applies. Read it through
+    /// Who may finalize besides the owner. Zero means anyone. Read it through
     /// [`Self::may_finalize`]. Owner may update.
     pub finalizer: Pubkey,
     /// Shares held in the queue's escrow for this request.
@@ -101,21 +99,17 @@ impl WithdrawalRequest {
         Ok(())
     }
 
-    /// The request-level finalizer restriction: `None` is no restriction at this
-    /// level. Named apart from the field so the raw key cannot be compared by
-    /// mistake.
+    /// The finalizer restriction: `None` is no restriction. Named apart from the
+    /// field so the raw key cannot be compared by mistake, which would read
+    /// "anyone" as "nobody".
     pub fn allowed_finalizer(&self) -> Option<Pubkey> {
         (self.finalizer != Pubkey::default()).then_some(self.finalizer)
     }
 
     /// Design decision 14. The owner may always finalize; anyone else must be
-    /// allowed by **both** the request's restriction and the queue's, so two
-    /// different named keys leave the owner as the only finalizer. The caller
-    /// binds `self.queue == queue`'s address; this only reads the policy.
-    pub fn may_finalize(&self, queue: &WithdrawalQueue, caller: &Pubkey) -> bool {
-        *caller == self.owner
-            || (self.allowed_finalizer().map_or(true, |f| f == *caller)
-                && queue.allowed_finalizer().map_or(true, |k| k == *caller))
+    /// the key the request names, if it names one. A restriction, never a grant.
+    pub fn may_finalize(&self, caller: &Pubkey) -> bool {
+        *caller == self.owner || self.allowed_finalizer().map_or(true, |f| f == *caller)
     }
 
     /// Whether finalization may begin at `now`. Reads the movable `eligible_at`,
