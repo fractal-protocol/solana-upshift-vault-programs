@@ -114,8 +114,8 @@ impl WithdrawalRequest {
     /// binds `self.queue == queue`'s address; this only reads the policy.
     pub fn may_finalize(&self, queue: &WithdrawalQueue, caller: &Pubkey) -> bool {
         *caller == self.owner
-            || (self.allowed_finalizer().is_none_or(|f| f == *caller)
-                && queue.allowed_finalizer().is_none_or(|k| k == *caller))
+            || (self.allowed_finalizer().map_or(true, |f| f == *caller)
+                && queue.allowed_finalizer().map_or(true, |k| k == *caller))
     }
 
     /// Whether finalization may begin at `now`. Reads the movable `eligible_at`,
