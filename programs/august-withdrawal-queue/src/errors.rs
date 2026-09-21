@@ -100,9 +100,9 @@ pin_error_abi! {
     RequestExpired => 10,
     StaleRequestSequence => 11,
     NothingToUpdate => 12,
-    CooldownNotElapsed => 14,
-    FinalizerNotAllowed => 15,
-    PayoutBelowFloor => 16,
+    CooldownNotElapsed => 13,
+    FinalizerNotAllowed => 14,
+    PayoutBelowFloor => 15,
 }
 
 #[cfg(test)]

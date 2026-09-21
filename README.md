@@ -220,16 +220,16 @@ instruction cannot land on a recreated request, and a call that would change
 nothing is refused (`NothingToUpdate`, 6012).
 
 `finalize_withdrawal(expected_sequence)` pays a request once its cooldown has
-run (`CooldownNotElapsed`, 6014, before then) and while its window is open
+run (`CooldownNotElapsed`, 6013, before then) and while its window is open
 (`RequestExpired` after). Anyone the request's `finalizer` permits may call it,
 and the owner always can
-(`FinalizerNotAllowed`, 6015, otherwise): the caller picks the moment, never the
+(`FinalizerNotAllowed`, 6014, otherwise): the caller picks the moment, never the
 amount or the destination. The queue redeems the escrowed shares by CPI into
 `redeem_checked` as the vault's queue authority, so `VaultPaused`,
 `NotEnoughLiquidity` and `SlippageExceeded` surface as the vault's own codes and
 leave the request pending and untouched. The payout is the asset escrow's
 balance delta, forwarded to the request's recipient, whose increase must reach
-`min_assets_out` (`PayoutBelowFloor`, 6016); the request then closes with its
+`min_assets_out` (`PayoutBelowFloor`, 6015); the request then closes with its
 rent to the owner. Cancellation and `release_vault` are not implemented yet.
 
 **Do not deploy the queue program, or attach a queue, on any cluster yet.** Once

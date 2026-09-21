@@ -296,24 +296,22 @@ fn finalizing_one_request_leaves_the_others_untouched() {
     );
 }
 
-/// Finalize does not depend on the queue accepting requests, nor on the vault's
-/// gate: drain mode exists to let requests finish, and an ungated vault lets the
-/// queue redeem like any holder. Nothing escrowed is ever stranded.
+/// Finalize does not depend on the vault's gate: a released vault lets the queue
+/// redeem like any holder, so a request pending across a release is never
+/// stranded. Only `release_vault` (WQ-09) reaches this state, so the test
+/// writes the vault directly.
 #[test]
-fn drain_mode_and_a_cleared_gate_do_not_block_finalization() {
+fn a_cleared_gate_does_not_block_finalization() {
     let (mut ctx, half) = mature_request(0);
     ctx.request_withdrawal(2, half / 2, 0).expect("second");
     ctx.warp_forward_seconds(DAY as i64);
 
-    ctx.set_accepting_requests(false).expect("drain");
-    ctx.finalize_withdrawal(1, 1)
-        .expect("finalize in drain mode");
-
     let mut vault = ctx.vault_state_data();
     vault.withdrawal_queue_authority = Pubkey::default();
     ctx.force_overwrite_vault_state(vault);
-    ctx.finalize_withdrawal(2, 2)
+    ctx.finalize_withdrawal(1, 1)
         .expect("finalize with the gate cleared");
+    ctx.finalize_withdrawal(2, 2).expect("and the next");
     assert_eq!(ctx.queue_state_data().pending_requests, 0);
 }
 
@@ -329,7 +327,7 @@ fn early_is_refused_until_the_exact_eligibility_instant() {
 
     let err = ctx.finalize_withdrawal(1, 1).expect_err("one second early");
     assert_queue_err(&err, ErrorCode::CooldownNotElapsed);
-    assert_anchor_framework_err(&err, 6014);
+    assert_anchor_framework_err(&err, 6013);
     assert_eq!(untouched(&ctx, &user, 1), before, "nothing moved");
 
     ctx.warp_forward_seconds(1);
@@ -445,7 +443,7 @@ fn finalization_permission_follows_the_table() {
                 .finalize_withdrawal_as(caller, &user.pubkey(), *id, *id)
                 .unwrap_err();
             assert_queue_err(&err, ErrorCode::FinalizerNotAllowed);
-            assert_anchor_framework_err(&err, 6015);
+            assert_anchor_framework_err(&err, 6014);
         }
         assert_eq!(untouched(&ctx, &user.pubkey(), *id), before, "row {id}");
         ctx.finalize_withdrawal_as(permitted, &user.pubkey(), *id, *id)

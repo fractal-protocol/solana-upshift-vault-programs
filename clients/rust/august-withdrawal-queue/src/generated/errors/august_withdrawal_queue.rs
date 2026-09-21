@@ -50,16 +50,16 @@ pub enum AugustWithdrawalQueueError {
     StaleRequestSequence = 0x177B,
     /// 6012 - update_request would change nothing; pass a field or the new recipient account
     #[error("update_request would change nothing; pass a field or the new recipient account")]
-    NothingToUpdate = 0x177D,
-    /// 6014 - The request's cooldown has not elapsed
+    NothingToUpdate = 0x177C,
+    /// 6013 - The request's cooldown has not elapsed
     #[error("The request's cooldown has not elapsed")]
-    CooldownNotElapsed = 0x177E,
-    /// 6015 - Signer is neither the request's owner nor its finalizer
+    CooldownNotElapsed = 0x177D,
+    /// 6014 - Signer is neither the request's owner nor its finalizer
     #[error("Signer is neither the request's owner nor its finalizer")]
-    FinalizerNotAllowed = 0x177F,
-    /// 6016 - The recipient received less than the request's min_assets_out
+    FinalizerNotAllowed = 0x177E,
+    /// 6015 - The recipient received less than the request's min_assets_out
     #[error("The recipient received less than the request's min_assets_out")]
-    PayoutBelowFloor = 0x1780,
+    PayoutBelowFloor = 0x177F,
 }
 
 impl From<AugustWithdrawalQueueError> for solana_program_error::ProgramError {
