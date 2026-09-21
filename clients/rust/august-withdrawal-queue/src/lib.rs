@@ -30,7 +30,7 @@ mod tests {
     /// adding a field to `WithdrawalQueue` then fails to compile here rather than
     /// silently skipping the new field.
     #[test]
-    fn a_fresh_queue_literal_is_in_drain_mode() {
+    fn a_fresh_queue_literal_has_empty_counters() {
         let zero = Pubkey::default();
         let queue = WithdrawalQueue {
             discriminator: [0; 8],
@@ -44,10 +44,12 @@ mod tests {
             sequence: 0,
             pending_requests: 0,
             pending_shares: 0,
-            accepting_requests: false,
             bump: 0,
             padding: [0; 20],
         };
-        assert!(!queue.accepting_requests);
+        assert_eq!(
+            (queue.sequence, queue.pending_requests, queue.pending_shares),
+            (0, 0, 0)
+        );
     }
 }

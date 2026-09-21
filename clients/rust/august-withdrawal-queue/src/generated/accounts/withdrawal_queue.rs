@@ -57,18 +57,16 @@ pub struct WithdrawalQueue {
     /// Not a seed: request identity is owner-scoped. It orders events and pins
     /// stale instructions (`expected_sequence`).
     pub sequence: u64,
-    /// Live requests. Zero is the drain gate for `release_vault`.
+    /// Live requests. Nothing gates on it: once the vault is released no new
+    /// request can open, so the set closes by itself.
     pub pending_requests: u64,
     /// Sum of `shares` over live requests: escrowed exposure, not a demand
     /// forecast, since a mature request is a standing exit authorization.
     pub pending_shares: u64,
-    /// `false` is drain mode: no new requests, existing ones finalize or cancel.
-    /// Starts `false`; only `set_accepting_requests(true)` opens the queue.
-    pub accepting_requests: bool,
     /// Canonical bump of this PDA. The vault accepts the canonical address only,
     /// so this must come from Anchor's `bump` at init, never a caller.
     pub bump: u8,
-    /// Reserved. Carve new fields **out of** this array so `LEN` stays 370. A
+    /// Reserved. Carve new fields **out of** this array so `LEN` stays 369. A
     /// field carved later reads zero on every queue that already exists, so zero
     /// must mean "legacy behaviour" for it, as it does for every field above.
     pub padding: [u64; 20],
@@ -77,7 +75,7 @@ pub struct WithdrawalQueue {
 pub const WITHDRAWAL_QUEUE_DISCRIMINATOR: [u8; 8] = [54, 56, 158, 88, 232, 203, 241, 163];
 
 impl WithdrawalQueue {
-    pub const LEN: usize = 370;
+    pub const LEN: usize = 369;
 
     #[inline(always)]
     pub fn from_bytes(data: &[u8]) -> Result<Self, std::io::Error> {

@@ -60,9 +60,10 @@ pub mod august_withdrawal_queue {
     use super::*;
 
     /// Admin creates the vault's withdrawal queue: the queue PDA and its two
-    /// escrow token accounts, in drain mode. The deposit mint must be classic
+    /// escrow token accounts. The deposit mint must be classic
     /// SPL, or Token-2022 carrying at most the two metadata extensions.
-    /// Attaching the queue to the vault is a separate, vault-side step.
+    /// Attaching the queue to the vault is a separate, vault-side step, and is
+    /// what makes it live.
     ///
     /// ### Parameters
     /// - `cooldown_seconds` - Wait between request and eligibility, at most 30 days
@@ -79,12 +80,5 @@ pub mod august_withdrawal_queue {
     /// be finalized: zero disables expiry, otherwise at most 90 days.
     pub fn set_fulfillment_window(ctx: Context<QueueAdmin>, seconds: u64) -> Result<()> {
         return instructions::set_fulfillment_window::handler(ctx, seconds);
-    }
-
-    /// Admin opens or closes the queue to new requests. Opening requires the
-    /// vault's `withdrawal_queue_authority` to point at this queue; closing is
-    /// drain mode, in which finalize and cancel keep working.
-    pub fn set_accepting_requests(ctx: Context<QueueAdmin>, accepting: bool) -> Result<()> {
-        return instructions::set_accepting_requests::handler(ctx, accepting);
     }
 }

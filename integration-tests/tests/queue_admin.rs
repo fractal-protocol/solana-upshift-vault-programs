@@ -6,11 +6,11 @@
 // As of 10 March 2036 (the "Change Date"), use of this software will be
 // governed by version 2.0 of the Apache License.
 
-//! The queue program's admin instructions: `initialize_queue` and the four
+//! The queue program's admin instructions: `initialize_queue` and the two
 //! setters. Nothing here escrows a share; that arrives with the request
 //! instructions. These tests pin that a queue is created only by the vault's
 //! admin, only for a supported mint, at the canonical address the vault will
-//! accept, in drain mode; and that every setter is admin-only, bound to the
+//! accept; and that every setter is admin-only, bound to the
 //! queue's own vault, bounded where the design bounds it, and reports the whole
 //! configuration in its event.
 
@@ -60,7 +60,6 @@ fn assert_config_snapshot(meta: &litesvm::types::TransactionMetadata, ctx: &Vaul
     assert_eq!(e.queue, ctx.withdrawal_queue_pda());
     assert_eq!(e.cooldown_seconds, q.cooldown_seconds);
     assert_eq!(e.fulfillment_window_seconds, q.fulfillment_window_seconds);
-    assert_eq!(e.accepting_requests, q.accepting_requests);
 }
 
 // ---- initialize_queue ----
@@ -83,7 +82,6 @@ fn the_admin_creates_a_queue_in_drain_mode() {
         (q.sequence, q.pending_requests, q.pending_shares),
         (0, 0, 0)
     );
-    assert!(!q.accepting_requests, "a new queue starts in drain mode");
     assert_eq!(
         q.bump,
         canonical_bump(&ctx.vault_state),
@@ -263,9 +261,9 @@ fn the_cooldown_bound_holds_at_creation() {
 }
 
 /// The end-to-end property the canonical bump exists for: the vault's attach
-/// accepts the queue this instruction created, and the queue can then open.
+/// accepts the queue this instruction created, which makes it live.
 #[test]
-fn the_vault_attaches_the_new_queue_and_it_opens() {
+fn the_vault_attaches_the_new_queue() {
     let mut ctx = VaultCtx::fresh();
     ctx.initialize_queue(DAY).expect("initialize_queue");
     let pda = ctx.withdrawal_queue_pda();
@@ -273,34 +271,6 @@ fn the_vault_attaches_the_new_queue_and_it_opens() {
     ctx.attach_withdrawal_queue(pda)
         .expect("the vault accepts the initialized queue");
     assert_eq!(ctx.vault_state_data().withdrawal_queue(), Some(pda));
-
-    let meta = ctx
-        .set_accepting_requests(true)
-        .expect("opens once the vault points here");
-    assert!(ctx.queue_state_data().accepting_requests);
-    assert_config_snapshot(&meta, &ctx);
-}
-
-// ---- set_accepting_requests ----
-
-/// Design decision 13: opening before the vault's gate points here would escrow
-/// requests into a cooldown that direct redeemers bypass.
-#[test]
-fn opening_before_the_vault_points_here_is_refused() {
-    let mut ctx = VaultCtx::fresh();
-    ctx.initialize_queue(DAY).expect("initialize_queue");
-
-    let err = ctx
-        .set_accepting_requests(true)
-        .expect_err("the vault does not point at this queue yet");
-    assert_queue_err(&err, ErrorCode::QueueNotActiveOnVault);
-    assert_anchor_framework_err(&err, 6005);
-    assert!(!ctx.queue_state_data().accepting_requests);
-
-    // Closing needs no gate: drain mode is always reachable.
-    let meta = ctx.set_accepting_requests(false).expect("drain mode");
-    assert!(!ctx.queue_state_data().accepting_requests);
-    assert_config_snapshot(&meta, &ctx);
 }
 
 // ---- set_cooldown / set_fulfillment_window ----
@@ -358,10 +328,9 @@ fn setters_are_admin_only() {
     let impostor = ctx.new_funded_keypair(1_000_000_000);
     let before = ctx.queue_state_data();
 
-    let attempts: [Result<_, FailedTransactionMetadata>; 3] = [
+    let attempts: [Result<_, FailedTransactionMetadata>; 2] = [
         ctx.set_cooldown_as(&impostor, 2 * DAY),
         ctx.set_fulfillment_window_as(&impostor, DAY),
-        ctx.set_accepting_requests_as(&impostor, false),
     ];
     for attempt in attempts {
         let err = attempt.expect_err("only the vault's admin configures its queue");
@@ -369,16 +338,8 @@ fn setters_are_admin_only() {
     }
     let after = ctx.queue_state_data();
     assert_eq!(
-        (
-            after.cooldown_seconds,
-            after.fulfillment_window_seconds,
-            after.accepting_requests
-        ),
-        (
-            before.cooldown_seconds,
-            before.fulfillment_window_seconds,
-            before.accepting_requests
-        ),
+        (after.cooldown_seconds, after.fulfillment_window_seconds),
+        (before.cooldown_seconds, before.fulfillment_window_seconds),
         "refused calls change nothing"
     );
 }

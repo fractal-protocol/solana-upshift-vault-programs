@@ -7,8 +7,8 @@
 // governed by version 2.0 of the Apache License.
 
 //! Create a vault's withdrawal queue: the queue PDA and its two escrow token
-//! accounts, in drain mode. Attaching it to the vault is a separate, vault-side
-//! step, and is what makes the queue live.
+//! accounts. Attaching it to the vault is a separate, vault-side step, and is
+//! what makes the queue live.
 
 use crate::errors::ErrorCode;
 use crate::events::QueueInitialized;
@@ -21,7 +21,7 @@ use august_vault::state::vault::VaultState;
 
 /// The deposit mint must pass the extension allow-list, and the cooldown its
 /// bound. Everything else about a new queue is fixed: escrows are this PDA's
-/// ATAs, and it starts in drain mode with no expiry window.
+/// ATAs, and it starts with no expiry window.
 pub fn handler(ctx: Context<InitializeQueue>, cooldown_seconds: u64) -> Result<()> {
     require_supported_deposit_mint(&ctx.accounts.deposit_mint)?;
 

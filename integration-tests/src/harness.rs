@@ -1329,23 +1329,7 @@ impl VaultCtx {
         self.queue_admin_call_as(admin, q_ix::SetFulfillmentWindow { seconds }.data())
     }
 
-    pub fn set_accepting_requests(
-        &mut self,
-        accepting: bool,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
-        let admin = self.admin.insecure_clone();
-        self.set_accepting_requests_as(&admin, accepting)
-    }
-
-    pub fn set_accepting_requests_as(
-        &mut self,
-        admin: &Keypair,
-        accepting: bool,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
-        self.queue_admin_call_as(admin, q_ix::SetAcceptingRequests { accepting }.data())
-    }
-
-    /// One of the three admin setters, against this vault's queue and vault.
+    /// One of the two admin setters, against this vault's queue and vault.
     fn queue_admin_call_as(
         &mut self,
         admin: &Keypair,
@@ -1355,7 +1339,7 @@ impl VaultCtx {
         self.queue_admin_call_with_accounts_as(admin, queue, vault_state, data)
     }
 
-    /// One of the three admin setters, against arbitrary queue and vault
+    /// One of the two admin setters, against arbitrary queue and vault
     /// accounts, so a test can pair a queue with the wrong vault.
     pub fn queue_admin_call_with_accounts_as(
         &mut self,

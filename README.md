@@ -7,7 +7,7 @@ This workspace builds two programs:
 | Crate | Artifact | Status |
 |---|---|---|
 | `programs/august-vault` | `august_vault.so` | Live on mainnet and devnet. Everything below describes this program. |
-| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | **Admin instructions only** (`initialize_queue` and three config setters) over the `WithdrawalQueue` / `WithdrawalRequest` state accounts. Requests, finalization and `release_vault` are not implemented. **Not deployed anywhere, and must not be until `release_vault` lands.** |
+| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | **Admin instructions only** (`initialize_queue` and two config setters) over the `WithdrawalQueue` / `WithdrawalRequest` state accounts. Requests, finalization and `release_vault` are not implemented. **Not deployed anywhere, and must not be until `release_vault` lands.** |
 
 The queue will let a vault route redemptions through a request-and-cooldown flow
 instead of paying out instantly. The vault side of that is already in place: a
@@ -200,12 +200,11 @@ Attach emits `WithdrawalQueueAttached { vault, queue }` and detach emits
 `WithdrawalQueueDetached { vault, queue }`.
 
 The queue program's admin side exists in source: `initialize_queue` creates the
-queue PDA and its two escrow token accounts in drain mode, for a classic SPL mint
+queue PDA and its two escrow token accounts, for a classic SPL mint
 or a Token-2022 mint carrying at most the two metadata extensions
-(`UnsupportedDepositMint`, 6006, otherwise); `set_cooldown` (at most 30 days),
-`set_fulfillment_window` (zero disables expiry, else at most 90 days) and
-`set_accepting_requests` configure it. Opening the queue requires the vault's
-gate to already point at it (`QueueNotActiveOnVault`, 6005). Requests,
+(`UnsupportedDepositMint`, 6006, otherwise); `set_cooldown` (at most 30 days)
+and `set_fulfillment_window` (zero disables expiry, else at most 90 days)
+configure it. Attaching it on the vault is what makes it live. Requests,
 finalization and `release_vault` are not implemented yet.
 
 **Do not deploy the queue program, or attach a queue, on any cluster yet.** Once

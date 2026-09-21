@@ -31,7 +31,6 @@ pub struct QueueConfigUpdated {
     pub queue: Pubkey,
     pub cooldown_seconds: u64,
     pub fulfillment_window_seconds: u64,
-    pub accepting_requests: bool,
 }
 
 impl QueueConfigUpdated {
@@ -41,7 +40,6 @@ impl QueueConfigUpdated {
             queue: key,
             cooldown_seconds: queue.cooldown_seconds,
             fulfillment_window_seconds: queue.fulfillment_window_seconds,
-            accepting_requests: queue.accepting_requests,
         }
     }
 }
