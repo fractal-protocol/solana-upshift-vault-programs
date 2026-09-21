@@ -5,14 +5,18 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
+pub(crate) mod r#cancel_withdrawal;
 pub(crate) mod r#finalize_withdrawal;
 pub(crate) mod r#initialize_queue;
+pub(crate) mod r#release_vault;
 pub(crate) mod r#request_withdrawal;
 pub(crate) mod r#set_cooldown;
 pub(crate) mod r#set_fulfillment_window;
 
+pub use self::r#cancel_withdrawal::*;
 pub use self::r#finalize_withdrawal::*;
 pub use self::r#initialize_queue::*;
+pub use self::r#release_vault::*;
 pub use self::r#request_withdrawal::*;
 pub use self::r#set_cooldown::*;
 pub use self::r#set_fulfillment_window::*;

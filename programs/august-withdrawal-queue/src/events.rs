@@ -109,6 +109,54 @@ impl WithdrawalFinalized {
     }
 }
 
+/// A request was cancelled and its shares returned. `by` is the signer, the
+/// owner today and the admin once `admin_cancel_withdrawal` exists.
+#[event]
+pub struct WithdrawalCancelled {
+    pub vault: Pubkey,
+    pub queue: Pubkey,
+    pub request: Pubkey,
+    pub request_id: u64,
+    pub owner: Pubkey,
+    pub sequence: u64,
+    pub by: Pubkey,
+    pub shares: u64,
+    pub destination: Pubkey,
+}
+
+impl WithdrawalCancelled {
+    pub fn snapshot(
+        request: &WithdrawalRequest,
+        vault: Pubkey,
+        key: Pubkey,
+        by: Pubkey,
+        destination: Pubkey,
+    ) -> Self {
+        Self {
+            vault,
+            queue: request.queue,
+            request: key,
+            request_id: request.request_id,
+            owner: request.owner,
+            sequence: request.sequence,
+            by,
+            shares: request.shares,
+            destination,
+        }
+    }
+}
+
+/// The vault was returned to instant redemption with this much still pending,
+/// all of it payable from the reserve at that moment.
+#[event]
+pub struct VaultReleased {
+    pub vault: Pubkey,
+    pub queue: Pubkey,
+    pub pending_requests: u64,
+    pub pending_shares: u64,
+    pub assets_owed: u64,
+}
+
 impl QueueConfigUpdated {
     pub fn snapshot(queue: &WithdrawalQueue, key: Pubkey) -> Self {
         Self {

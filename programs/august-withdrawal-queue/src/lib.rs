@@ -17,13 +17,10 @@
 //!
 //! This crate carries the program identity, the error ABI pin, the build wiring,
 //! the two state accounts (`state`), the admin check (`auth`), the queue's
-//! admin instructions, the owner's request instruction, and
-//! finalization. Cancellation and release arrive with their own changes.
-//!
-//! **Deployment blocker.** `initialize_queue` is what first makes a queue
-//! attachable on the vault side, and detaching needs `release_vault`, which does
-//! not exist yet. Deploying this program before it lands would make attaching a
-//! one-way door.
+//! admin instructions, the owner's request, update and cancel instructions,
+//! finalization, and `release_vault`, which returns the vault to instant
+//! redemption and is the one place the co-signature the vault's detach demands
+//! is produced. With it, attaching a queue is reversible.
 
 pub mod auth;
 pub mod errors;
@@ -33,10 +30,13 @@ pub mod mint_policy;
 pub mod recipient;
 pub mod state;
 
+use instructions::cancel_withdrawal::*;
 use instructions::finalize_withdrawal::*;
 use instructions::initialize_queue::*;
 use instructions::queue_admin::*;
+use instructions::release_vault::*;
 use instructions::request_withdrawal::*;
+use instructions::update_request::*;
 
 use anchor_lang::prelude::*;
 
@@ -103,6 +103,30 @@ pub mod august_withdrawal_queue {
         return instructions::request_withdrawal::handler(ctx, request_id, shares, finalizer);
     }
 
+    /// The owner changes a pending, unexpired request's floor, finalizer, or
+    /// recipient (passed as the optional `new_recipient` account). A field left
+    /// `None`, or a recipient left out, is unchanged; a call that would change
+    /// nothing is refused. `Some(Pubkey::default())` clears the finalizer.
+    ///
+    /// ### Parameters
+    /// - `expected_sequence` - The request's stamp, so a delayed call cannot land
+    ///   on a recreated request with the same id
+    /// - `min_assets_out` - New floor on the net payout, if changing
+    /// - `finalizer` - New request-level finalizer, if changing; zero clears it
+    pub fn update_request(
+        ctx: Context<UpdateRequest>,
+        expected_sequence: u64,
+        min_assets_out: Option<u64>,
+        finalizer: Option<Pubkey>,
+    ) -> Result<()> {
+        return instructions::update_request::handler(
+            ctx,
+            expected_sequence,
+            min_assets_out,
+            finalizer,
+        );
+    }
+
     /// Pays out a request whose cooldown has run and whose window is open: the
     /// queue redeems the escrowed shares by CPI into the vault as its PDA,
     /// forwards the net payout to the request's recipient, and closes the
@@ -112,12 +136,31 @@ pub mod august_withdrawal_queue {
     /// and leave the request pending.
     ///
     /// ### Parameters
-    /// - `expected_sequence` - The request's stamp, so a delayed call cannot land
-    ///   on a recreated request with the same id
+    /// - `expected_sequence` - The request's stamp, as for `update_request`
     pub fn finalize_withdrawal(
         ctx: Context<FinalizeWithdrawal>,
         expected_sequence: u64,
     ) -> Result<()> {
         return instructions::finalize_withdrawal::handler(ctx, expected_sequence);
+    }
+
+    /// The owner takes a pending request back: its shares return to a share
+    /// account the owner controls and the request closes with its rent to the
+    /// owner. Allowed at any time while the request exists, in either vault
+    /// state, and while the vault is paused.
+    ///
+    /// ### Parameters
+    /// - `expected_sequence` - The request's stamp, as for `update_request`
+    pub fn cancel_withdrawal(ctx: Context<CancelWithdrawal>, expected_sequence: u64) -> Result<()> {
+        return instructions::cancel_withdrawal::handler(ctx, expected_sequence);
+    }
+
+    /// Admin returns the vault to instant redemption: the queue co-signs the
+    /// vault's `detach_withdrawal_queue` by CPI. Refused unless the vault's
+    /// reserve covers every pending request at today's price. Pending requests
+    /// survive and finalize or cancel afterwards; the vault's gate stops new
+    /// ones. The queue account persists, so the vault can be attached again.
+    pub fn release_vault(ctx: Context<ReleaseVault>) -> Result<()> {
+        return instructions::release_vault::handler(ctx);
     }
 }

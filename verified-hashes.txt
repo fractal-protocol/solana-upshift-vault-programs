@@ -29,4 +29,4 @@
 #
 # program       exec_sha256                                                       raw_sha256                                                        size
 august_vault    dce5d94860cb0bc46852d19a19df7cb54d23660b4b06eef59403bc4c21b5b311  dd234c2002f37ea4682b363930b716fe8fdc1e12fb8eb70c3ddb3c727dfde6bf  687352
-august_withdrawal_queue    2c656aaf9095470e67c6b6fdc8e1616e1de999643746906d98bad6b01ebbf27e 25aa18c0fa5580ee4f56e2144885d608916c8664b8ff5d1ceca0f7b4d018f8d2 380536
+august_withdrawal_queue    6d3c3074343de04cb9238dbbe3bddafb55996827996fe7f571f3dc60e39803e7 2351a479ca7ea2ae4eff43b80c0b7b4fc8efce8d2d73eb945733f19de1f4f4f1 447712    
