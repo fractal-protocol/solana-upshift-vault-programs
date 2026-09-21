@@ -4,7 +4,10 @@ name: CI
 # the private repo and keeps its own frontend CI.)
 on:
     pull_request:
-        branches: ["*"]
+        # `**`, not `*`: a single star does not match the `/` in `feat/…`, so a PR
+        # whose base is a feature branch (a stacked PR) got no CI at all, and a
+        # retarget to `init` after the level below merged does not re-trigger it.
+        branches: ["**"]
     push:
         branches: [init, main]
 
