@@ -221,8 +221,8 @@ nothing is refused (`NothingToUpdate`, 6012).
 
 `finalize_withdrawal(expected_sequence)` pays a request once its cooldown has
 run (`CooldownNotElapsed`, 6014, before then) and while its window is open
-(`RequestExpired` after). Anyone the request's `finalizer` and the queue's
-`finalizer_authority` both permit may call it, and the owner always can
+(`RequestExpired` after). Anyone the request's `finalizer` permits may call it,
+and the owner always can
 (`FinalizerNotAllowed`, 6015, otherwise): the caller picks the moment, never the
 amount or the destination. The queue redeems the escrowed shares by CPI into
 `redeem_checked` as the vault's queue authority, so `VaultPaused`,

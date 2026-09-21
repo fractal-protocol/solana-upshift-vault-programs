@@ -48,7 +48,7 @@ pub enum ErrorCode {
     NothingToUpdate,
     #[msg("The request's cooldown has not elapsed")]
     CooldownNotElapsed,
-    #[msg("Signer may not finalize this request under its finalizer and the queue's finalizer_authority")]
+    #[msg("Signer is neither the request's owner nor its finalizer")]
     FinalizerNotAllowed,
     #[msg("The recipient received less than the request's min_assets_out")]
     PayoutBelowFloor,

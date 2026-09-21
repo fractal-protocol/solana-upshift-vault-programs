@@ -131,8 +131,8 @@ pub mod august_withdrawal_queue {
     /// Pays out a request whose cooldown has run and whose window is open: the
     /// queue redeems the escrowed shares by CPI into the vault as its PDA,
     /// forwards the net payout to the request's recipient, and closes the
-    /// request with its rent to the owner. Anyone the request's `finalizer` and
-    /// the queue's `finalizer_authority` permit may call it, the owner always.
+    /// request with its rent to the owner. Anyone the request's `finalizer`
+    /// permits may call it, the owner always.
     /// The vault's `VaultPaused`, `NotEnoughLiquidity` and `SlippageExceeded`
     /// propagate unchanged and leave the request pending.
     ///

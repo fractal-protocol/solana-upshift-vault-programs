@@ -54,8 +54,8 @@ pub enum AugustWithdrawalQueueError {
     /// 6014 - The request's cooldown has not elapsed
     #[error("The request's cooldown has not elapsed")]
     CooldownNotElapsed = 0x177E,
-    /// 6015 - Signer may not finalize this request under its finalizer and the queue's finalizer_authority
-    #[error("Signer may not finalize this request under its finalizer and the queue's finalizer_authority")]
+    /// 6015 - Signer is neither the request's owner nor its finalizer
+    #[error("Signer is neither the request's owner nor its finalizer")]
     FinalizerNotAllowed = 0x177F,
     /// 6016 - The recipient received less than the request's min_assets_out
     #[error("The recipient received less than the request's min_assets_out")]

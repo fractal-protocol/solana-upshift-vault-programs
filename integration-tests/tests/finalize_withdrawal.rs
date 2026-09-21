@@ -416,34 +416,29 @@ fn a_finalized_request_cannot_be_finalized_or_updated_again() {
 
 // ---- permission (decision 14) ----
 
-/// The permission table from the design doc, one request per row. A refused
-/// caller is refused with nothing moved; then a permitted one finalizes.
+/// The permission table from the design doc, one request per row, plus the
+/// owner finalizing a restricted request. A refused caller is refused with
+/// nothing moved; then a permitted one finalizes.
 #[test]
 fn finalization_permission_follows_the_table() {
     let (mut ctx, half) = mature_request(0);
     let user = ctx.user.insecure_clone();
     let (share_account, recipient) = (ctx.user_share_ata, ctx.user_deposit_ata);
     let f = keeper(&mut ctx);
-    let k = keeper(&mut ctx);
     let stranger = keeper(&mut ctx);
-    let zero = Pubkey::default();
-    // Request 1 already exists with no finalizer; rows 2..=5 each open their own.
-    let rows: [(u64, Pubkey, Pubkey, Vec<&Keypair>, &Keypair); 5] = [
-        (1, zero, zero, vec![], &stranger),
-        (2, zero, k.pubkey(), vec![&stranger, &f], &k),
-        (3, f.pubkey(), zero, vec![&stranger, &k], &f),
-        (4, f.pubkey(), k.pubkey(), vec![&stranger, &f, &k], &user),
-        (5, f.pubkey(), f.pubkey(), vec![&stranger, &k], &f),
+    // Request 1 already exists with no finalizer; the other two name `f`.
+    let rows: [(u64, Vec<&Keypair>, &Keypair); 3] = [
+        (1, vec![], &stranger),      // anyone
+        (2, vec![&stranger], &f),    // only F, and the owner
+        (3, vec![&stranger], &user), // the owner, whatever is set
     ];
-    let each = half / 8;
-    for (id, finalizer, _, _, _) in rows.iter().skip(1) {
-        ctx.request_withdrawal_as(&user, share_account, recipient, *id, each, 0, *finalizer)
+    for id in [2, 3] {
+        ctx.request_withdrawal_as(&user, share_account, recipient, id, half / 4, 0, f.pubkey())
             .expect("request");
     }
     ctx.warp_forward_seconds(DAY as i64);
 
-    for (id, _, authority, refused, permitted) in rows.iter() {
-        ctx.set_finalizer_authority(*authority).expect("authority");
+    for (id, refused, permitted) in rows.iter() {
         let before = untouched(&ctx, &user.pubkey(), *id);
         for caller in refused {
             let err = ctx

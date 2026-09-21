@@ -39,7 +39,7 @@ pub fn handler(ctx: Context<FinalizeWithdrawal>, expected_sequence: u64) -> Resu
         ErrorCode::StaleRequestSequence
     );
     require!(
-        request.may_finalize(&ctx.accounts.queue, &ctx.accounts.finalizer.key()),
+        request.may_finalize(&ctx.accounts.finalizer.key()),
         ErrorCode::FinalizerNotAllowed
     );
     let now = Clock::get()?.unix_timestamp;
