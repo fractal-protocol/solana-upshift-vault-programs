@@ -94,8 +94,7 @@ pub mod august_withdrawal_queue {
     /// - `request_id` - Owner-chosen id, unique per owner while the request exists
     /// - `shares` - Shares to escrow, nonzero
     /// - `min_assets_out` - Floor on the net payout
-    /// - `finalizer` - Who may finalize besides the owner; zero for no request-level
-    ///   restriction, the queue's `finalizer_authority` still applies
+    /// - `finalizer` - Who may finalize besides the owner; zero for anyone
     pub fn request_withdrawal(
         ctx: Context<RequestWithdrawal>,
         request_id: u64,

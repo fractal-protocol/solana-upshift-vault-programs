@@ -32,8 +32,7 @@ pub struct WithdrawalRequest {
         serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
     )]
     pub recipient_token_account: Pubkey,
-    /// Who may finalize besides the owner. Zero is no request-level restriction;
-    /// `WithdrawalQueue::finalizer_authority` still applies. Read it through
+    /// Who may finalize besides the owner. Zero means anyone. Read it through
     /// [`Self::may_finalize`]. Owner may update.
     #[cfg_attr(
         feature = "serde",
