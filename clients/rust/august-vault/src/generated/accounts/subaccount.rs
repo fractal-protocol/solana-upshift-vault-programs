@@ -11,20 +11,32 @@ use solana_pubkey::Pubkey;
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct NominatedAdmin {
+pub struct Subaccount {
     pub discriminator: [u8; 8],
+    /// In the seeds, so it cannot be used against another vault; stored for
+    /// `getProgramAccounts` indexing.
     #[cfg_attr(
         feature = "serde",
         serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
     )]
-    pub nominated_admin: Pubkey,
-    pub valid_until: i64,
+    pub vault_state: Pubkey,
+    /// The receiving address. Its ATA is where funds go.
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
+    )]
+    pub address: Pubkey,
+    /// Principal sent here and not returned. Read by the coverage rule;
+    /// deregistration requires zero.
+    pub principal: u64,
+    pub bump: u8,
+    pub padding: [u64; 8],
 }
 
-pub const NOMINATED_ADMIN_DISCRIMINATOR: [u8; 8] = [195, 131, 96, 55, 140, 253, 93, 195];
+pub const SUBACCOUNT_DISCRIMINATOR: [u8; 8] = [205, 168, 49, 209, 131, 86, 56, 195];
 
-impl NominatedAdmin {
-    pub const LEN: usize = 48;
+impl Subaccount {
+    pub const LEN: usize = 145;
 
     #[inline(always)]
     pub fn from_bytes(data: &[u8]) -> Result<Self, std::io::Error> {
@@ -33,7 +45,7 @@ impl NominatedAdmin {
     }
 }
 
-impl<'a> TryFrom<&solana_account_info::AccountInfo<'a>> for NominatedAdmin {
+impl<'a> TryFrom<&solana_account_info::AccountInfo<'a>> for Subaccount {
     type Error = std::io::Error;
 
     fn try_from(account_info: &solana_account_info::AccountInfo<'a>) -> Result<Self, Self::Error> {
@@ -43,30 +55,30 @@ impl<'a> TryFrom<&solana_account_info::AccountInfo<'a>> for NominatedAdmin {
 }
 
 #[cfg(feature = "fetch")]
-pub fn fetch_nominated_admin(
+pub fn fetch_subaccount(
     rpc: &solana_client::rpc_client::RpcClient,
     address: &solana_pubkey::Pubkey,
-) -> Result<crate::shared::DecodedAccount<NominatedAdmin>, std::io::Error> {
-    let accounts = fetch_all_nominated_admin(rpc, &[*address])?;
+) -> Result<crate::shared::DecodedAccount<Subaccount>, std::io::Error> {
+    let accounts = fetch_all_subaccount(rpc, &[*address])?;
     Ok(accounts[0].clone())
 }
 
 #[cfg(feature = "fetch")]
-pub fn fetch_all_nominated_admin(
+pub fn fetch_all_subaccount(
     rpc: &solana_client::rpc_client::RpcClient,
     addresses: &[solana_pubkey::Pubkey],
-) -> Result<Vec<crate::shared::DecodedAccount<NominatedAdmin>>, std::io::Error> {
+) -> Result<Vec<crate::shared::DecodedAccount<Subaccount>>, std::io::Error> {
     let accounts = rpc
         .get_multiple_accounts(addresses)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
-    let mut decoded_accounts: Vec<crate::shared::DecodedAccount<NominatedAdmin>> = Vec::new();
+    let mut decoded_accounts: Vec<crate::shared::DecodedAccount<Subaccount>> = Vec::new();
     for i in 0..addresses.len() {
         let address = addresses[i];
         let account = accounts[i].as_ref().ok_or(std::io::Error::new(
             std::io::ErrorKind::Other,
             format!("Account not found: {}", address),
         ))?;
-        let data = NominatedAdmin::from_bytes(&account.data)?;
+        let data = Subaccount::from_bytes(&account.data)?;
         decoded_accounts.push(crate::shared::DecodedAccount {
             address,
             account: account.clone(),
@@ -77,27 +89,27 @@ pub fn fetch_all_nominated_admin(
 }
 
 #[cfg(feature = "fetch")]
-pub fn fetch_maybe_nominated_admin(
+pub fn fetch_maybe_subaccount(
     rpc: &solana_client::rpc_client::RpcClient,
     address: &solana_pubkey::Pubkey,
-) -> Result<crate::shared::MaybeAccount<NominatedAdmin>, std::io::Error> {
-    let accounts = fetch_all_maybe_nominated_admin(rpc, &[*address])?;
+) -> Result<crate::shared::MaybeAccount<Subaccount>, std::io::Error> {
+    let accounts = fetch_all_maybe_subaccount(rpc, &[*address])?;
     Ok(accounts[0].clone())
 }
 
 #[cfg(feature = "fetch")]
-pub fn fetch_all_maybe_nominated_admin(
+pub fn fetch_all_maybe_subaccount(
     rpc: &solana_client::rpc_client::RpcClient,
     addresses: &[solana_pubkey::Pubkey],
-) -> Result<Vec<crate::shared::MaybeAccount<NominatedAdmin>>, std::io::Error> {
+) -> Result<Vec<crate::shared::MaybeAccount<Subaccount>>, std::io::Error> {
     let accounts = rpc
         .get_multiple_accounts(addresses)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
-    let mut decoded_accounts: Vec<crate::shared::MaybeAccount<NominatedAdmin>> = Vec::new();
+    let mut decoded_accounts: Vec<crate::shared::MaybeAccount<Subaccount>> = Vec::new();
     for i in 0..addresses.len() {
         let address = addresses[i];
         if let Some(account) = accounts[i].as_ref() {
-            let data = NominatedAdmin::from_bytes(&account.data)?;
+            let data = Subaccount::from_bytes(&account.data)?;
             decoded_accounts.push(crate::shared::MaybeAccount::Exists(
                 crate::shared::DecodedAccount {
                     address,
@@ -113,26 +125,26 @@ pub fn fetch_all_maybe_nominated_admin(
 }
 
 #[cfg(feature = "anchor")]
-impl anchor_lang::AccountDeserialize for NominatedAdmin {
+impl anchor_lang::AccountDeserialize for Subaccount {
     fn try_deserialize_unchecked(buf: &mut &[u8]) -> anchor_lang::Result<Self> {
         Ok(Self::deserialize(buf)?)
     }
 }
 
 #[cfg(feature = "anchor")]
-impl anchor_lang::AccountSerialize for NominatedAdmin {}
+impl anchor_lang::AccountSerialize for Subaccount {}
 
 #[cfg(feature = "anchor")]
-impl anchor_lang::Owner for NominatedAdmin {
+impl anchor_lang::Owner for Subaccount {
     fn owner() -> Pubkey {
         crate::AUGUST_VAULT_ID
     }
 }
 
 #[cfg(feature = "anchor-idl-build")]
-impl anchor_lang::IdlBuild for NominatedAdmin {}
+impl anchor_lang::IdlBuild for Subaccount {}
 
 #[cfg(feature = "anchor-idl-build")]
-impl anchor_lang::Discriminator for NominatedAdmin {
+impl anchor_lang::Discriminator for Subaccount {
     const DISCRIMINATOR: &[u8] = &[0; 8];
 }

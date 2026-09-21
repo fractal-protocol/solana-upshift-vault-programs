@@ -13,6 +13,18 @@ use anchor_spl::token_interface::Mint;
 
 pub fn handler(ctx: Context<SetOperator>, new_operator: Pubkey) -> Result<()> {
     let state = &mut ctx.accounts.vault_state;
+
+    // No mirror guard against registered destinations: this instruction cannot
+    // enumerate their PDAs. `register_subaccount` refuses the current operator,
+    // so a collision needs a deliberate rotation — decorative, not unsafe.
+    //
+    // Nobody can sign as the zero key, so both operator handlers would become
+    // uncallable; the config-authority setters refuse it for the same reason.
+    require!(
+        new_operator != Pubkey::default(),
+        ErrorCode::InvalidAuthority
+    );
+
     state.operator = new_operator;
     Ok(())
 }

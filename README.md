@@ -41,7 +41,7 @@ and the size floor in CI's program-size step.
 |------------------------|---------------------------------------------------------------------|
 | **User**               | Deposit tokens, redeem shares                                       |
 | **Operator**           | Withdraw/deposit funds, report deployed AUM                         |
-| **Admin**              | Update fees, operator, admin (two-step), fee recipient, pause/unpause |
+| **Admin**              | Update fees, operator, operator subaccounts, admin (two-step), fee recipient, pause/unpause |
 | **Protocol authority** | Create vaults. Program-wide (not per-vault), stored in `ProgramConfig`. Rotatable by itself, resettable by the upgrade authority. |
 | **Upgrade authority**  | Upgrade the program; create `ProgramConfig`; reset the protocol authority |
 
@@ -63,15 +63,20 @@ so each deposit mint has a finite number of vault lifecycles.
 | `deposit_checked`        | User     | As `deposit`, reverting below a caller-stated minimum share output |
 | `redeem`                 | User, or the withdrawal queue | Burn shares, receive tokens (minus fee)  |
 | `redeem_checked`         | User, or the withdrawal queue | As `redeem`, reverting below a caller-stated minimum payout (net of fee) |
-| `operator_withdraw`      | Operator | Withdraw tokens for external deployment              |
-| `operator_deposit`       | Operator | Return tokens to vault                               |
+| `operator_withdraw`      | Operator | Withdraw tokens for external deployment, to a registered subaccount if any |
+| `operator_deposit`       | Operator | Return tokens to vault, from a registered subaccount if any |
 | `operator_update_aum`    | Operator | Update externally deployed AUM (per-vault bps limit) |
 | `set_withdrawal_fee`     | Admin    | Set withdrawal fee (max 10%)                         |
 | `nominate_admin`         | Admin    | Nominate new admin (two-step transfer)               |
 | `accept_admin_nomination`| Nominee  | Accept admin role                                    |
 | `set_operator`           | Admin    | Assign new operator                                  |
+| `register_subaccount`    | Admin    | Register a permitted operator destination             |
+| `deregister_subaccount`  | Admin    | Remove one, once its outstanding principal is zero    |
+| `settle_subaccount_loss` | Admin    | Write down principal a destination will never return  |
 | `set_fee_recipient`      | Admin    | Change fee recipient                                 |
 | `set_aum_limits`         | Admin    | Configure AUM limits                                 |
+| `attach_withdrawal_queue` | Admin    | Attach this vault's withdrawal queue, once the queue has initialized it |
+| `detach_withdrawal_queue` | Admin, plus the attached queue | Detach the queue once drained, restoring direct redemption |
 | `pause` / `unpause`      | Admin    | Emergency pause/unpause                              |
 | `close_vault`            | Admin    | Close an empty vault                                 |
 | `create_share_token_metadata` | Admin | Create token metadata for share mint            |
@@ -173,13 +178,165 @@ requesting through the queue and waiting out its cooldown, and the queue redeems
 on their behalf by CPI, signing as that PDA. It is a per-vault setting, not a
 program-wide one: vaults on the same program can differ.
 
-The queue program, the instruction that sets this field, and the request/cooldown
-semantics are none of them implemented yet; this release adds only the field and
-the gate.
+Two instructions write the field. `attach_withdrawal_queue` takes no key
+argument: the only key it can store is this vault's queue PDA,
+`["withdrawal_queue", vault_state]` under the queue program id hardcoded in the
+vault, and it stores that key only once the queue program has initialized the
+account there. The `queue` account passed must sit at that address, be owned by
+the queue program and hold data, or the call fails with
+`InvalidWithdrawalQueueAuthority` (6022); a vault that already has a queue
+attached fails with `WithdrawalQueueAlreadyAttached` (6024). Because the PDA is a
+pure function of the vault, there is no swap to a different queue, only attach
+and detach. `detach_withdrawal_queue` clears the field and needs the attached
+queue's signature: a different signer fails with `WrongWithdrawalQueueSigner`
+(6023), an unsigned slot with Anchor's 3010, and a vault with no queue with
+`WithdrawalQueueNotAttached` (6025). The queue will give that signature only from
+its `release_vault`, after every pending request has been finalized or cancelled.
+Together those rules mean the field can only ever hold a key under the queue
+program's control, so no admin mistake can freeze exits while deposits keep
+working.
+Attach emits `WithdrawalQueueAttached { vault, queue }` and detach emits
+`WithdrawalQueueDetached { vault, queue }`.
+
+The queue program itself — requests, cooldown, finalization, `release_vault` — is
+not implemented yet, which today makes attaching *structurally* impossible rather
+than merely inadvisable: the account at the queue PDA can only be created by the
+queue program signing for it, and that program has no instructions. **That
+changes the moment `initialize_queue` ships.** If it lands before `release_vault`,
+attaching becomes possible while detaching does not, and the only thing between an
+admin and a permanent exit freeze is this paragraph — so `release_vault` must
+land first, or not attach on any cluster until it has.
+
+### Operator subaccounts (optional, per vault)
+
+`VaultState.subaccount_count` decides whether operator funds go to a registered
+destination, separating the power to *move* vault funds from the addresses that
+*receive* them. It is **zero on every vault created before the registry existed**
+— which is what the fork fixtures pin — so both operator transfers use the
+operator's own ATA and the feature arrives without a migration.
+
+Each permitted destination is a PDA seeded `["SUBACCOUNT", vault_state, address]`,
+created by `register_subaccount`. Membership is therefore a seed derivation
+rather than a list: no scan, no cap, and rent paid per address instead of charged
+to every vault. Once any is registered, `operator_withdraw` and
+`operator_deposit` must name one and the operator's own ATA is refused.
+
+**The address must prove it can return funds before it can be named.** Its
+deposit-mint ATA must already carry the vault PDA as SPL delegate with a nonzero
+allowance, granted by the subaccount itself — so the rollout is *custody
+approves, then admin switches*. That is the only proof available on-chain, and
+it needs the owner's signature, unlike ATA existence, which
+`create_associated_token_account` lets any third party manufacture. Judging the
+address by shape instead would miss an uncreated ATA address (System-owned and
+empty, so it reads as an ordinary wallet) and would wrongly refuse an SPL token
+multisig, which can sign.
+
+**Custody grants the delegation, and only custody can.** SPL `Approve` is
+authorized by the token account's owner, so neither the admin nor the operator
+can do it. Custody signs `approve(subaccount_ata, vault_state, n)`, where
+`vault_state` is the vault PDA derived
+`["VAULT_STATE", deposit_mint, vault_version]`. Note `approve` **overwrites**
+rather than accumulates: topping up from 100 to 150 means approving 150, not 50.
+
+**The allowance bounds deployments, not just returns.** `operator_withdraw`
+requires the destination's delegation to cover **that destination's** outstanding
+principal plus the amount being sent. What that guarantees is narrow and worth
+stating exactly: the vault can pull from the destination's ATA, up to the
+allowance, without custody signing again. It does **not** guarantee the funds
+will be in that ATA. Once custody deploys them to a venue they leave it
+entirely, and a return then fails inside the token program with
+`InsufficientFunds` until custody brings them back. That leg is a trust
+assumption on custody, not something this program can enforce — it never sees
+it.
+
+Principal is tracked per destination, on its registry PDA — a vault-wide figure
+would make every destination's custody cover every other's exposure. It counts
+tokens actually sent and not returned: not reported AUM, since
+`operator_update_aum` marks value with no tokens moving and a mark-down would
+otherwise reopen capacity; and not the destination ATA's balance, which anyone
+can inflate with a donation. `VaultState.deployed_principal` carries the total for
+monitoring only — nothing on-chain trusts it. Size the grant to the cycle you
+intend to deploy: returns spend it down and SPL clears the delegation once it
+reaches zero, so it must be re-granted per cycle, and a lapsed or short one fails
+with `SubaccountDelegationMissing` (6023). The program's check covers the
+delegation only — a short *balance* or a frozen source ATA still surface as the
+token program's own errors.
+
+**One subaccount address serves one vault per deposit mint.** An ATA is derived
+from (owner, mint), and an SPL token account has a single delegate slot that
+`approve` overwrites — so two vaults sharing a deposit mint cannot share a
+subaccount address. Give custody a distinct address per vault. Naming an address
+already delegated to another vault is refused at config time, but the reverse
+order is not preventable from here: if custody later approves for a second vault,
+the first vault's next transfer fails with `SubaccountDelegationMissing` (6023),
+which is the non-obvious cause of that error. No two live vaults share a deposit
+mint today.
+
+**Use an address that holds nothing else.** SPL cannot tell the vault's tokens
+from the destination's own, so anything in that ATA is reachable by the vault up
+to the allowance — approve 600 against a balance of 600 and a return of 600
+succeeds, booking the surplus as vault assets. A pre-existing balance also
+*blocks* loss settlement, since the shortfall is `principal - ata.amount` and so
+reads zero while unrelated funds sit there, leaving the destination impossible to
+deregister and the vault impossible to close until they are moved out. A
+dedicated address per vault avoids both.
+
+**The allowance is also the compromise radius.** A compromised *operator* needs
+no admin involvement to pull the whole standing allowance into the vault; a
+compromised admin can additionally rotate the operator to itself, roll the
+subaccount back and withdraw to its own ATA. Because the same number now bounds
+what can be deployed, keeping it to one cycle bounds both at once — a
+compromised key reaches roughly what is already deployed, which it could reach
+via the reserve anyway.
+
+**Deregistering stops this vault honouring the delegation — it does not revoke
+it.** The destination's ATA stops being accepted, so the vault cannot pull; but
+the allowance stands, and an admin can re-register the same address and resume
+without any new approval from custody. It is therefore a lever against a
+compromised *operator*, or against custody gone unreachable — not against a
+compromised admin. Only custody's `revoke` ends the exposure.
+
+A destination cannot be deregistered while the vault is still owed principal
+there, so funds cannot be stranded by removing the record of them. After a
+realized loss that principal will never return in tokens, so
+`settle_subaccount_loss` writes it down — admin only, since the operator
+reducing principal is the capacity-reopening move the coverage rule exists to
+prevent, and bounded by the principal *not* sitting at the destination's ATA, so
+a live obligation cannot be written off. It leaves `deployed_aum` alone; reported
+value stays the operator's to move under its bps limits. Without it a vault that
+took a loss could never be closed. Removing the last registration returns the
+vault to paying the operator's own ATA, which also recovers funds left there from
+before the first registration.
+
+The first registration adopts the vault's existing `deployed_principal`, and its
+allowance must cover it — so a vault with funds already out stays covered. That
+principal is physically in the *operator's* ATA, which is no longer an accepted
+source, so the operator should move it to the new destination rather than leave it
+to be written off. Registering while `deployed_aum == 0` avoids the question.
+
+**Token-2022 CPI Guard.** The return transfer is the shape the guard permits: it
+blocks CPI transfers authorized by the account's *owner*, not by a delegate. The
+guard also blocks `Approve` inside a CPI, so on such an ATA the delegation must
+be granted as a top-level instruction — which a wallet or MPC signer does
+anyway, and a PDA-owned ATA cannot enable the extension in the first place. A
+PDA-based multisig therefore cannot combine CPI Guard with this feature, since
+it can only issue `Approve` via CPI.
+
+The registry is **only as good as its addresses**: each must be custody the
+operator cannot unilaterally sweep — an MPC wallet such as Fordefi, which is an
+ordinary System-owned account signing directly, or a multisig such as Squads,
+whose vault is a PDA owned by its own program — and it depends on admin being a
+different *party* from the operator, which is not enforced and not checkable
+on-chain.
 
 ## Security
 
-- **Operator Trust**: The operator can withdraw funds and report off-chain balances. Trust assumptions are critical.
+- **Operator Trust**: The operator can move funds out of the vault and report
+  off-chain balances. Trust assumptions are critical. A registered subaccount
+  narrows this — the operator still moves funds, but only to an address the
+  admin named — and nothing changes while none is registered or where admin and
+  operator are the same key. See the operator-subaccount section for what
+  deregistering does and does not neutralise.
 - **Withdrawal Fee**: Protects against front-running of AUM updates.
 - **Emergency Pause**: Disables all user operations.
 - **Upgrade Authority**: Should be transferred to an admin multisig after production deployment.

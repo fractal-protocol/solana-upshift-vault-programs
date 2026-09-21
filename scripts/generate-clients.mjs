@@ -47,9 +47,10 @@ for (const { idl: idlRelPath, crate, label } of PROGRAMS) {
     codamaTree.accept(
         renderVisitor(generatedPath, {
             crateFolder: crateRoot,
-            // Codama invokes `cargo +<toolchain> fmt`; leave formatting off if
-            // a +nightly toolchain isn't installed locally.
-            formatCode: false,
+            // Runs `cargo fmt --manifest-path <crate>/Cargo.toml` over the output
+            // with the default toolchain; no `toolchain` is given, so no nightly is
+            // needed. CI's Rustfmt job checks both client crates.
+            formatCode: true,
         }),
     );
 

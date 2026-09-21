@@ -24,6 +24,21 @@ pub const EXTRA_SHARES: u128 = 1_000_000;
 /// `MIN_SUPPLY_MULTIPLE` in the program.
 pub const MIN_SUPPLY_MULTIPLE: u128 = 100;
 
+/// The withdrawal-queue program the vault trusts, mirroring
+/// `WITHDRAWAL_QUEUE_PROGRAM_ID` in the program. `attach_withdrawal_queue`
+/// stores exactly one key: the PDA of [`WITHDRAWAL_QUEUE_SEED`] and the vault
+/// state address under this program, canonical bump, once the queue program has
+/// initialized the account there. Pass that key as the instruction's `queue`
+/// account.
+///
+/// Keep in step with `programs/august-vault/src/state/vault.rs`.
+pub const WITHDRAWAL_QUEUE_PROGRAM_ID: Pubkey =
+    Pubkey::from_str_const("NmJ9CGaiPJSfAGSdhNeVDkMPGi7ZQMABYYwWUC4GHyf");
+
+/// First seed of the queue's per-vault PDA; the second is the vault state
+/// address. Mirrors `WITHDRAWAL_QUEUE_SEED` in the program.
+pub const WITHDRAWAL_QUEUE_SEED: &[u8] = b"withdrawal_queue";
+
 impl VaultState {
     /// This vault's virtual-share offset, resolving the legacy zero.
     ///
@@ -63,6 +78,26 @@ impl VaultState {
         self.withdrawal_queue().is_some()
     }
 
+    /// Whether operator transfers on this vault must name a registered
+    /// subaccount.
+    ///
+    /// **Off-chain consumers must branch on this, not on a raw field.** False
+    /// means both operator transfers use the operator's own ATA — the state
+    /// every vault created before the registry existed is in. True means an SDK
+    /// building an operator transfer has to supply the destination's registry
+    /// PDA, seeded `["SUBACCOUNT", vault_state, address]`, and its ATA.
+    pub fn requires_subaccount(&self) -> bool {
+        self.subaccount_count > 0
+    }
+
+    /// Whether a return through `operator_deposit` needs an SPL delegation from
+    /// the destination to the vault PDA. True exactly when a subaccount is
+    /// required: the source is then not the operator's account, so the operator
+    /// cannot authorize the transfer and the vault pulls against an allowance.
+    pub fn operator_returns_need_delegation(&self) -> bool {
+        self.requires_subaccount()
+    }
+
     /// Smallest first deposit this vault accepts, mirroring the program's
     /// `min_first_deposit_for`. Returns base units of the deposit mint.
     pub fn min_first_deposit(&self, decimals: u8) -> u64 {
@@ -70,8 +105,8 @@ impl VaultState {
             0..=3 => 1,
             d => 10_u64.saturating_pow(u32::from(d.saturating_sub(3))),
         };
-        let by_offset = u64::try_from(MIN_SUPPLY_MULTIPLE * self.resolved_share_offset())
-            .unwrap_or(u64::MAX);
+        let by_offset =
+            u64::try_from(MIN_SUPPLY_MULTIPLE * self.resolved_share_offset()).unwrap_or(u64::MAX);
         by_decimals.max(by_offset)
     }
 }
@@ -105,7 +140,9 @@ mod tests {
             paused: false,
             share_offset: 0,
             withdrawal_queue_authority: zero,
-            padding: [0; 27],
+            subaccount_count: 0,
+            deployed_principal: 0,
+            padding: [0; 25],
         };
         assert_eq!(vs.resolved_share_offset(), EXTRA_SHARES);
         assert_eq!(vs.min_first_deposit(6), 100_000_000);
@@ -113,5 +150,41 @@ mod tests {
         vs.share_offset = 1_000;
         assert_eq!(vs.resolved_share_offset(), 1_000);
         assert_eq!(vs.min_first_deposit(6), 100_000);
+    }
+
+    /// A vault with no registrations must read as using the operator's own ATA
+    /// off-chain too. An SDK that got this wrong would omit the registry PDA
+    /// from operator transactions against a configured vault, or demand one
+    /// against all three live vaults.
+    #[test]
+    fn the_count_decides_whether_a_destination_is_required() {
+        let zero = Pubkey::default();
+        let mut vs = VaultState {
+            discriminator: [0; 8],
+            operator: zero,
+            admin: zero,
+            share_mint: zero,
+            deposit_mint: zero,
+            fee_recipient: zero,
+            withdrawal_fee: 0,
+            local_aum: 0,
+            deployed_aum: 0,
+            aum_increase_limit: 0,
+            aum_decrease_limit: 0,
+            pda_bump: [0; 1],
+            vault_version: [0; 1],
+            paused: false,
+            share_offset: 0,
+            withdrawal_queue_authority: zero,
+            subaccount_count: 0,
+            deployed_principal: 0,
+            padding: [0; 25],
+        };
+        assert!(!vs.requires_subaccount());
+        assert!(!vs.operator_returns_need_delegation());
+
+        vs.subaccount_count = 2;
+        assert!(vs.requires_subaccount());
+        assert!(vs.operator_returns_need_delegation());
     }
 }

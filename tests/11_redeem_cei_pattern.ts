@@ -90,6 +90,7 @@ describe("august-vault-redeem-cei-pattern", () => {
                 vaultState: vaultContext.vaultStatePda,
                 vaultDepositAta: vaultContext.vaultUsdgAta,
                 operatorTokenAccount: vaultContext.operatorUsdgAta,
+                subaccount: null,
                 depositMint: vaultContext.usdgTokenMint,
                 operator: vaultContext.operator.publicKey,
                 tokenProgram: token.TOKEN_PROGRAM_ID
@@ -112,6 +113,7 @@ describe("august-vault-redeem-cei-pattern", () => {
                     vaultState: vaultContext.vaultStatePda,
                     vaultDepositAta: vaultContext.vaultUsdgAta,
                     operatorTokenAccount: vaultContext.operatorUsdgAta,
+                    subaccount: null,
                     depositMint: vaultContext.usdgTokenMint,
                     operator: vaultContext.operator.publicKey,
                     tokenProgram: token.TOKEN_PROGRAM_ID

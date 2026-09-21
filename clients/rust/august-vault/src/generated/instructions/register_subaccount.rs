@@ -9,43 +9,68 @@ use borsh::BorshDeserialize;
 use borsh::BorshSerialize;
 use solana_pubkey::Pubkey;
 
-pub const SET_OPERATOR_DISCRIMINATOR: [u8; 8] = [238, 153, 101, 169, 243, 131, 36, 1];
+pub const REGISTER_SUBACCOUNT_DISCRIMINATOR: [u8; 8] = [12, 219, 227, 235, 28, 220, 20, 220];
 
 /// Accounts.
 #[derive(Debug)]
-pub struct SetOperator {
+pub struct RegisterSubaccount {
     pub vault_state: solana_pubkey::Pubkey,
 
-    pub deposit_mint: solana_pubkey::Pubkey,
+    pub subaccount: solana_pubkey::Pubkey,
 
+    pub deposit_mint: solana_pubkey::Pubkey,
+    /// The address's ATA, carrying the delegation. Derived from `address`, so it
+    /// cannot disagree with the argument.
+    pub subaccount_ata: solana_pubkey::Pubkey,
+
+    pub token_program: solana_pubkey::Pubkey,
+    /// Admin, not the operator. Where they are the same key this buys nothing.
     pub admin: solana_pubkey::Pubkey,
+
+    pub system_program: solana_pubkey::Pubkey,
 }
 
-impl SetOperator {
-    pub fn instruction(&self, args: SetOperatorInstructionArgs) -> solana_instruction::Instruction {
+impl RegisterSubaccount {
+    pub fn instruction(
+        &self,
+        args: RegisterSubaccountInstructionArgs,
+    ) -> solana_instruction::Instruction {
         self.instruction_with_remaining_accounts(args, &[])
     }
     #[allow(clippy::arithmetic_side_effects)]
     #[allow(clippy::vec_init_then_push)]
     pub fn instruction_with_remaining_accounts(
         &self,
-        args: SetOperatorInstructionArgs,
+        args: RegisterSubaccountInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
-        let mut accounts = Vec::with_capacity(3 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(7 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(
             self.vault_state,
             false,
         ));
+        accounts.push(solana_instruction::AccountMeta::new(self.subaccount, false));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.deposit_mint,
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.admin, true,
+            self.subaccount_ata,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.token_program,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(self.admin, true));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.system_program,
+            false,
         ));
         accounts.extend_from_slice(remaining_accounts);
-        let mut data = SetOperatorInstructionData::new().try_to_vec().unwrap();
+        let mut data = RegisterSubaccountInstructionData::new()
+            .try_to_vec()
+            .unwrap();
         let mut args = args.try_to_vec().unwrap();
         data.append(&mut args);
 
@@ -59,14 +84,14 @@ impl SetOperator {
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SetOperatorInstructionData {
+pub struct RegisterSubaccountInstructionData {
     discriminator: [u8; 8],
 }
 
-impl SetOperatorInstructionData {
+impl RegisterSubaccountInstructionData {
     pub fn new() -> Self {
         Self {
-            discriminator: [238, 153, 101, 169, 243, 131, 36, 1],
+            discriminator: [12, 219, 227, 235, 28, 220, 20, 220],
         }
     }
 
@@ -75,7 +100,7 @@ impl SetOperatorInstructionData {
     }
 }
 
-impl Default for SetOperatorInstructionData {
+impl Default for RegisterSubaccountInstructionData {
     fn default() -> Self {
         Self::new()
     }
@@ -83,33 +108,41 @@ impl Default for SetOperatorInstructionData {
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SetOperatorInstructionArgs {
-    pub new_operator: Pubkey,
+pub struct RegisterSubaccountInstructionArgs {
+    pub address: Pubkey,
 }
 
-impl SetOperatorInstructionArgs {
+impl RegisterSubaccountInstructionArgs {
     pub(crate) fn try_to_vec(&self) -> Result<Vec<u8>, std::io::Error> {
         borsh::to_vec(self)
     }
 }
 
-/// Instruction builder for `SetOperator`.
+/// Instruction builder for `RegisterSubaccount`.
 ///
 /// ### Accounts:
 ///
 ///   0. `[writable]` vault_state
-///   1. `[]` deposit_mint
-///   2. `[signer]` admin
+///   1. `[writable]` subaccount
+///   2. `[]` deposit_mint
+///   3. `[]` subaccount_ata
+///   4. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
+///   5. `[writable, signer]` admin
+///   6. `[optional]` system_program (default to `11111111111111111111111111111111`)
 #[derive(Clone, Debug, Default)]
-pub struct SetOperatorBuilder {
+pub struct RegisterSubaccountBuilder {
     vault_state: Option<solana_pubkey::Pubkey>,
+    subaccount: Option<solana_pubkey::Pubkey>,
     deposit_mint: Option<solana_pubkey::Pubkey>,
+    subaccount_ata: Option<solana_pubkey::Pubkey>,
+    token_program: Option<solana_pubkey::Pubkey>,
     admin: Option<solana_pubkey::Pubkey>,
-    new_operator: Option<Pubkey>,
+    system_program: Option<solana_pubkey::Pubkey>,
+    address: Option<Pubkey>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
-impl SetOperatorBuilder {
+impl RegisterSubaccountBuilder {
     pub fn new() -> Self {
         Self::default()
     }
@@ -119,18 +152,43 @@ impl SetOperatorBuilder {
         self
     }
     #[inline(always)]
+    pub fn subaccount(&mut self, subaccount: solana_pubkey::Pubkey) -> &mut Self {
+        self.subaccount = Some(subaccount);
+        self
+    }
+    #[inline(always)]
     pub fn deposit_mint(&mut self, deposit_mint: solana_pubkey::Pubkey) -> &mut Self {
         self.deposit_mint = Some(deposit_mint);
         self
     }
+    /// The address's ATA, carrying the delegation. Derived from `address`, so it
+    /// cannot disagree with the argument.
+    #[inline(always)]
+    pub fn subaccount_ata(&mut self, subaccount_ata: solana_pubkey::Pubkey) -> &mut Self {
+        self.subaccount_ata = Some(subaccount_ata);
+        self
+    }
+    /// `[optional account, default to 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA']`
+    #[inline(always)]
+    pub fn token_program(&mut self, token_program: solana_pubkey::Pubkey) -> &mut Self {
+        self.token_program = Some(token_program);
+        self
+    }
+    /// Admin, not the operator. Where they are the same key this buys nothing.
     #[inline(always)]
     pub fn admin(&mut self, admin: solana_pubkey::Pubkey) -> &mut Self {
         self.admin = Some(admin);
         self
     }
+    /// `[optional account, default to '11111111111111111111111111111111']`
     #[inline(always)]
-    pub fn new_operator(&mut self, new_operator: Pubkey) -> &mut Self {
-        self.new_operator = Some(new_operator);
+    pub fn system_program(&mut self, system_program: solana_pubkey::Pubkey) -> &mut Self {
+        self.system_program = Some(system_program);
+        self
+    }
+    #[inline(always)]
+    pub fn address(&mut self, address: Pubkey) -> &mut Self {
+        self.address = Some(address);
         self
     }
     /// Add an additional account to the instruction.
@@ -150,53 +208,83 @@ impl SetOperatorBuilder {
     }
     #[allow(clippy::clone_on_copy)]
     pub fn instruction(&self) -> solana_instruction::Instruction {
-        let accounts = SetOperator {
+        let accounts = RegisterSubaccount {
             vault_state: self.vault_state.expect("vault_state is not set"),
+            subaccount: self.subaccount.expect("subaccount is not set"),
             deposit_mint: self.deposit_mint.expect("deposit_mint is not set"),
+            subaccount_ata: self.subaccount_ata.expect("subaccount_ata is not set"),
+            token_program: self.token_program.unwrap_or(solana_pubkey::pubkey!(
+                "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+            )),
             admin: self.admin.expect("admin is not set"),
+            system_program: self
+                .system_program
+                .unwrap_or(solana_pubkey::pubkey!("11111111111111111111111111111111")),
         };
-        let args = SetOperatorInstructionArgs {
-            new_operator: self.new_operator.clone().expect("new_operator is not set"),
+        let args = RegisterSubaccountInstructionArgs {
+            address: self.address.clone().expect("address is not set"),
         };
 
         accounts.instruction_with_remaining_accounts(args, &self.__remaining_accounts)
     }
 }
 
-/// `set_operator` CPI accounts.
-pub struct SetOperatorCpiAccounts<'a, 'b> {
+/// `register_subaccount` CPI accounts.
+pub struct RegisterSubaccountCpiAccounts<'a, 'b> {
     pub vault_state: &'b solana_account_info::AccountInfo<'a>,
 
-    pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
+    pub subaccount: &'b solana_account_info::AccountInfo<'a>,
 
+    pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
+    /// The address's ATA, carrying the delegation. Derived from `address`, so it
+    /// cannot disagree with the argument.
+    pub subaccount_ata: &'b solana_account_info::AccountInfo<'a>,
+
+    pub token_program: &'b solana_account_info::AccountInfo<'a>,
+    /// Admin, not the operator. Where they are the same key this buys nothing.
     pub admin: &'b solana_account_info::AccountInfo<'a>,
+
+    pub system_program: &'b solana_account_info::AccountInfo<'a>,
 }
 
-/// `set_operator` CPI instruction.
-pub struct SetOperatorCpi<'a, 'b> {
+/// `register_subaccount` CPI instruction.
+pub struct RegisterSubaccountCpi<'a, 'b> {
     /// The program to invoke.
     pub __program: &'b solana_account_info::AccountInfo<'a>,
 
     pub vault_state: &'b solana_account_info::AccountInfo<'a>,
 
-    pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
+    pub subaccount: &'b solana_account_info::AccountInfo<'a>,
 
+    pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
+    /// The address's ATA, carrying the delegation. Derived from `address`, so it
+    /// cannot disagree with the argument.
+    pub subaccount_ata: &'b solana_account_info::AccountInfo<'a>,
+
+    pub token_program: &'b solana_account_info::AccountInfo<'a>,
+    /// Admin, not the operator. Where they are the same key this buys nothing.
     pub admin: &'b solana_account_info::AccountInfo<'a>,
+
+    pub system_program: &'b solana_account_info::AccountInfo<'a>,
     /// The arguments for the instruction.
-    pub __args: SetOperatorInstructionArgs,
+    pub __args: RegisterSubaccountInstructionArgs,
 }
 
-impl<'a, 'b> SetOperatorCpi<'a, 'b> {
+impl<'a, 'b> RegisterSubaccountCpi<'a, 'b> {
     pub fn new(
         program: &'b solana_account_info::AccountInfo<'a>,
-        accounts: SetOperatorCpiAccounts<'a, 'b>,
-        args: SetOperatorInstructionArgs,
+        accounts: RegisterSubaccountCpiAccounts<'a, 'b>,
+        args: RegisterSubaccountInstructionArgs,
     ) -> Self {
         Self {
             __program: program,
             vault_state: accounts.vault_state,
+            subaccount: accounts.subaccount,
             deposit_mint: accounts.deposit_mint,
+            subaccount_ata: accounts.subaccount_ata,
+            token_program: accounts.token_program,
             admin: accounts.admin,
+            system_program: accounts.system_program,
             __args: args,
         }
     }
@@ -223,9 +311,13 @@ impl<'a, 'b> SetOperatorCpi<'a, 'b> {
         signers_seeds: &[&[&[u8]]],
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
-        let mut accounts = Vec::with_capacity(3 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(7 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(
             *self.vault_state.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            *self.subaccount.key,
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
@@ -233,8 +325,17 @@ impl<'a, 'b> SetOperatorCpi<'a, 'b> {
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.admin.key,
-            true,
+            *self.subaccount_ata.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.token_program.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(*self.admin.key, true));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.system_program.key,
+            false,
         ));
         remaining_accounts.iter().for_each(|remaining_account| {
             accounts.push(solana_instruction::AccountMeta {
@@ -243,7 +344,9 @@ impl<'a, 'b> SetOperatorCpi<'a, 'b> {
                 is_writable: remaining_account.2,
             })
         });
-        let mut data = SetOperatorInstructionData::new().try_to_vec().unwrap();
+        let mut data = RegisterSubaccountInstructionData::new()
+            .try_to_vec()
+            .unwrap();
         let mut args = self.__args.try_to_vec().unwrap();
         data.append(&mut args);
 
@@ -252,11 +355,15 @@ impl<'a, 'b> SetOperatorCpi<'a, 'b> {
             accounts,
             data,
         };
-        let mut account_infos = Vec::with_capacity(4 + remaining_accounts.len());
+        let mut account_infos = Vec::with_capacity(8 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
         account_infos.push(self.vault_state.clone());
+        account_infos.push(self.subaccount.clone());
         account_infos.push(self.deposit_mint.clone());
+        account_infos.push(self.subaccount_ata.clone());
+        account_infos.push(self.token_program.clone());
         account_infos.push(self.admin.clone());
+        account_infos.push(self.system_program.clone());
         remaining_accounts
             .iter()
             .for_each(|remaining_account| account_infos.push(remaining_account.0.clone()));
@@ -269,26 +376,34 @@ impl<'a, 'b> SetOperatorCpi<'a, 'b> {
     }
 }
 
-/// Instruction builder for `SetOperator` via CPI.
+/// Instruction builder for `RegisterSubaccount` via CPI.
 ///
 /// ### Accounts:
 ///
 ///   0. `[writable]` vault_state
-///   1. `[]` deposit_mint
-///   2. `[signer]` admin
+///   1. `[writable]` subaccount
+///   2. `[]` deposit_mint
+///   3. `[]` subaccount_ata
+///   4. `[]` token_program
+///   5. `[writable, signer]` admin
+///   6. `[]` system_program
 #[derive(Clone, Debug)]
-pub struct SetOperatorCpiBuilder<'a, 'b> {
-    instruction: Box<SetOperatorCpiBuilderInstruction<'a, 'b>>,
+pub struct RegisterSubaccountCpiBuilder<'a, 'b> {
+    instruction: Box<RegisterSubaccountCpiBuilderInstruction<'a, 'b>>,
 }
 
-impl<'a, 'b> SetOperatorCpiBuilder<'a, 'b> {
+impl<'a, 'b> RegisterSubaccountCpiBuilder<'a, 'b> {
     pub fn new(program: &'b solana_account_info::AccountInfo<'a>) -> Self {
-        let instruction = Box::new(SetOperatorCpiBuilderInstruction {
+        let instruction = Box::new(RegisterSubaccountCpiBuilderInstruction {
             __program: program,
             vault_state: None,
+            subaccount: None,
             deposit_mint: None,
+            subaccount_ata: None,
+            token_program: None,
             admin: None,
-            new_operator: None,
+            system_program: None,
+            address: None,
             __remaining_accounts: Vec::new(),
         });
         Self { instruction }
@@ -302,6 +417,14 @@ impl<'a, 'b> SetOperatorCpiBuilder<'a, 'b> {
         self
     }
     #[inline(always)]
+    pub fn subaccount(
+        &mut self,
+        subaccount: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.subaccount = Some(subaccount);
+        self
+    }
+    #[inline(always)]
     pub fn deposit_mint(
         &mut self,
         deposit_mint: &'b solana_account_info::AccountInfo<'a>,
@@ -309,14 +432,41 @@ impl<'a, 'b> SetOperatorCpiBuilder<'a, 'b> {
         self.instruction.deposit_mint = Some(deposit_mint);
         self
     }
+    /// The address's ATA, carrying the delegation. Derived from `address`, so it
+    /// cannot disagree with the argument.
+    #[inline(always)]
+    pub fn subaccount_ata(
+        &mut self,
+        subaccount_ata: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.subaccount_ata = Some(subaccount_ata);
+        self
+    }
+    #[inline(always)]
+    pub fn token_program(
+        &mut self,
+        token_program: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.token_program = Some(token_program);
+        self
+    }
+    /// Admin, not the operator. Where they are the same key this buys nothing.
     #[inline(always)]
     pub fn admin(&mut self, admin: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.admin = Some(admin);
         self
     }
     #[inline(always)]
-    pub fn new_operator(&mut self, new_operator: Pubkey) -> &mut Self {
-        self.instruction.new_operator = Some(new_operator);
+    pub fn system_program(
+        &mut self,
+        system_program: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.system_program = Some(system_program);
+        self
+    }
+    #[inline(always)]
+    pub fn address(&mut self, address: Pubkey) -> &mut Self {
+        self.instruction.address = Some(address);
         self
     }
     /// Add an additional account to the instruction.
@@ -353,14 +503,14 @@ impl<'a, 'b> SetOperatorCpiBuilder<'a, 'b> {
     #[allow(clippy::clone_on_copy)]
     #[allow(clippy::vec_init_then_push)]
     pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
-        let args = SetOperatorInstructionArgs {
-            new_operator: self
+        let args = RegisterSubaccountInstructionArgs {
+            address: self
                 .instruction
-                .new_operator
+                .address
                 .clone()
-                .expect("new_operator is not set"),
+                .expect("address is not set"),
         };
-        let instruction = SetOperatorCpi {
+        let instruction = RegisterSubaccountCpi {
             __program: self.instruction.__program,
 
             vault_state: self
@@ -368,12 +518,29 @@ impl<'a, 'b> SetOperatorCpiBuilder<'a, 'b> {
                 .vault_state
                 .expect("vault_state is not set"),
 
+            subaccount: self.instruction.subaccount.expect("subaccount is not set"),
+
             deposit_mint: self
                 .instruction
                 .deposit_mint
                 .expect("deposit_mint is not set"),
 
+            subaccount_ata: self
+                .instruction
+                .subaccount_ata
+                .expect("subaccount_ata is not set"),
+
+            token_program: self
+                .instruction
+                .token_program
+                .expect("token_program is not set"),
+
             admin: self.instruction.admin.expect("admin is not set"),
+
+            system_program: self
+                .instruction
+                .system_program
+                .expect("system_program is not set"),
             __args: args,
         };
         instruction.invoke_signed_with_remaining_accounts(
@@ -384,12 +551,16 @@ impl<'a, 'b> SetOperatorCpiBuilder<'a, 'b> {
 }
 
 #[derive(Clone, Debug)]
-struct SetOperatorCpiBuilderInstruction<'a, 'b> {
+struct RegisterSubaccountCpiBuilderInstruction<'a, 'b> {
     __program: &'b solana_account_info::AccountInfo<'a>,
     vault_state: Option<&'b solana_account_info::AccountInfo<'a>>,
+    subaccount: Option<&'b solana_account_info::AccountInfo<'a>>,
     deposit_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
+    subaccount_ata: Option<&'b solana_account_info::AccountInfo<'a>>,
+    token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
     admin: Option<&'b solana_account_info::AccountInfo<'a>>,
-    new_operator: Option<Pubkey>,
+    system_program: Option<&'b solana_account_info::AccountInfo<'a>>,
+    address: Option<Pubkey>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
 }

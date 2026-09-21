@@ -8,4 +8,5 @@
 
 pub mod config;
 pub mod nominated_admin;
+pub mod subaccount;
 pub mod vault;

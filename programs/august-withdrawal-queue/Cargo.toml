@@ -20,6 +20,10 @@ no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build", "august-vault/idl-build"]
 
 [dependencies]
+# Feature set is inherited from `august-vault` below, which this crate links for
+# its CPI — notably `allow-missing-optionals`, which the vault needs so a
+# pre-registry operator call still deserializes. It applies here too: a trailing
+# optional account on a queue instruction could be omitted by the caller.
 anchor-lang = "0.31.1"
 anchor-spl = "0.31.1"
 solana-security-txt = "1.1.1"

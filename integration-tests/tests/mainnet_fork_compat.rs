@@ -148,6 +148,22 @@ fn read_vault_state(svm: &LiteSVM, addr: &Pubkey) -> VaultState {
          live vault would refuse every redemption after the upgrade"
     );
 
+    // Same shape and caveat: every live vault predates the registry, so it must
+    // read as having no subaccounts and keep paying the operator's own ATA. A
+    // non-zero count would have the upgrade itself demand a registry entry these
+    // vaults lack, leaving the operator unable to deploy or recall.
+    assert_eq!(
+        state.subaccount_count, 0,
+        "vault state at {addr} decoded registered subaccounts; a live vault's \
+         operator transfers would start requiring one"
+    );
+    assert!(
+        !state.requires_subaccount(),
+        "vault state at {addr} must still resolve operator transfers to the \
+         operator's own ATA"
+    );
+    assert_eq!(state.deployed_principal, 0);
+
     state
 }
 
