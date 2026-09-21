@@ -7,7 +7,7 @@ This workspace builds two programs:
 | Crate | Artifact | Status |
 |---|---|---|
 | `programs/august-vault` | `august_vault.so` | Live on mainnet and devnet. Everything below describes this program. |
-| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | **Scaffold only.** Carries the program identity, the error-ABI pin and the build wiring; no state accounts or instructions yet. |
+| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | **No instructions yet.** Carries the program identity, the error-ABI pin, the build wiring and the `WithdrawalQueue` / `WithdrawalRequest` state accounts; nothing on-chain can create those accounts until the instructions land. |
 
 The queue will let a vault route redemptions through a request-and-cooldown flow
 instead of paying out instantly. The vault side of that is already in place: a
@@ -76,7 +76,7 @@ so each deposit mint has a finite number of vault lifecycles.
 | `set_fee_recipient`      | Admin    | Change fee recipient                                 |
 | `set_aum_limits`         | Admin    | Configure AUM limits                                 |
 | `attach_withdrawal_queue` | Admin    | Attach this vault's withdrawal queue, once the queue has initialized it |
-| `detach_withdrawal_queue` | Admin, plus the attached queue | Detach the queue once drained, restoring direct redemption |
+| `detach_withdrawal_queue` | Admin, plus the attached queue | Detach the queue, restoring direct redemption; pending requests still finalize or cancel |
 | `pause` / `unpause`      | Admin    | Emergency pause/unpause                              |
 | `close_vault`            | Admin    | Close an empty vault                                 |
 | `create_share_token_metadata` | Admin | Create token metadata for share mint            |
@@ -191,7 +191,8 @@ and detach. `detach_withdrawal_queue` clears the field and needs the attached
 queue's signature: a different signer fails with `WrongWithdrawalQueueSigner`
 (6023), an unsigned slot with Anchor's 3010, and a vault with no queue with
 `WithdrawalQueueNotAttached` (6025). The queue will give that signature only from
-its `release_vault`, after every pending request has been finalized or cancelled.
+its `release_vault`; pending requests survive a release and finalize or cancel
+afterwards.
 Together those rules mean the field can only ever hold a key under the queue
 program's control, so no admin mistake can freeze exits while deposits keep
 working.
