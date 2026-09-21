@@ -1544,6 +1544,205 @@ impl VaultCtx {
         send_tx(&mut self.svm, owner, &[ix], &[owner])
     }
 
+    /// `update_request` as the user on their own request.
+    pub fn update_request(
+        &mut self,
+        request_id: u64,
+        expected_sequence: u64,
+        min_assets_out: Option<u64>,
+        new_recipient: Option<Pubkey>,
+        finalizer: Option<Pubkey>,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let user = self.user.insecure_clone();
+        let owner = user.pubkey();
+        self.update_request_as(
+            &user,
+            &owner,
+            request_id,
+            expected_sequence,
+            min_assets_out,
+            new_recipient,
+            finalizer,
+        )
+    }
+
+    /// `update_request` signed by `signer` against `request_owner`'s request,
+    /// so a test can have the wrong person try.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_request_as(
+        &mut self,
+        signer: &Keypair,
+        request_owner: &Pubkey,
+        request_id: u64,
+        expected_sequence: u64,
+        min_assets_out: Option<u64>,
+        new_recipient: Option<Pubkey>,
+        finalizer: Option<Pubkey>,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let accounts = q_accounts::UpdateRequest {
+            queue: self.withdrawal_queue_pda(),
+            owner: signer.pubkey(),
+            request: self.request_pda(request_owner, request_id),
+            new_recipient,
+        }
+        .to_account_metas(None);
+        let ix = Instruction {
+            program_id: august_withdrawal_queue::ID,
+            accounts,
+            data: q_ix::UpdateRequest {
+                expected_sequence,
+                min_assets_out,
+                finalizer,
+            }
+            .data(),
+        };
+        send_tx(&mut self.svm, signer, &[ix], &[signer])
+    }
+
+    /// `finalize_withdrawal` on the user's own request, signed by the user.
+    pub fn finalize_withdrawal(
+        &mut self,
+        request_id: u64,
+        expected_sequence: u64,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let user = self.user.insecure_clone();
+        let owner = user.pubkey();
+        self.finalize_withdrawal_as(&user, &owner, request_id, expected_sequence)
+    }
+
+    /// `finalize_withdrawal` on `request_owner`'s request, signed and paid by
+    /// `finalizer`, who may be anyone the request and queue permit.
+    pub fn finalize_withdrawal_as(
+        &mut self,
+        finalizer: &Keypair,
+        request_owner: &Pubkey,
+        request_id: u64,
+        expected_sequence: u64,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let accounts =
+            self.finalize_withdrawal_accounts(&finalizer.pubkey(), request_owner, request_id);
+        self.send_finalize_withdrawal(finalizer, accounts, expected_sequence)
+    }
+
+    /// The genuine account set for a `finalize_withdrawal`, with the owner and
+    /// recipient read off the request itself. Tests that substitute one account
+    /// take this and overwrite a field before sending.
+    pub fn finalize_withdrawal_accounts(
+        &self,
+        finalizer: &Pubkey,
+        request_owner: &Pubkey,
+        request_id: u64,
+    ) -> q_accounts::FinalizeWithdrawal {
+        let request = self.request_state_data(request_owner, request_id);
+        q_accounts::FinalizeWithdrawal {
+            queue: self.withdrawal_queue_pda(),
+            vault_state: self.vault_state,
+            vault_deposit_ata: self.vault_token_pda,
+            fee_recipient_account: self.fee_recipient_deposit_ata,
+            escrow_shares: self.queue_escrow(&self.share_mint),
+            escrow_assets: self.queue_escrow(&self.deposit_mint),
+            share_mint: self.share_mint,
+            deposit_mint: self.deposit_mint,
+            finalizer: *finalizer,
+            request: self.request_pda(request_owner, request_id),
+            owner: request.owner,
+            recipient_token_account: request.recipient_token_account,
+            vault_program: august_vault::ID,
+            token_program: self.token_program.id(),
+        }
+    }
+
+    /// Sends `finalize_withdrawal` with an explicit account set, signed and paid
+    /// by `finalizer`.
+    pub fn send_finalize_withdrawal(
+        &mut self,
+        finalizer: &Keypair,
+        accounts: q_accounts::FinalizeWithdrawal,
+        expected_sequence: u64,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_withdrawal_queue::ID,
+            accounts: accounts.to_account_metas(None),
+            data: q_ix::FinalizeWithdrawal { expected_sequence }.data(),
+        };
+        send_tx(&mut self.svm, finalizer, &[ix], &[finalizer])
+    }
+
+    /// What the vault would pay for `shares` right now, by its own math:
+    /// `(gross, net)`, where net is what the redeemer receives after the fee.
+    pub fn quote_redeem(&self, shares: u64) -> (u64, u64) {
+        let vault = self.vault_state_data();
+        let gross = vault
+            .assets_for_redeem(
+                self.share_mint_supply(),
+                vault.total_assets().expect("total assets"),
+                shares,
+            )
+            .expect("quote");
+        (
+            gross,
+            gross - expected_withdrawal_fee(gross, vault.withdrawal_fee),
+        )
+    }
+
+    /// Reassigns a token account's authority, as its owner may under classic
+    /// SPL. Token-2022 ATAs carry `ImmutableOwner` and refuse this.
+    pub fn set_token_account_authority_as(
+        &mut self,
+        owner: &Keypair,
+        account: &Pubkey,
+        new_authority: &Pubkey,
+    ) {
+        let ix = match self.token_program {
+            TokenProgramKind::Spl => spl_token::instruction::set_authority(
+                &spl_token::ID,
+                account,
+                Some(new_authority),
+                spl_token::instruction::AuthorityType::AccountOwner,
+                &owner.pubkey(),
+                &[],
+            ),
+            TokenProgramKind::Token2022 => spl_token_2022::instruction::set_authority(
+                &spl_token_2022::ID,
+                account,
+                Some(new_authority),
+                spl_token_2022::instruction::AuthorityType::AccountOwner,
+                &owner.pubkey(),
+                &[],
+            ),
+        }
+        .expect("build set_authority");
+        send_tx(&mut self.svm, owner, &[ix], &[owner]).expect("set authority");
+    }
+
+    /// Closes an empty token account, as its owner may, sending the rent to
+    /// `destination`.
+    pub fn close_token_account_as(
+        &mut self,
+        owner: &Keypair,
+        account: &Pubkey,
+        destination: &Pubkey,
+    ) {
+        let ix = match self.token_program {
+            TokenProgramKind::Spl => spl_token::instruction::close_account(
+                &spl_token::ID,
+                account,
+                destination,
+                &owner.pubkey(),
+                &[],
+            ),
+            TokenProgramKind::Token2022 => spl_token_2022::instruction::close_account(
+                &spl_token_2022::ID,
+                account,
+                destination,
+                &owner.pubkey(),
+                &[],
+            ),
+        }
+        .expect("build close_account");
+        send_tx(&mut self.svm, owner, &[ix], &[owner]).expect("close token account");
+    }
+
     /// Create and fund a throwaway keypair (for impostor-signer tests).
     pub fn new_funded_keypair(&mut self, lamports: u64) -> Keypair {
         airdrop_keypair(&mut self.svm, lamports)

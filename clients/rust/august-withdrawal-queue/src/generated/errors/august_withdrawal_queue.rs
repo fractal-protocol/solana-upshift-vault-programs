@@ -48,6 +48,18 @@ pub enum AugustWithdrawalQueueError {
     /// 6011 - expected_sequence does not match the request; it may have been recreated
     #[error("expected_sequence does not match the request; it may have been recreated")]
     StaleRequestSequence = 0x177B,
+    /// 6012 - update_request would change nothing; pass a field or the new recipient account
+    #[error("update_request would change nothing; pass a field or the new recipient account")]
+    NothingToUpdate = 0x177D,
+    /// 6014 - The request's cooldown has not elapsed
+    #[error("The request's cooldown has not elapsed")]
+    CooldownNotElapsed = 0x177E,
+    /// 6015 - Signer may not finalize this request under its finalizer and the queue's finalizer_authority
+    #[error("Signer may not finalize this request under its finalizer and the queue's finalizer_authority")]
+    FinalizerNotAllowed = 0x177F,
+    /// 6016 - The recipient received less than the request's min_assets_out
+    #[error("The recipient received less than the request's min_assets_out")]
+    PayoutBelowFloor = 0x1780,
 }
 
 impl From<AugustWithdrawalQueueError> for solana_program_error::ProgramError {

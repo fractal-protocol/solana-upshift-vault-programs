@@ -44,6 +44,14 @@ pub enum ErrorCode {
     RequestExpired,
     #[msg("expected_sequence does not match the request; it may have been recreated")]
     StaleRequestSequence,
+    #[msg("update_request would change nothing; pass a field or the new recipient account")]
+    NothingToUpdate,
+    #[msg("The request's cooldown has not elapsed")]
+    CooldownNotElapsed,
+    #[msg("Signer may not finalize this request under its finalizer and the queue's finalizer_authority")]
+    FinalizerNotAllowed,
+    #[msg("The recipient received less than the request's min_assets_out")]
+    PayoutBelowFloor,
 }
 
 /// Compile-time pin of the ABI above, generated from one list so completeness
@@ -91,6 +99,10 @@ pin_error_abi! {
     NotRequestOwner => 9,
     RequestExpired => 10,
     StaleRequestSequence => 11,
+    NothingToUpdate => 12,
+    CooldownNotElapsed => 14,
+    FinalizerNotAllowed => 15,
+    PayoutBelowFloor => 16,
 }
 
 #[cfg(test)]
