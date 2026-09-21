@@ -24,9 +24,11 @@ use august_vault::state::vault::VaultState;
 
 /// One precondition of the queue's own: the vault's reserve must cover every
 /// pending request at today's price, so a release never lets instant redeemers
-/// take assets the queued holders were owed. Everything else, that a queue is
-/// attached and that it is this one, the vault checks inside the CPI and its
-/// errors propagate.
+/// take assets the queued holders were owed. An empty pending set owes nothing
+/// and is not priced: the vault refuses to price shares when it holds no assets,
+/// and that must not pin a queue with nothing left to cancel. Everything else,
+/// that a queue is attached and that it is this one, the vault checks inside
+/// the CPI and its errors propagate.
 pub fn handler(ctx: Context<ReleaseVault>) -> Result<()> {
     require_vault_admin(
         &ctx.accounts.queue,
@@ -34,11 +36,16 @@ pub fn handler(ctx: Context<ReleaseVault>) -> Result<()> {
         &ctx.accounts.admin,
     )?;
     let vault = &ctx.accounts.vault_state;
-    let owed = vault.assets_for_redeem(
-        ctx.accounts.share_mint.supply,
-        vault.total_assets()?,
-        ctx.accounts.queue.pending_shares,
-    )?;
+    let pending_shares = ctx.accounts.queue.pending_shares;
+    let owed = if pending_shares == 0 {
+        0
+    } else {
+        vault.assets_for_redeem(
+            ctx.accounts.share_mint.supply,
+            vault.total_assets()?,
+            pending_shares,
+        )?
+    };
     require!(owed <= vault.local_aum, ErrorCode::ReleaseUnderfunded);
 
     let seeds = ctx.accounts.queue.signer_seeds();

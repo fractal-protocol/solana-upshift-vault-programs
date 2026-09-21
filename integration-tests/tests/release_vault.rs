@@ -167,6 +167,39 @@ fn release_is_refused_while_the_reserve_cannot_cover_the_pending_set() {
     assert_released(&meta, &ctx, (1, shares / 2));
 }
 
+/// A vault that reports no assets while shares are outstanding cannot price a
+/// share, and `assets_for_redeem` says so. With requests pending that refusal
+/// is the vault's, and it propagates; with none pending there is nothing to
+/// price, and the queue must not stay pinned to a vault it cannot pay from.
+#[test]
+fn an_empty_queue_releases_even_when_the_share_price_is_undefined() {
+    let mut ctx = attached_vault_with_holder();
+    let shares = ctx.token_account_amount(&ctx.user_share_ata);
+    ctx.request_withdrawal(1, shares / 2, 0).expect("request");
+    let mut vault = ctx.vault_state_data();
+    vault.local_aum = 0;
+    vault.deployed_aum = 0;
+    ctx.force_overwrite_vault_state(vault);
+    assert!(ctx.share_mint_supply() > 0);
+
+    let err = ctx
+        .release_vault()
+        .expect_err("a pending request cannot be priced");
+    assert_anchor_err(&err, VaultError::SharePriceUndefined);
+
+    ctx.cancel_withdrawal(1, 1)
+        .expect("the owner reclaims the shares");
+    let meta = ctx
+        .release_vault()
+        .expect("nothing pending, nothing to price");
+    assert_eq!(ctx.vault_state_data().withdrawal_queue(), None);
+    let released = events_of::<VaultReleased>(&meta);
+    assert_eq!(
+        (released[0].pending_requests, released[0].assets_owed),
+        (0, 0)
+    );
+}
+
 // ---- who, and against what ----
 
 #[test]
