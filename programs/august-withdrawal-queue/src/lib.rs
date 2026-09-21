@@ -87,8 +87,7 @@ pub mod august_withdrawal_queue {
 
     /// A holder escrows `shares` and opens a request that becomes finalizable
     /// after the queue's cooldown, paying `recipient_token_account` at least
-    /// `min_assets_out`. Requires the queue to be accepting and the vault's gate
-    /// to point at it.
+    /// `min_assets_out`. Requires the vault's gate to point at this queue.
     ///
     /// ### Parameters
     /// - `request_id` - Owner-chosen id, unique per owner while the request exists

@@ -209,16 +209,15 @@ configure it. Attaching it on the vault is what makes it live.
 Holders use `request_withdrawal(request_id, shares, min_assets_out, finalizer)`:
 their shares move to the queue's escrow and a request account is created at
 `["withdrawal_request", queue, owner, request_id]`, stamped with the cooldown and
-window in force at that moment. It requires the queue to be accepting
-(`NotAcceptingRequests`, 6007) and the vault's gate to point at the queue, a
-nonzero amount (`ZeroShares`, 6008), and a recipient that holds the deposit mint
-and belongs to neither the queue nor the vault (`InvalidRecipient`, 6009).
+window in force at that moment. It requires the vault's gate to point at the
+queue, a nonzero amount (`ZeroShares`, 6007), and a recipient that holds the deposit mint
+and belongs to neither the queue nor the vault (`InvalidRecipient`, 6008).
 `update_request(expected_sequence, min?, finalizer?)` plus an optional new
-recipient account lets the owner (`NotRequestOwner`, 6010, otherwise) adjust
+recipient account lets the owner (`NotRequestOwner`, 6009, otherwise) adjust
 those three fields while the request is pending and unexpired (`RequestExpired`,
-6011); the sequence stamp must match (`StaleRequestSequence`, 6012) so a delayed
+6010); the sequence stamp must match (`StaleRequestSequence`, 6011) so a delayed
 instruction cannot land on a recreated request, and a call that would change
-nothing is refused (`NothingToUpdate`, 6013). Finalization, cancellation and
+nothing is refused (`NothingToUpdate`, 6012). Finalization, cancellation and
 `release_vault` are not implemented yet.
 
 **Do not deploy the queue program, or attach a queue, on any cluster yet.** Once

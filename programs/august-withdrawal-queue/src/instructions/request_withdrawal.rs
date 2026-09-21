@@ -20,8 +20,8 @@ use anchor_spl::token_interface::{
 };
 use august_vault::state::vault::VaultState;
 
-/// Checks first, then state, then the transfer. The gate check is decision 13 as
-/// defence in depth: `set_accepting_requests(true)` already requires it.
+/// Checks first, then state, then the transfer. The gate check is decision 13:
+/// a request exists only while the vault points at this queue.
 pub fn handler(
     ctx: Context<RequestWithdrawal>,
     request_id: u64,
@@ -30,10 +30,6 @@ pub fn handler(
     finalizer: Pubkey,
 ) -> Result<()> {
     let queue_key = ctx.accounts.queue.key();
-    require!(
-        ctx.accounts.queue.accepting_requests,
-        ErrorCode::NotAcceptingRequests
-    );
     require!(
         ctx.accounts.vault_state.withdrawal_queue() == Some(queue_key),
         ErrorCode::QueueNotActiveOnVault

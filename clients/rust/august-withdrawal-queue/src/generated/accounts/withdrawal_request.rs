@@ -52,9 +52,8 @@ pub struct WithdrawalRequest {
     pub sequence: u64,
     /// Unix time the request was created.
     pub requested_at: i64,
-    /// `requested_at + cooldown` at creation. Never changes: admin cancel's
-    /// maturity check and `expires_at` are both measured from it, so expediting
-    /// can neither unlock a force-cancel nor move a deadline.
+    /// `requested_at + cooldown` at creation. Never changes: `expires_at` is
+    /// measured from it, so expediting cannot move a deadline.
     pub scheduled_eligible_at: i64,
     /// Unix time finalization may begin. Equals `scheduled_eligible_at` unless
     /// `expedite_request` moved it earlier; it only ever moves earlier.

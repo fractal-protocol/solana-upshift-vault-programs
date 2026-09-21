@@ -32,8 +32,6 @@ pub enum ErrorCode {
     QueueNotActiveOnVault,
     #[msg("Deposit mint carries a Token-2022 extension the queue does not support")]
     UnsupportedDepositMint,
-    #[msg("The queue is not accepting new requests")]
-    NotAcceptingRequests,
     #[msg("A request must escrow at least one share")]
     ZeroShares,
     #[msg(
@@ -90,13 +88,12 @@ pin_error_abi! {
     FulfillmentWindowOutOfBounds => 4,
     QueueNotActiveOnVault => 5,
     UnsupportedDepositMint => 6,
-    NotAcceptingRequests => 7,
-    ZeroShares => 8,
-    InvalidRecipient => 9,
-    NotRequestOwner => 10,
-    RequestExpired => 11,
-    StaleRequestSequence => 12,
-    NothingToUpdate => 13,
+    ZeroShares => 7,
+    InvalidRecipient => 8,
+    NotRequestOwner => 9,
+    RequestExpired => 10,
+    StaleRequestSequence => 11,
+    NothingToUpdate => 12,
 }
 
 #[cfg(test)]

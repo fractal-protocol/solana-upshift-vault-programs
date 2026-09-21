@@ -1425,14 +1425,13 @@ impl VaultCtx {
 
     // ---- the queue program's request instructions ----
 
-    /// Initializes the queue, attaches it on the vault and opens it to requests.
+    /// Initializes the queue and attaches it on the vault, which makes it live.
     /// Returns the queue PDA.
     pub fn open_queue(&mut self, cooldown_seconds: u64) -> Pubkey {
         self.initialize_queue(cooldown_seconds)
             .expect("initialize_queue");
         let pda = self.withdrawal_queue_pda();
         self.attach_withdrawal_queue(pda).expect("attach");
-        self.set_accepting_requests(true).expect("accept requests");
         pda
     }
 

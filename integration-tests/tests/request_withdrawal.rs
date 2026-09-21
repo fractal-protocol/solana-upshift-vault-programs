@@ -322,7 +322,7 @@ fn zero_shares_is_refused() {
     let (mut ctx, _) = open_vault_with_holder(DAY);
     let err = ctx.request_withdrawal(1, 0, 0).expect_err("zero");
     assert_queue_err(&err, ErrorCode::ZeroShares);
-    assert_anchor_framework_err(&err, 6008);
+    assert_anchor_framework_err(&err, 6007);
 }
 
 /// The escrow transfer is the token program's; asking for more than the owner
@@ -434,28 +434,14 @@ fn substituted_accounts_are_refused_before_anything_moves() {
     assert_eq!(ctx.queue_state_data().pending_requests, 0);
 }
 
-#[test]
-fn drain_mode_refuses_new_requests() {
-    let (mut ctx, shares) = open_vault_with_holder(DAY);
-    ctx.set_accepting_requests(false).expect("drain");
-    let err = ctx.request_withdrawal(1, shares, 0).expect_err("draining");
-    assert_queue_err(&err, ErrorCode::NotAcceptingRequests);
-    assert_anchor_framework_err(&err, 6007);
-}
-
-/// Decision 13, defence in depth. No instruction sequence reaches this state
-/// (detach needs the queue's signature, given only by `release_vault` in drain
-/// mode), so the test writes the vault directly.
+/// Decision 13. Only `release_vault` (WQ-09) reaches this state, so the test
+/// writes the vault directly.
 #[test]
 fn a_queue_the_vault_no_longer_points_at_refuses_requests() {
     let (mut ctx, shares) = open_vault_with_holder(DAY);
     let mut vault = ctx.vault_state_data();
     vault.withdrawal_queue_authority = Pubkey::default();
     ctx.force_overwrite_vault_state(vault);
-    assert!(
-        ctx.queue_state_data().accepting_requests,
-        "the queue still believes it is open"
-    );
 
     let err = ctx
         .request_withdrawal(1, shares, 0)
@@ -464,10 +450,9 @@ fn a_queue_the_vault_no_longer_points_at_refuses_requests() {
 }
 
 /// Decision 7: pause guards asset movement on the vault. Requests and updates
-/// move only the owner's own shares and keep working; so does an update in
-/// drain mode, which is how a draining owner lowers a floor to exit.
+/// move only the owner's own shares and keep working.
 #[test]
-fn pause_and_drain_do_not_block_the_owner() {
+fn pause_does_not_block_the_owner() {
     let (mut ctx, shares) = open_vault_with_holder(DAY);
     ctx.pause().expect("pause");
     ctx.request_withdrawal(1, shares / 2, 0)
@@ -475,13 +460,9 @@ fn pause_and_drain_do_not_block_the_owner() {
     ctx.update_request(1, 1, Some(5), None, None)
         .expect("update while paused");
     ctx.unpause().expect("unpause");
-
-    ctx.set_accepting_requests(false).expect("drain");
-    ctx.update_request(1, 1, Some(6), None, None)
-        .expect("update in drain mode");
     assert_eq!(
         ctx.request_state_data(&ctx.user.pubkey(), 1).min_assets_out,
-        6
+        5
     );
 }
 
@@ -519,7 +500,7 @@ fn the_recipient_must_hold_the_deposit_mint_and_belong_to_neither_program() {
             )
             .expect_err(what);
         assert_queue_err(&err, ErrorCode::InvalidRecipient);
-        assert_anchor_framework_err(&err, 6009);
+        assert_anchor_framework_err(&err, 6008);
     }
     assert_eq!(ctx.queue_state_data().pending_requests, 0);
 
@@ -633,7 +614,7 @@ fn an_update_that_changes_nothing_is_refused() {
         .update_request(1, 1, None, None, None)
         .expect_err("nothing to update");
     assert_queue_err(&err, ErrorCode::NothingToUpdate);
-    assert_anchor_framework_err(&err, 6013);
+    assert_anchor_framework_err(&err, 6012);
     assert_eq!(
         ctx.svm
             .get_account(&ctx.request_pda(&user, 1))
@@ -657,7 +638,7 @@ fn an_update_needs_the_requests_current_sequence() {
         .update_request(1, 2, Some(5), None, None)
         .expect_err("wrong sequence");
     assert_queue_err(&err, ErrorCode::StaleRequestSequence);
-    assert_anchor_framework_err(&err, 6012);
+    assert_anchor_framework_err(&err, 6011);
     assert_eq!(
         ctx.request_state_data(&ctx.user.pubkey(), 1).min_assets_out,
         0
@@ -675,7 +656,7 @@ fn only_the_owner_updates_a_request() {
         .update_request_as(&impostor, &user, 1, 1, Some(5), None, None)
         .expect_err("not the owner");
     assert_queue_err(&err, ErrorCode::NotRequestOwner);
-    assert_anchor_framework_err(&err, 6010);
+    assert_anchor_framework_err(&err, 6009);
 }
 
 /// After the fulfillment window an update is refused: the request can only be
@@ -696,7 +677,7 @@ fn an_expired_request_cannot_be_updated() {
         .update_request(1, 1, Some(6), None, None)
         .expect_err("at the deadline");
     assert_queue_err(&err, ErrorCode::RequestExpired);
-    assert_anchor_framework_err(&err, 6011);
+    assert_anchor_framework_err(&err, 6010);
     assert_eq!(
         ctx.request_state_data(&ctx.user.pubkey(), 1).min_assets_out,
         5
