@@ -20,8 +20,8 @@ use anchor_spl::token_interface::Mint;
 /// extension it carries is `MetadataPointer` or `TokenMetadata`.
 ///
 /// Anything else, known or unknown, is refused. A transfer fee would take a cut
-/// on each escrow hop and land the recipient below their floor while the
-/// instruction succeeded; hooks need accounts the redeem CPI does not carry; a
+/// on each escrow hop, so the recipient would get less than the vault paid out
+/// while the instruction succeeded; hooks need accounts the redeem CPI does not carry; a
 /// permanent delegate can move escrowed funds; a frozen default state would
 /// create frozen escrows. An allow-list rather than a deny-list, so a future
 /// extension is refused until someone has reasoned about it.

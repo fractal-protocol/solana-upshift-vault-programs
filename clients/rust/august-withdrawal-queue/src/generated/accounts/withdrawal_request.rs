@@ -41,9 +41,6 @@ pub struct WithdrawalRequest {
     pub finalizer: Pubkey,
     /// Shares held in the queue's escrow for this request.
     pub shares: u64,
-    /// The owner's floor on net payout, same semantics as `redeem_checked`.
-    /// Fixed at request time.
-    pub min_assets_out: u64,
     /// Owner-chosen id, unique per owner while this account exists.
     pub request_id: u64,
     /// Queue-wide ordering stamp at creation, from `WithdrawalQueue::open_request`.
@@ -66,7 +63,7 @@ pub struct WithdrawalRequest {
     /// never signs.
     pub bump: u8,
     /// Reserved. Carve new fields **out of** this array so `LEN` stays 265.
-    pub padding: [u64; 8],
+    pub padding: [u64; 9],
 }
 
 pub const WITHDRAWAL_REQUEST_DISCRIMINATOR: [u8; 8] = [242, 88, 147, 173, 182, 62, 229, 193];

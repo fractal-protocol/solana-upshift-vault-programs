@@ -1464,7 +1464,6 @@ impl VaultCtx {
         &mut self,
         request_id: u64,
         shares: u64,
-        min_assets_out: u64,
     ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
         let user = self.user.insecure_clone();
         let (share_account, recipient) = (self.user_share_ata, self.user_deposit_ata);
@@ -1474,7 +1473,6 @@ impl VaultCtx {
             recipient,
             request_id,
             shares,
-            min_assets_out,
             Pubkey::default(),
         )
     }
@@ -1489,7 +1487,6 @@ impl VaultCtx {
         recipient_token_account: Pubkey,
         request_id: u64,
         shares: u64,
-        min_assets_out: u64,
         finalizer: Pubkey,
     ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
         let accounts = self.request_withdrawal_accounts(
@@ -1498,14 +1495,7 @@ impl VaultCtx {
             recipient_token_account,
             request_id,
         );
-        self.send_request_withdrawal(
-            owner,
-            accounts,
-            request_id,
-            shares,
-            min_assets_out,
-            finalizer,
-        )
+        self.send_request_withdrawal(owner, accounts, request_id, shares, finalizer)
     }
 
     /// The genuine account set for a `request_withdrawal`. Tests that need to
@@ -1539,7 +1529,6 @@ impl VaultCtx {
         accounts: q_accounts::RequestWithdrawal,
         request_id: u64,
         shares: u64,
-        min_assets_out: u64,
         finalizer: Pubkey,
     ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
         let ix = Instruction {
@@ -1548,7 +1537,6 @@ impl VaultCtx {
             data: q_ix::RequestWithdrawal {
                 request_id,
                 shares,
-                min_assets_out,
                 finalizer,
             }
             .data(),

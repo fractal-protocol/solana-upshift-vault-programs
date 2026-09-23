@@ -41,9 +41,6 @@ pub struct WithdrawalRequest {
     pub finalizer: Pubkey,
     /// Shares held in the queue's escrow for this request.
     pub shares: u64,
-    /// The owner's floor on net payout, same semantics as `redeem_checked`.
-    /// Fixed at request time.
-    pub min_assets_out: u64,
     /// Owner-chosen id, unique per owner while this account exists.
     pub request_id: u64,
     /// Queue-wide ordering stamp at creation, from `WithdrawalQueue::open_request`.
@@ -66,7 +63,7 @@ pub struct WithdrawalRequest {
     /// never signs.
     pub bump: u8,
     /// Reserved. Carve new fields **out of** this array so `LEN` stays 265.
-    pub padding: [u64; 8],
+    pub padding: [u64; 9],
 }
 
 const _: () = assert!(
@@ -87,7 +84,6 @@ impl WithdrawalRequest {
         recipient_token_account: Pubkey,
         finalizer: Pubkey,
         shares: u64,
-        min_assets_out: u64,
         request_id: u64,
         sequence: u64,
         bump: u8,
@@ -100,11 +96,10 @@ impl WithdrawalRequest {
         self.recipient_token_account = recipient_token_account;
         self.finalizer = finalizer;
         self.shares = shares;
-        self.min_assets_out = min_assets_out;
         self.request_id = request_id;
         self.sequence = sequence;
         self.bump = bump;
-        self.padding = [0; 8];
+        self.padding = [0; 9];
         self.schedule(now, cooldown_seconds, window_seconds)
     }
 

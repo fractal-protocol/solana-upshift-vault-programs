@@ -26,7 +26,6 @@ pub fn handler(
     ctx: Context<RequestWithdrawal>,
     request_id: u64,
     shares: u64,
-    min_assets_out: u64,
     finalizer: Pubkey,
 ) -> Result<()> {
     let queue_key = ctx.accounts.queue.key();
@@ -46,7 +45,6 @@ pub fn handler(
         ctx.accounts.recipient_token_account.key(),
         finalizer,
         shares,
-        min_assets_out,
         request_id,
         sequence,
         ctx.bumps.request,

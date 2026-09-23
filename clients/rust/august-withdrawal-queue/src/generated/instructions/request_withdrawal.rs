@@ -127,7 +127,6 @@ impl Default for RequestWithdrawalInstructionData {
 pub struct RequestWithdrawalInstructionArgs {
     pub request_id: u64,
     pub shares: u64,
-    pub min_assets_out: u64,
     pub finalizer: Pubkey,
 }
 
@@ -165,7 +164,6 @@ pub struct RequestWithdrawalBuilder {
     system_program: Option<solana_pubkey::Pubkey>,
     request_id: Option<u64>,
     shares: Option<u64>,
-    min_assets_out: Option<u64>,
     finalizer: Option<Pubkey>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
@@ -245,11 +243,6 @@ impl RequestWithdrawalBuilder {
         self
     }
     #[inline(always)]
-    pub fn min_assets_out(&mut self, min_assets_out: u64) -> &mut Self {
-        self.min_assets_out = Some(min_assets_out);
-        self
-    }
-    #[inline(always)]
     pub fn finalizer(&mut self, finalizer: Pubkey) -> &mut Self {
         self.finalizer = Some(finalizer);
         self
@@ -294,10 +287,6 @@ impl RequestWithdrawalBuilder {
         let args = RequestWithdrawalInstructionArgs {
             request_id: self.request_id.clone().expect("request_id is not set"),
             shares: self.shares.clone().expect("shares is not set"),
-            min_assets_out: self
-                .min_assets_out
-                .clone()
-                .expect("min_assets_out is not set"),
             finalizer: self.finalizer.clone().expect("finalizer is not set"),
         };
 
@@ -516,7 +505,6 @@ impl<'a, 'b> RequestWithdrawalCpiBuilder<'a, 'b> {
             system_program: None,
             request_id: None,
             shares: None,
-            min_assets_out: None,
             finalizer: None,
             __remaining_accounts: Vec::new(),
         });
@@ -609,11 +597,6 @@ impl<'a, 'b> RequestWithdrawalCpiBuilder<'a, 'b> {
         self
     }
     #[inline(always)]
-    pub fn min_assets_out(&mut self, min_assets_out: u64) -> &mut Self {
-        self.instruction.min_assets_out = Some(min_assets_out);
-        self
-    }
-    #[inline(always)]
     pub fn finalizer(&mut self, finalizer: Pubkey) -> &mut Self {
         self.instruction.finalizer = Some(finalizer);
         self
@@ -659,11 +642,6 @@ impl<'a, 'b> RequestWithdrawalCpiBuilder<'a, 'b> {
                 .clone()
                 .expect("request_id is not set"),
             shares: self.instruction.shares.clone().expect("shares is not set"),
-            min_assets_out: self
-                .instruction
-                .min_assets_out
-                .clone()
-                .expect("min_assets_out is not set"),
             finalizer: self
                 .instruction
                 .finalizer
@@ -734,7 +712,6 @@ struct RequestWithdrawalCpiBuilderInstruction<'a, 'b> {
     system_program: Option<&'b solana_account_info::AccountInfo<'a>>,
     request_id: Option<u64>,
     shares: Option<u64>,
-    min_assets_out: Option<u64>,
     finalizer: Option<Pubkey>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,

@@ -69,7 +69,7 @@ fn assert_full_request_event(
         (e.request_id, e.owner, e.sequence),
         (id, *owner, r.sequence)
     );
-    assert_eq!((e.shares, e.min_assets_out), (r.shares, r.min_assets_out));
+    assert_eq!(e.shares, r.shares);
     assert_eq!(e.recipient_token_account, r.recipient_token_account);
     assert_eq!(e.finalizer, r.finalizer);
     assert_eq!((e.eligible_at, e.expires_at), (r.eligible_at, r.expires_at));
@@ -84,9 +84,7 @@ fn a_holder_escrows_shares_and_opens_a_request() {
     let now = ctx.now();
     let user = ctx.user.pubkey();
 
-    let meta = ctx
-        .request_withdrawal(7, half, 1_000)
-        .expect("request_withdrawal");
+    let meta = ctx.request_withdrawal(7, half).expect("request_withdrawal");
     eprintln!(
         "request_withdrawal consumed {} CU",
         meta.compute_units_consumed
@@ -111,7 +109,6 @@ fn a_holder_escrows_shares_and_opens_a_request() {
     assert_eq!(r.recipient_token_account, ctx.user_deposit_ata);
     assert_eq!(r.allowed_finalizer(), None);
     assert_eq!(r.shares, half);
-    assert_eq!(r.min_assets_out, 1_000);
     assert_eq!(
         r.request_id, 7,
         "the id is the owner's, distinct from the stamp"
@@ -151,7 +148,7 @@ fn a_token_2022_holder_escrows_shares_too() {
     let (mut ctx, shares) = open_with_holder(VaultCtx::fresh_token_2022(), DAY);
     let user = ctx.user.pubkey();
     let meta = ctx
-        .request_withdrawal(1, shares / 2, 5)
+        .request_withdrawal(1, shares / 2)
         .expect("request under Token-2022");
     assert_eq!(escrow_shares_balance(&ctx), shares / 2);
     assert_eq!(ctx.request_state_data(&user, 1).shares, shares / 2);
@@ -168,7 +165,7 @@ fn a_request_can_name_its_finalizer() {
     let ops = Pubkey::new_unique();
 
     let meta = ctx
-        .request_withdrawal_as(&user, share_account, recipient, 1, shares / 2, 0, ops)
+        .request_withdrawal_as(&user, share_account, recipient, 1, shares / 2, ops)
         .expect("request with a finalizer");
     assert_eq!(
         ctx.request_state_data(&user.pubkey(), 1)
@@ -187,7 +184,7 @@ fn timestamps_are_stamped_from_the_settings_at_request_time() {
     let user = ctx.user.pubkey();
     let now = ctx.now();
 
-    let meta = ctx.request_withdrawal(1, shares / 4, 0).expect("first");
+    let meta = ctx.request_withdrawal(1, shares / 4).expect("first");
     let first = ctx.request_state_data(&user, 1);
     assert_eq!(first.scheduled_eligible_at, now + DAY as i64);
     assert_eq!(
@@ -201,7 +198,7 @@ fn timestamps_are_stamped_from_the_settings_at_request_time() {
 
     ctx.set_cooldown(2 * DAY).expect("new cooldown");
     ctx.set_fulfillment_window(0).expect("no window");
-    ctx.request_withdrawal(2, shares / 4, 0).expect("second");
+    ctx.request_withdrawal(2, shares / 4).expect("second");
     let still_first = ctx.request_state_data(&user, 1);
     assert_eq!(
         (still_first.scheduled_eligible_at, still_first.expires_at),
@@ -217,8 +214,8 @@ fn timestamps_are_stamped_from_the_settings_at_request_time() {
 fn requests_are_owner_scoped_and_sequenced() {
     let (mut ctx, shares) = open_vault_with_holder(DAY);
     let user = ctx.user.pubkey();
-    ctx.request_withdrawal(7, shares / 4, 0).expect("id 7");
-    ctx.request_withdrawal(3, shares / 4, 0).expect("id 3");
+    ctx.request_withdrawal(7, shares / 4).expect("id 7");
+    ctx.request_withdrawal(3, shares / 4).expect("id 3");
 
     let (a, b) = (
         ctx.request_state_data(&user, 7),
@@ -237,7 +234,7 @@ fn requests_are_owner_scoped_and_sequenced() {
     // An id in use cannot be reused while its request exists: `init` hits the
     // System Program's "account already in use".
     let err = ctx
-        .request_withdrawal(7, 1, 0)
+        .request_withdrawal(7, 1)
         .expect_err("request 7 already exists");
     assert_anchor_framework_err(&err, 0);
     assert_log_contains(&err, "already in use");
@@ -258,15 +255,13 @@ fn two_owners_interleave_without_colliding() {
     ctx.deposit_as(&bob, DEPOSIT_AMOUNT).expect("bob deposits");
     let bob_shares = ctx.token_account_amount(&bob.share_ata);
 
-    ctx.request_withdrawal(1, shares / 2, 0)
-        .expect("alice id 1");
+    ctx.request_withdrawal(1, shares / 2).expect("alice id 1");
     ctx.request_withdrawal_as(
         &bob.keypair,
         bob.share_ata,
         bob.deposit_ata,
         1,
         bob_shares / 2,
-        0,
         Pubkey::default(),
     )
     .expect("bob id 1");
@@ -292,7 +287,7 @@ fn two_owners_interleave_without_colliding() {
 #[test]
 fn zero_shares_is_refused() {
     let (mut ctx, _) = open_vault_with_holder(DAY);
-    let err = ctx.request_withdrawal(1, 0, 0).expect_err("zero");
+    let err = ctx.request_withdrawal(1, 0).expect_err("zero");
     assert_queue_err(&err, ErrorCode::ZeroShares);
     assert_anchor_framework_err(&err, 6007);
 }
@@ -305,7 +300,7 @@ fn more_shares_than_held_is_refused_by_the_token_program() {
     let (mut ctx, shares) = open_vault_with_holder(DAY);
     let user = ctx.user.pubkey();
     let err = ctx
-        .request_withdrawal(1, shares + 1, 0)
+        .request_withdrawal(1, shares + 1)
         .expect_err("insufficient shares");
     // SPL Token `InsufficientFunds` is code 1; so is a System Program rent
     // shortfall, so pin the token program's log line too.
@@ -330,7 +325,6 @@ fn the_share_account_must_hold_the_share_mint_and_belong_to_the_signer() {
             recipient,
             1,
             1,
-            0,
             Pubkey::default(),
         )
         .expect_err("not a share account");
@@ -345,7 +339,6 @@ fn the_share_account_must_hold_the_share_mint_and_belong_to_the_signer() {
             recipient,
             1,
             shares / 2,
-            0,
             Pubkey::default(),
         )
         .expect_err("not the signer's account");
@@ -372,7 +365,7 @@ fn substituted_accounts_are_refused_before_anything_moves() {
     let mut accounts = ctx.request_withdrawal_accounts(&user.pubkey(), share_account, recipient, 1);
     accounts.escrow_shares = foreign_escrow;
     let err = ctx
-        .send_request_withdrawal(&user, accounts, 1, shares / 2, 0, Pubkey::default())
+        .send_request_withdrawal(&user, accounts, 1, shares / 2, Pubkey::default())
         .expect_err("escrow substituted");
     assert_anchor_framework_err(&err, 2001); // ConstraintHasOne
     assert_eq!(ctx.token_account_amount(&foreign_escrow), 0);
@@ -392,7 +385,7 @@ fn substituted_accounts_are_refused_before_anything_moves() {
     let mut accounts = ctx.request_withdrawal_accounts(&user.pubkey(), share_account, recipient, 1);
     accounts.vault_state = vault_b;
     let err = ctx
-        .send_request_withdrawal(&user, accounts, 1, shares / 2, 0, Pubkey::default())
+        .send_request_withdrawal(&user, accounts, 1, shares / 2, Pubkey::default())
         .expect_err("vault substituted");
     assert_queue_err(&err, ErrorCode::VaultMismatch);
 
@@ -400,7 +393,7 @@ fn substituted_accounts_are_refused_before_anything_moves() {
     let mut accounts = genuine;
     accounts.share_mint = ctx.deposit_mint;
     let err = ctx
-        .send_request_withdrawal(&user, accounts, 1, shares / 2, 0, Pubkey::default())
+        .send_request_withdrawal(&user, accounts, 1, shares / 2, Pubkey::default())
         .expect_err("share mint substituted");
     assert_anchor_framework_err(&err, 2001);
     assert_eq!(ctx.queue_state_data().pending_requests, 0);
@@ -415,9 +408,7 @@ fn a_queue_the_vault_no_longer_points_at_refuses_requests() {
     vault.withdrawal_queue_authority = Pubkey::default();
     ctx.force_overwrite_vault_state(vault);
 
-    let err = ctx
-        .request_withdrawal(1, shares, 0)
-        .expect_err("gate is gone");
+    let err = ctx.request_withdrawal(1, shares).expect_err("gate is gone");
     assert_queue_err(&err, ErrorCode::QueueNotActiveOnVault);
 }
 
@@ -427,7 +418,7 @@ fn a_queue_the_vault_no_longer_points_at_refuses_requests() {
 fn pause_does_not_block_the_owner() {
     let (mut ctx, shares) = open_vault_with_holder(DAY);
     ctx.pause().expect("pause");
-    ctx.request_withdrawal(1, shares / 2, 0)
+    ctx.request_withdrawal(1, shares / 2)
         .expect("request while paused");
     assert_eq!(escrow_shares_balance(&ctx), shares / 2);
 }
@@ -461,7 +452,6 @@ fn the_recipient_must_hold_the_deposit_mint_and_belong_to_neither_program() {
                 recipient,
                 i as u64,
                 quarter,
-                0,
                 Pubkey::default(),
             )
             .expect_err(what);
@@ -478,7 +468,6 @@ fn the_recipient_must_hold_the_deposit_mint_and_belong_to_neither_program() {
         elsewhere,
         9,
         quarter,
-        0,
         Pubkey::default(),
     )
     .expect("a third party's deposit-mint account is a valid recipient");
@@ -499,7 +488,7 @@ fn counters_track_the_escrow_across_many_requests() {
     let mut total = 0u64;
     let amounts = [7u64, 1, 300, 42, 9_999, shares / 10];
     for (i, amount) in amounts.iter().enumerate() {
-        ctx.request_withdrawal(i as u64 + 10, *amount, 0)
+        ctx.request_withdrawal(i as u64 + 10, *amount)
             .expect("request");
         total += amount;
         let q = ctx.queue_state_data();

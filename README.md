@@ -206,13 +206,13 @@ or a Token-2022 mint carrying at most the two metadata extensions
 and `set_fulfillment_window` (zero disables expiry, else at most 90 days)
 configure it. Attaching it on the vault is what makes it live.
 
-Holders use `request_withdrawal(request_id, shares, min_assets_out, finalizer)`:
+Holders use `request_withdrawal(request_id, shares, finalizer)`:
 their shares move to the queue's escrow and a request account is created at
 `["withdrawal_request", queue, owner, request_id]`, stamped with the cooldown and
 window in force at that moment. It requires the vault's gate to point at the
 queue, a nonzero amount (`ZeroShares`, 6007), and a recipient that holds the deposit mint
 and belongs to neither the queue nor the vault (`InvalidRecipient`, 6008).
-A request's floor, recipient and finalizer are fixed once it is made; to change
+A request's recipient and finalizer are fixed once it is made; to change
 them the owner cancels and requests again. Finalization, cancellation and
 `release_vault` are not implemented yet.
 
