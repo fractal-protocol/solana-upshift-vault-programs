@@ -7,7 +7,7 @@ This workspace builds two programs:
 | Crate | Artifact | Status |
 |---|---|---|
 | `programs/august-vault` | `august_vault.so` | Live on mainnet and devnet. Everything below describes this program. |
-| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | **No instructions yet.** Carries the program identity, the error-ABI pin, the build wiring and the `WithdrawalQueue` / `WithdrawalRequest` state accounts; nothing on-chain can create those accounts until the instructions land. |
+| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | **Admin instructions only** (`initialize_queue` and two config setters) over the `WithdrawalQueue` / `WithdrawalRequest` state accounts. Requests, finalization and `release_vault` are not implemented. **Not deployed anywhere, and must not be until `release_vault` lands.** |
 
 The queue will let a vault route redemptions through a request-and-cooldown flow
 instead of paying out instantly. The vault side of that is already in place: a
@@ -199,14 +199,20 @@ working.
 Attach emits `WithdrawalQueueAttached { vault, queue }` and detach emits
 `WithdrawalQueueDetached { vault, queue }`.
 
-The queue program itself — requests, cooldown, finalization, `release_vault` — is
-not implemented yet, which today makes attaching *structurally* impossible rather
-than merely inadvisable: the account at the queue PDA can only be created by the
-queue program signing for it, and that program has no instructions. **That
-changes the moment `initialize_queue` ships.** If it lands before `release_vault`,
-attaching becomes possible while detaching does not, and the only thing between an
-admin and a permanent exit freeze is this paragraph — so `release_vault` must
-land first, or not attach on any cluster until it has.
+The queue program's admin side exists in source: `initialize_queue` creates the
+queue PDA and its two escrow token accounts, for a classic SPL mint
+or a Token-2022 mint carrying at most the two metadata extensions
+(`UnsupportedDepositMint`, 6006, otherwise); `set_cooldown` (at most 30 days)
+and `set_fulfillment_window` (zero disables expiry, else at most 90 days)
+configure it. Attaching it on the vault is what makes it live. Requests,
+finalization and `release_vault` are not implemented yet.
+
+**Do not deploy the queue program, or attach a queue, on any cluster yet.** Once
+`initialize_queue` is deployable the queue PDA can be created, so attaching
+becomes possible, while detaching needs `release_vault`, which does not exist.
+Attaching before it lands would be a one-way door: a gated vault could be
+reopened only by a vault program upgrade. Recorded as a merge blocker on
+AUGUST-7669 and AUGUST-7672.
 
 ### Operator subaccounts (optional, per vault)
 
