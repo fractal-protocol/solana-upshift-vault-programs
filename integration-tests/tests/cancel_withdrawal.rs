@@ -250,10 +250,10 @@ fn cancel_and_finalize_are_mutually_exclusive() {
 }
 
 /// Decision 11's stale-instruction case, end to end: cancel, reuse the id, then
-/// land an update signed against the old request. It fails on the stamp and the
-/// new request is untouched.
+/// land a second cancel signed against the old request. It fails on the stamp
+/// and the new request is untouched.
 #[test]
-fn an_update_signed_against_a_cancelled_request_cannot_hit_its_successor() {
+fn a_cancel_signed_against_a_cancelled_request_cannot_hit_its_successor() {
     let (mut ctx, half) = holder_with_request(VaultCtx::fresh());
     let user = ctx.user.pubkey();
     ctx.cancel_withdrawal(1, 1).expect("cancel");
@@ -263,10 +263,14 @@ fn an_update_signed_against_a_cancelled_request_cannot_hit_its_successor() {
     assert_eq!(successor.sequence, 2, "a fresh stamp");
 
     let err = ctx
-        .update_request(1, 1, Some(5), None, None)
+        .cancel_withdrawal(1, 1)
         .expect_err("signed against the old request");
     assert_queue_err(&err, ErrorCode::StaleRequestSequence);
-    assert_eq!(ctx.request_state_data(&user, 1).min_assets_out, 7);
+    let after = ctx.request_state_data(&user, 1);
+    assert_eq!(
+        (after.sequence, after.shares, after.min_assets_out),
+        (successor.sequence, successor.shares, 7)
+    );
 }
 
 // ---- the destination ----

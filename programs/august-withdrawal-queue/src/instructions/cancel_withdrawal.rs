@@ -81,7 +81,7 @@ pub struct CancelWithdrawal<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
 
-    /// Seeds come from its own stored fields, as in `UpdateRequest`, so a wrong
+    /// Seeds come from its own stored fields rather than the signer, so a wrong
     /// signer is reported as `NotRequestOwner`.
     #[account(
         mut,

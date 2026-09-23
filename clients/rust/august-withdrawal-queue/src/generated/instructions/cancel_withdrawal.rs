@@ -16,7 +16,7 @@ pub struct CancelWithdrawal {
     pub queue: solana_pubkey::Pubkey,
     /// Signs, and receives the request's rent.
     pub owner: solana_pubkey::Pubkey,
-    /// Seeds come from its own stored fields, as in `UpdateRequest`, so a wrong
+    /// Seeds come from its own stored fields rather than the signer, so a wrong
     /// signer is reported as `NotRequestOwner`.
     pub request: solana_pubkey::Pubkey,
 
@@ -151,7 +151,7 @@ impl CancelWithdrawalBuilder {
         self.owner = Some(owner);
         self
     }
-    /// Seeds come from its own stored fields, as in `UpdateRequest`, so a wrong
+    /// Seeds come from its own stored fields rather than the signer, so a wrong
     /// signer is reported as `NotRequestOwner`.
     #[inline(always)]
     pub fn request(&mut self, request: solana_pubkey::Pubkey) -> &mut Self {
@@ -233,7 +233,7 @@ pub struct CancelWithdrawalCpiAccounts<'a, 'b> {
     pub queue: &'b solana_account_info::AccountInfo<'a>,
     /// Signs, and receives the request's rent.
     pub owner: &'b solana_account_info::AccountInfo<'a>,
-    /// Seeds come from its own stored fields, as in `UpdateRequest`, so a wrong
+    /// Seeds come from its own stored fields rather than the signer, so a wrong
     /// signer is reported as `NotRequestOwner`.
     pub request: &'b solana_account_info::AccountInfo<'a>,
 
@@ -254,7 +254,7 @@ pub struct CancelWithdrawalCpi<'a, 'b> {
     pub queue: &'b solana_account_info::AccountInfo<'a>,
     /// Signs, and receives the request's rent.
     pub owner: &'b solana_account_info::AccountInfo<'a>,
-    /// Seeds come from its own stored fields, as in `UpdateRequest`, so a wrong
+    /// Seeds come from its own stored fields rather than the signer, so a wrong
     /// signer is reported as `NotRequestOwner`.
     pub request: &'b solana_account_info::AccountInfo<'a>,
 
@@ -413,7 +413,7 @@ impl<'a, 'b> CancelWithdrawalCpiBuilder<'a, 'b> {
         self.instruction.owner = Some(owner);
         self
     }
-    /// Seeds come from its own stored fields, as in `UpdateRequest`, so a wrong
+    /// Seeds come from its own stored fields rather than the signer, so a wrong
     /// signer is reported as `NotRequestOwner`.
     #[inline(always)]
     pub fn request(&mut self, request: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {

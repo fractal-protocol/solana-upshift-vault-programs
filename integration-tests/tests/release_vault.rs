@@ -153,7 +153,7 @@ fn release_is_refused_while_the_reserve_cannot_cover_the_pending_set() {
     assert_eq!(ctx.vault_state_data().local_aum, owed - 1);
     let err = ctx.release_vault().expect_err("one token short");
     assert_queue_err(&err, ErrorCode::ReleaseUnderfunded);
-    assert_anchor_framework_err(&err, 6016);
+    assert_anchor_framework_err(&err, 6015);
     assert_eq!(
         ctx.vault_state_data().withdrawal_queue(),
         Some(ctx.withdrawal_queue_pda()),
