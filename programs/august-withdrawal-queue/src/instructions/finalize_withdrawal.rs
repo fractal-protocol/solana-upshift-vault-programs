@@ -26,14 +26,13 @@ use august_vault::program::AugustVault;
 use august_vault::state::vault::VaultState;
 
 /// Checks, then the counters, then the two CPIs. A vault refusal (`VaultPaused`,
-/// `NotEnoughLiquidity`, `SlippageExceeded`) propagates as the vault's own code
-/// and rolls the transaction back, so the request stays pending and untouched.
+/// `NotEnoughLiquidity`) propagates as the vault's own code and rolls the
+/// transaction back, so the request stays pending and untouched.
 ///
-/// The payout is the `escrow_assets` balance delta across the redeem rather than
-/// the amount the vault computed, so a donation sitting in the escrow is never
-/// paid out. The floor is then re-checked on the recipient's own increase. With
-/// a decision-12 deposit mint the two amounts cannot differ, so that check is
-/// defence in depth behind the vault's `SlippageExceeded`, not the check.
+/// The payout is the shares' value at this moment, with no floor: there is no
+/// trade, so nothing can slip. It is the `escrow_assets` balance delta across
+/// the redeem rather than the amount the vault computed, so a donation sitting
+/// in the escrow is never paid out.
 pub fn handler(ctx: Context<FinalizeWithdrawal>, expected_sequence: u64) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
     let side = VaultSide::from_single(ctx.accounts);
@@ -177,20 +176,19 @@ pub(crate) fn finalize_one<'info>(
     require!(!request.is_expired(now), ErrorCode::RequestExpired);
     require_valid_recipient(recipient, queue)?;
 
-    let (shares, min_assets_out) = (request.shares, request.min_assets_out);
+    let shares = request.shares;
     // Reload first: in a batch, the previous request's payout has left the
     // escrow since this struct last read it, and a stale figure here would
     // shortchange this one.
     escrow_assets.reload()?;
     let escrow_before = escrow_assets.amount;
-    let recipient_before = recipient.amount;
 
     // Effects before interactions: the counters drop before any CPI.
     queue.close_request(shares)?;
 
     let seeds = queue.signer_seeds();
     let signer: &[&[&[u8]]] = &[&seeds];
-    august_vault::cpi::redeem_checked(
+    august_vault::cpi::redeem(
         CpiContext::new_with_signer(
             side.vault_program.clone(),
             Redeem {
@@ -207,7 +205,6 @@ pub(crate) fn finalize_one<'info>(
             signer,
         ),
         shares,
-        min_assets_out,
     )?;
 
     escrow_assets.reload()?;
@@ -229,13 +226,6 @@ pub(crate) fn finalize_one<'info>(
         assets,
         side.deposit_decimals,
     )?;
-
-    recipient.reload()?;
-    let received = recipient
-        .amount
-        .checked_sub(recipient_before)
-        .ok_or(ErrorCode::MathError)?;
-    require!(received >= min_assets_out, ErrorCode::PayoutBelowFloor);
 
     Ok(WithdrawalFinalized::snapshot(
         request,

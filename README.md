@@ -206,13 +206,13 @@ or a Token-2022 mint carrying at most the two metadata extensions
 and `set_fulfillment_window` (zero disables expiry, else at most 90 days)
 configure it. Attaching it on the vault is what makes it live.
 
-Holders use `request_withdrawal(request_id, shares, min_assets_out, finalizer)`:
+Holders use `request_withdrawal(request_id, shares, finalizer)`:
 their shares move to the queue's escrow and a request account is created at
 `["withdrawal_request", queue, owner, request_id]`, stamped with the cooldown and
 window in force at that moment. It requires the vault's gate to point at the
 queue, a nonzero amount (`ZeroShares`, 6007), and a recipient that holds the deposit mint
 and belongs to neither the queue nor the vault (`InvalidRecipient`, 6008).
-A request's floor, recipient and finalizer are fixed once it is made; to change
+A request's recipient and finalizer are fixed once it is made; to change
 them the owner cancels and requests again.
 
 `finalize_withdrawal(expected_sequence)` pays a request once its cooldown has
@@ -221,12 +221,11 @@ run (`CooldownNotElapsed`, 6012, before then) and while its window is open
 and the owner always can
 (`FinalizerNotAllowed`, 6013, otherwise): the caller picks the moment, never the
 amount or the destination. The queue redeems the escrowed shares by CPI into
-`redeem_checked` as the vault's queue authority, so `VaultPaused`,
-`NotEnoughLiquidity` and `SlippageExceeded` surface as the vault's own codes and
+`redeem` as the vault's queue authority, so `VaultPaused` and
+`NotEnoughLiquidity` surface as the vault's own codes and
 leave the request pending and untouched. The payout is the asset escrow's
-balance delta, forwarded to the request's recipient, whose increase must reach
-`min_assets_out` (`PayoutBelowFloor`, 6014); the request then closes with its
-rent to the owner.
+balance delta, forwarded to the request's recipient, at the shares' value at
+that moment; the request then closes with its rent to the owner.
 
 `cancel_withdrawal(expected_sequence)` returns a pending request's shares to any
 share account whose authority is the owner and closes the request with its rent
@@ -240,7 +239,7 @@ and `StaleRequestSequence`, 6011, otherwise).
 vault's `detach_withdrawal_queue` by CPI as its PDA, the only place that
 signature is ever produced, and the admin signs too. Its one precondition is
 liquidity: the vault's reserve must cover every pending request at today's
-price (`ReleaseUnderfunded`, 6015). Pending requests survive the release and
+price (`ReleaseUnderfunded`, 6014). Pending requests survive the release and
 finalize or cancel afterwards, since neither depends on the gate, while the
 gate stops new ones; the queue account persists, and `attach_withdrawal_queue`
 re-enables it with its sequence intact.
@@ -248,17 +247,17 @@ re-enables it with its sequence intact.
 Three more instructions round out the set. `admin_cancel_withdrawal` lets the
 admin return any pending request's shares to its owner, into a share account
 the owner controls (created by the admin in the same transaction if need be),
-but only once the vault is released (`QueueStillAttached`, 6016): the tool for
+but only once the vault is released (`QueueStillAttached`, 6015): the tool for
 clearing abandoned escrow, which would otherwise block `close_vault`, and never
 a way to touch a live queue. `expedite_request` lets the admin or operator
-(`NotVaultAdminOrOperator`, 6017) move one not-yet-eligible request's
-`eligible_at` to now (`RequestAlreadyEligible`, 6018, otherwise);
+(`NotVaultAdminOrOperator`, 6016) move one not-yet-eligible request's
+`eligible_at` to now (`RequestAlreadyEligible`, 6017, otherwise);
 `scheduled_eligible_at` and `expires_at` never move, so the owner's window only
 ever widens. `expedite_requests` and `finalize_withdrawals` are the batch
 forms: the requests come as trailing accounts, one per request for expedite
 and three (request, owner, recipient) for finalize, in strictly ascending key
-order, with a parallel list of expected sequences (`EmptyBatch` 6020,
-`BatchLengthMismatch` 6021, `RequestsNotSorted` 6022, `BatchTooLarge` 6023).
+order, with a parallel list of expected sequences (`EmptyBatch` 6018,
+`BatchLengthMismatch` 6019, `RequestsNotSorted` 6020, `BatchTooLarge` 6021).
 A batch is all or nothing, and each request is announced in the log before it
 is touched, so a failure names it. The bounds are 20 expedites and 5 finalizes
 per instruction (`MAX_EXPEDITE_BATCH`, `MAX_FINALIZE_BATCH`), and it is heap

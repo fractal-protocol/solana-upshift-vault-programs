@@ -67,7 +67,7 @@ fn open_requests(ctx: &mut VaultCtx, n: u64, each: u64) -> Vec<Pubkey> {
     let user = ctx.user.pubkey();
     (1..=n)
         .map(|id| {
-            ctx.request_withdrawal(id, each, 0).expect("request");
+            ctx.request_withdrawal(id, each).expect("request");
             ctx.request_pda(&user, id)
         })
         .collect()
@@ -101,8 +101,8 @@ fn admin_and_operator_expedite_and_the_request_finalizes_at_once() {
     let user = ctx.user.pubkey();
     let shares = ctx.token_account_amount(&ctx.user_share_ata);
     ctx.set_fulfillment_window(7 * DAY).expect("window");
-    ctx.request_withdrawal(1, shares / 4, 0).expect("first");
-    ctx.request_withdrawal(2, shares / 4, 0).expect("second");
+    ctx.request_withdrawal(1, shares / 4).expect("first");
+    ctx.request_withdrawal(2, shares / 4).expect("second");
     let before = ctx.request_state_data(&user, 1);
     ctx.warp_forward_seconds(3600);
     let now = ctx.now();
@@ -146,7 +146,7 @@ fn a_later_window_change_leaves_an_expedited_deadline_alone() {
     let user = ctx.user.pubkey();
     let shares = ctx.token_account_amount(&ctx.user_share_ata);
     ctx.set_fulfillment_window(2 * DAY).expect("window");
-    ctx.request_withdrawal(1, shares / 2, 0).expect("request");
+    ctx.request_withdrawal(1, shares / 2).expect("request");
     let expires_at = ctx.request_state_data(&user, 1).expires_at;
     ctx.expedite_request(&user, 1, 1).expect("expedite");
     ctx.set_fulfillment_window(30 * DAY).expect("longer window");
@@ -163,8 +163,8 @@ fn every_other_case_is_refused_and_changes_nothing() {
     let shares = ctx.token_account_amount(&ctx.user_share_ata);
     let quarter = shares / 4;
     ctx.set_fulfillment_window(DAY).expect("window");
-    ctx.request_withdrawal(1, quarter, 0).expect("fresh");
-    ctx.request_withdrawal(2, quarter, 0).expect("to expire");
+    ctx.request_withdrawal(1, quarter).expect("fresh");
+    ctx.request_withdrawal(2, quarter).expect("to expire");
     let fresh = ctx.request_pda(&user, 1);
 
     let stranger = ctx.new_funded_keypair(1_000_000_000);
@@ -173,7 +173,7 @@ fn every_other_case_is_refused_and_changes_nothing() {
         .expedite_request_as(&stranger, &user, 1, 1)
         .expect_err("neither admin nor operator");
     assert_queue_err(&err, ErrorCode::NotVaultAdminOrOperator);
-    assert_anchor_framework_err(&err, 6017);
+    assert_anchor_framework_err(&err, 6016);
     let err = ctx.expedite_request(&user, 1, 9).expect_err("stale stamp");
     assert_queue_err(&err, ErrorCode::StaleRequestSequence);
     assert_eq!(request_bytes(&ctx, &fresh), bytes);
@@ -185,7 +185,7 @@ fn every_other_case_is_refused_and_changes_nothing() {
         .expedite_request(&user, 1, 1)
         .expect_err("already eligible");
     assert_queue_err(&err, ErrorCode::RequestAlreadyEligible);
-    assert_anchor_framework_err(&err, 6018);
+    assert_anchor_framework_err(&err, 6017);
     assert_eq!(
         request_bytes(&ctx, &fresh),
         bytes,
@@ -323,20 +323,20 @@ fn malformed_batches_are_refused() {
         .expedite_requests_as(&admin, &[], &[])
         .expect_err("empty");
     assert_queue_err(&err, ErrorCode::EmptyBatch);
-    assert_anchor_framework_err(&err, 6019);
+    assert_anchor_framework_err(&err, 6018);
 
     let err = ctx
         .expedite_requests_as(&admin, &requests, &sequences[..1])
         .expect_err("more accounts than sequences");
     assert_queue_err(&err, ErrorCode::BatchLengthMismatch);
-    assert_anchor_framework_err(&err, 6020);
+    assert_anchor_framework_err(&err, 6019);
 
     let reversed: Vec<Pubkey> = requests.iter().rev().copied().collect();
     let err = ctx
         .expedite_requests_as(&admin, &reversed, &seqs(&ctx, &reversed))
         .expect_err("descending");
     assert_queue_err(&err, ErrorCode::RequestsNotSorted);
-    assert_anchor_framework_err(&err, 6021);
+    assert_anchor_framework_err(&err, 6020);
 
     let doubled = [requests[0], requests[0]];
     let err = ctx
@@ -403,7 +403,7 @@ fn a_full_batch_goes_through_and_one_over_the_bound_is_refused() {
         .expedite_requests_as(&admin, &requests, &sequences)
         .expect_err("one over the bound");
     assert_queue_err(&err, ErrorCode::BatchTooLarge);
-    assert_anchor_framework_err(&err, 6022);
+    assert_anchor_framework_err(&err, 6021);
 
     let meta = ctx
         .expedite_requests_as(

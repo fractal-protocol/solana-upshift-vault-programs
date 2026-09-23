@@ -1880,7 +1880,6 @@ impl VaultCtx {
             recipient_token_account: recipient,
             finalizer: Pubkey::default(),
             shares,
-            min_assets_out: 0,
             request_id,
             sequence: 1,
             requested_at: now,
@@ -1888,7 +1887,7 @@ impl VaultCtx {
             eligible_at: now + 3600,
             expires_at: now + 30 * 24 * 3600,
             bump,
-            padding: [0; 8],
+            padding: [0; 9],
         };
         let mut data = WithdrawalRequest::DISCRIMINATOR.to_vec();
         request.serialize(&mut data).expect("serialize request");

@@ -70,20 +70,13 @@ fn vault_with_holders(extra: usize) -> (VaultCtx, Vec<Depositor>) {
 
 /// Opens one request of `shares` for `owner` with `id`, from their share ATA
 /// into their deposit ATA, and returns its group and sequence.
-fn open(
-    ctx: &mut VaultCtx,
-    owner: &Depositor,
-    id: u64,
-    shares: u64,
-    min: u64,
-) -> (RequestGroup, u64) {
+fn open(ctx: &mut VaultCtx, owner: &Depositor, id: u64, shares: u64) -> (RequestGroup, u64) {
     ctx.request_withdrawal_as(
         &owner.keypair,
         owner.share_ata,
         owner.deposit_ata,
         id,
         shares,
-        min,
         Pubkey::default(),
     )
     .expect("request");
@@ -115,12 +108,12 @@ fn a_batch_pays_every_request_and_closes_each_with_rent_to_its_owner() {
     let mut groups = Vec::new();
     for (i, d) in others.iter().enumerate() {
         let shares = ctx.token_account_amount(&d.share_ata) / 2;
-        let (g, _) = open(&mut ctx, d, i as u64 + 1, shares, 0);
+        let (g, _) = open(&mut ctx, d, i as u64 + 1, shares);
         ids.push((d.keypair.pubkey(), i as u64 + 1));
         groups.push(g);
     }
     let user_shares = ctx.token_account_amount(&ctx.user_share_ata) / 2;
-    ctx.request_withdrawal(7, user_shares, 0).expect("user");
+    ctx.request_withdrawal(7, user_shares).expect("user");
     ids.push((ctx.user.pubkey(), 7));
     groups.push(ctx.request_group(&ctx.user.pubkey(), 7));
     let groups = sorted_by_request(groups);
@@ -179,26 +172,27 @@ fn a_shortfall_on_one_request_reverts_the_whole_batch() {
     let (mut ctx, others) = vault_with_holders(1);
     let d = &others[0];
     let shares = ctx.token_account_amount(&d.share_ata) / 2;
-    let (g1, _) = open(&mut ctx, d, 1, shares, 0);
-    let (_, quote) = ctx.quote_redeem(shares);
-    let (g2, _) = open(&mut ctx, d, 2, shares, quote * 2);
+    let (g1, _) = open(&mut ctx, d, 1, shares);
+    let (g2, _) = open(&mut ctx, d, 2, shares);
     let ids = [(d.keypair.pubkey(), 1), (d.keypair.pubkey(), 2)];
     let groups = sorted_by_request(vec![g1, g2]);
     let sequences = sequences_of(&ctx, &groups, &ids);
     ctx.warp_forward_seconds(DAY as i64);
+    // Leave the reserve able to pay one request and a half: the second in the
+    // batch runs out.
+    let (gross, _) = ctx.quote_redeem(shares);
+    let local = ctx.vault_state_data().local_aum;
+    ctx.operator_withdraw(local - gross * 3 / 2)
+        .expect("deploy");
     let keeper = ctx.new_funded_keypair(1_000_000_000);
-    let unreachable = groups
-        .iter()
-        .find(|g| g.request == ctx.request_pda(&d.keypair.pubkey(), 2))
-        .unwrap()
-        .request;
+    let unpaid = groups[1].request;
     let paid_before = ctx.token_account_amount(&d.deposit_ata);
 
     let err = ctx
         .finalize_withdrawals_as(&keeper, &groups, &sequences)
-        .expect_err("one floor cannot be met");
-    assert_anchor_err(&err, VaultError::SlippageExceeded);
-    assert_blamed(&err, &unreachable);
+        .expect_err("the second request runs out of liquidity");
+    assert_anchor_err(&err, VaultError::NotEnoughLiquidity);
+    assert_blamed(&err, &unpaid);
     assert_eq!(ctx.token_account_amount(&d.deposit_ata), paid_before);
     for g in &groups {
         assert!(ctx.svm.get_account(&g.request).is_some(), "still pending");
@@ -213,14 +207,13 @@ fn a_restricted_request_keeps_the_keeper_out_of_its_batch() {
     let (mut ctx, others) = vault_with_holders(1);
     let d = &others[0];
     let shares = ctx.token_account_amount(&d.share_ata) / 2;
-    let (g1, _) = open(&mut ctx, d, 1, shares, 0);
+    let (g1, _) = open(&mut ctx, d, 1, shares);
     ctx.request_withdrawal_as(
         &d.keypair,
         d.share_ata,
         d.deposit_ata,
         2,
         shares,
-        0,
         d.keypair.pubkey(),
     )
     .expect("owner-only");
@@ -249,8 +242,8 @@ fn malformed_batches_and_substituted_groups_are_refused() {
     let (mut ctx, others) = vault_with_holders(2);
     let (a, b) = (&others[0], &others[1]);
     let shares = ctx.token_account_amount(&a.share_ata) / 2;
-    let (ga, _) = open(&mut ctx, a, 1, shares, 0);
-    let (gb, _) = open(&mut ctx, b, 1, shares, 0);
+    let (ga, _) = open(&mut ctx, a, 1, shares);
+    let (gb, _) = open(&mut ctx, b, 1, shares);
     let ids = [(a.keypair.pubkey(), 1), (b.keypair.pubkey(), 1)];
     let groups = sorted_by_request(vec![ga, gb]);
     let sequences = sequences_of(&ctx, &groups, &ids);
@@ -345,7 +338,7 @@ fn the_bound_fits_a_legacy_transaction_and_the_cu_ceiling() {
     let mut groups = Vec::new();
     for (i, d) in others.iter().enumerate() {
         let shares = ctx.token_account_amount(&d.share_ata) / 2;
-        let (g, _) = open(&mut ctx, d, i as u64 + 1, shares, 0);
+        let (g, _) = open(&mut ctx, d, i as u64 + 1, shares);
         ids.push((d.keypair.pubkey(), i as u64 + 1));
         groups.push(g);
     }
@@ -393,7 +386,7 @@ fn a_full_batch_of_one_owner_goes_through_and_one_over_the_bound_is_refused() {
     let mut ids = Vec::new();
     let mut groups = Vec::new();
     for id in 1..=n {
-        ctx.request_withdrawal(id, shares / (2 * n), 0)
+        ctx.request_withdrawal(id, shares / (2 * n))
             .expect("request");
         ids.push((user, id));
         groups.push(ctx.request_group(&user, id));
