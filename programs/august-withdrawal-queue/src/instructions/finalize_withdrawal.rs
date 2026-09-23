@@ -165,7 +165,7 @@ pub struct FinalizeWithdrawal<'info> {
     pub finalizer: Signer<'info>,
 
     /// Closed on success with its rent to `owner`. Seeds come from its own
-    /// stored fields, as in `UpdateRequest`.
+    /// stored fields, so no argument can point it elsewhere.
     #[account(
         mut,
         close = owner,

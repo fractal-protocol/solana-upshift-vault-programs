@@ -327,7 +327,7 @@ fn early_is_refused_until_the_exact_eligibility_instant() {
 
     let err = ctx.finalize_withdrawal(1, 1).expect_err("one second early");
     assert_queue_err(&err, ErrorCode::CooldownNotElapsed);
-    assert_anchor_framework_err(&err, 6013);
+    assert_anchor_framework_err(&err, 6012);
     assert_eq!(untouched(&ctx, &user, 1), before, "nothing moved");
 
     ctx.warp_forward_seconds(1);
@@ -384,10 +384,10 @@ fn a_stale_sequence_is_refused() {
     assert_eq!(untouched(&ctx, &user, 1), before);
 }
 
-/// Once closed, the request account is gone: a second finalize, or an update,
-/// finds nothing to act on, and the counters do not move again.
+/// Once closed, the request account is gone: a second finalize finds nothing
+/// to act on, and the counters do not move again.
 #[test]
-fn a_finalized_request_cannot_be_finalized_or_updated_again() {
+fn a_finalized_request_cannot_be_finalized_again() {
     let (mut ctx, _) = mature_request(0);
     let signer = ctx.user.insecure_clone();
     let user = signer.pubkey();
@@ -400,10 +400,6 @@ fn a_finalized_request_cannot_be_finalized_or_updated_again() {
     let err = ctx
         .send_finalize_withdrawal(&signer, again, 1)
         .expect_err("second");
-    assert_anchor_framework_err(&err, ACCOUNT_NOT_INITIALIZED);
-    let err = ctx
-        .update_request(1, 1, Some(5), None, None)
-        .expect_err("update a closed request");
     assert_anchor_framework_err(&err, ACCOUNT_NOT_INITIALIZED);
     assert_eq!(untouched(&ctx, &user, 1), after);
 
@@ -443,7 +439,7 @@ fn finalization_permission_follows_the_table() {
                 .finalize_withdrawal_as(caller, &user.pubkey(), *id, *id)
                 .unwrap_err();
             assert_queue_err(&err, ErrorCode::FinalizerNotAllowed);
-            assert_anchor_framework_err(&err, 6014);
+            assert_anchor_framework_err(&err, 6013);
         }
         assert_eq!(untouched(&ctx, &user.pubkey(), *id), before, "row {id}");
         ctx.finalize_withdrawal_as(permitted, &user.pubkey(), *id, *id)
@@ -472,28 +468,33 @@ fn a_liquidity_shortfall_reverts_and_becomes_retryable_after_an_operator_deposit
     ctx.finalize_withdrawal(1, 1).expect("retry");
 }
 
+/// The floor is fixed at request time. A payout that falls below it reverts
+/// with nothing moved, and the request stays payable once the price recovers.
 #[test]
-fn a_floor_the_vault_cannot_meet_reverts_until_the_owner_lowers_it() {
-    let (mut ctx, half) = mature_request(0);
+fn a_floor_the_vault_cannot_meet_reverts_until_the_payout_recovers() {
+    let mut ctx = VaultCtx::fresh();
+    ctx.mint_to_user(DEPOSIT_AMOUNT);
+    ctx.deposit(DEPOSIT_AMOUNT).expect("deposit");
+    ctx.open_queue(DAY);
     let user = ctx.user.pubkey();
+    let half = ctx.token_account_amount(&ctx.user_share_ata) / 2;
     let (_, quote) = ctx.quote_redeem(half);
-    ctx.update_request(1, 1, Some(quote), None, None)
+    ctx.request_withdrawal(1, half, quote)
         .expect("floor at today's quote");
+    ctx.warp_forward_seconds(DAY as i64);
     ctx.set_withdrawal_fee(ONE_PERCENT).expect("fee rises");
-    let (_, lower_quote) = ctx.quote_redeem(half);
     let before = untouched(&ctx, &user, 1);
 
     let err = ctx.finalize_withdrawal(1, 1).expect_err("below the floor");
     assert_anchor_err(&err, VaultError::SlippageExceeded);
     assert_eq!(untouched(&ctx, &user, 1), before);
 
-    ctx.update_request(1, 1, Some(lower_quote), None, None)
-        .expect("owner lowers the floor");
+    ctx.set_withdrawal_fee(0).expect("fee back down");
     let paid_before = ctx.token_account_amount(&ctx.user_deposit_ata);
     ctx.finalize_withdrawal(1, 1).expect("now it clears");
     assert_eq!(
         ctx.token_account_amount(&ctx.user_deposit_ata) - paid_before,
-        lower_quote
+        quote
     );
 }
 
@@ -519,16 +520,12 @@ fn a_paused_vault_refuses_finalization_and_the_request_survives() {
 
 /// Decision 5, at finalize. Classic SPL lets the owner reassign their ATA to
 /// the queue PDA after requesting; paying it would strand the payout, so it is
-/// re-checked. The owner recovers by pointing the request elsewhere.
+/// re-checked. The request is fixed, so the owner's way out is to cancel.
 #[test]
 fn a_recipient_reassigned_to_the_queue_after_the_request_is_refused() {
     let (mut ctx, _) = mature_request(0);
     let user = ctx.user.insecure_clone();
-    let (ata, queue_pda, deposit_mint) = (
-        ctx.user_deposit_ata,
-        ctx.withdrawal_queue_pda(),
-        ctx.deposit_mint,
-    );
+    let (ata, queue_pda) = (ctx.user_deposit_ata, ctx.withdrawal_queue_pda());
     ctx.set_token_account_authority_as(&user, &ata, &queue_pda);
     let before = untouched(&ctx, &user.pubkey(), 1);
 
@@ -537,12 +534,6 @@ fn a_recipient_reassigned_to_the_queue_after_the_request_is_refused() {
         .expect_err("queue-owned recipient");
     assert_queue_err(&err, ErrorCode::InvalidRecipient);
     assert_eq!(untouched(&ctx, &user.pubkey(), 1), before);
-
-    let fresh = ctx.create_token_account_for(&user.pubkey(), &deposit_mint);
-    ctx.update_request(1, 1, None, Some(fresh), None)
-        .expect("re-point the request");
-    ctx.finalize_withdrawal(1, 1).expect("paid elsewhere");
-    assert!(ctx.token_account_amount(&fresh) > 0);
     assert_eq!(
         ctx.token_account_amount(&ata),
         0,

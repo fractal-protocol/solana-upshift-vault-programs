@@ -70,37 +70,6 @@ impl WithdrawalRequested {
     }
 }
 
-/// The owner changed a pending request. Carries the three updatable fields as
-/// they now stand, whether or not each changed.
-#[event]
-pub struct WithdrawalRequestUpdated {
-    pub vault: Pubkey,
-    pub queue: Pubkey,
-    pub request: Pubkey,
-    pub request_id: u64,
-    pub owner: Pubkey,
-    pub sequence: u64,
-    pub min_assets_out: u64,
-    pub recipient_token_account: Pubkey,
-    pub finalizer: Pubkey,
-}
-
-impl WithdrawalRequestUpdated {
-    pub fn snapshot(request: &WithdrawalRequest, vault: Pubkey, key: Pubkey) -> Self {
-        Self {
-            vault,
-            queue: request.queue,
-            request: key,
-            request_id: request.request_id,
-            owner: request.owner,
-            sequence: request.sequence,
-            min_assets_out: request.min_assets_out,
-            recipient_token_account: request.recipient_token_account,
-            finalizer: request.finalizer,
-        }
-    }
-}
-
 /// A request was paid and closed. `assets` is what left the escrow for the
 /// recipient: the vault's net payout, never a balance that already sat there.
 #[event]

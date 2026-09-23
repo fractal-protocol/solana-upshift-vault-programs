@@ -31,7 +31,7 @@ pub struct FinalizeWithdrawal {
     /// Whoever chooses the moment; `WithdrawalRequest::may_finalize` decides.
     pub finalizer: solana_pubkey::Pubkey,
     /// Closed on success with its rent to `owner`. Seeds come from its own
-    /// stored fields, as in `UpdateRequest`.
+    /// stored fields, so no argument can point it elsewhere.
     pub request: solana_pubkey::Pubkey,
     /// need not sign.
     pub owner: solana_pubkey::Pubkey,
@@ -246,7 +246,7 @@ impl FinalizeWithdrawalBuilder {
         self
     }
     /// Closed on success with its rent to `owner`. Seeds come from its own
-    /// stored fields, as in `UpdateRequest`.
+    /// stored fields, so no argument can point it elsewhere.
     #[inline(always)]
     pub fn request(&mut self, request: solana_pubkey::Pubkey) -> &mut Self {
         self.request = Some(request);
@@ -358,7 +358,7 @@ pub struct FinalizeWithdrawalCpiAccounts<'a, 'b> {
     /// Whoever chooses the moment; `WithdrawalRequest::may_finalize` decides.
     pub finalizer: &'b solana_account_info::AccountInfo<'a>,
     /// Closed on success with its rent to `owner`. Seeds come from its own
-    /// stored fields, as in `UpdateRequest`.
+    /// stored fields, so no argument can point it elsewhere.
     pub request: &'b solana_account_info::AccountInfo<'a>,
     /// need not sign.
     pub owner: &'b solana_account_info::AccountInfo<'a>,
@@ -393,7 +393,7 @@ pub struct FinalizeWithdrawalCpi<'a, 'b> {
     /// Whoever chooses the moment; `WithdrawalRequest::may_finalize` decides.
     pub finalizer: &'b solana_account_info::AccountInfo<'a>,
     /// Closed on success with its rent to `owner`. Seeds come from its own
-    /// stored fields, as in `UpdateRequest`.
+    /// stored fields, so no argument can point it elsewhere.
     pub request: &'b solana_account_info::AccountInfo<'a>,
     /// need not sign.
     pub owner: &'b solana_account_info::AccountInfo<'a>,
@@ -667,7 +667,7 @@ impl<'a, 'b> FinalizeWithdrawalCpiBuilder<'a, 'b> {
         self
     }
     /// Closed on success with its rent to `owner`. Seeds come from its own
-    /// stored fields, as in `UpdateRequest`.
+    /// stored fields, so no argument can point it elsewhere.
     #[inline(always)]
     pub fn request(&mut self, request: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.request = Some(request);

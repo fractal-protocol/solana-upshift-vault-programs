@@ -7,7 +7,7 @@ This workspace builds two programs:
 | Crate | Artifact | Status |
 |---|---|---|
 | `programs/august-vault` | `august_vault.so` | Live on mainnet and devnet. Everything below describes this program. |
-| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | `initialize_queue`, two config setters, `request_withdrawal`, `update_request` and `finalize_withdrawal` over the `WithdrawalQueue` / `WithdrawalRequest` state accounts. Cancellation and `release_vault` are not implemented. **Not deployed anywhere, and must not be until `release_vault` lands.** |
+| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | `initialize_queue`, two config setters, `request_withdrawal` and `finalize_withdrawal` over the `WithdrawalQueue` / `WithdrawalRequest` state accounts. Cancellation and `release_vault` are not implemented. **Not deployed anywhere, and must not be until `release_vault` lands.** |
 
 The queue will let a vault route redemptions through a request-and-cooldown flow
 instead of paying out instantly. The vault side of that is already in place: a
@@ -212,24 +212,20 @@ their shares move to the queue's escrow and a request account is created at
 window in force at that moment. It requires the vault's gate to point at the
 queue, a nonzero amount (`ZeroShares`, 6007), and a recipient that holds the deposit mint
 and belongs to neither the queue nor the vault (`InvalidRecipient`, 6008).
-`update_request(expected_sequence, min?, finalizer?)` plus an optional new
-recipient account lets the owner (`NotRequestOwner`, 6009, otherwise) adjust
-those three fields while the request is pending and unexpired (`RequestExpired`,
-6010); the sequence stamp must match (`StaleRequestSequence`, 6011) so a delayed
-instruction cannot land on a recreated request, and a call that would change
-nothing is refused (`NothingToUpdate`, 6012).
+A request's floor, recipient and finalizer are fixed once it is made; to change
+them the owner cancels and requests again.
 
 `finalize_withdrawal(expected_sequence)` pays a request once its cooldown has
-run (`CooldownNotElapsed`, 6013, before then) and while its window is open
+run (`CooldownNotElapsed`, 6012, before then) and while its window is open
 (`RequestExpired` after). Anyone the request's `finalizer` permits may call it,
 and the owner always can
-(`FinalizerNotAllowed`, 6014, otherwise): the caller picks the moment, never the
+(`FinalizerNotAllowed`, 6013, otherwise): the caller picks the moment, never the
 amount or the destination. The queue redeems the escrowed shares by CPI into
 `redeem_checked` as the vault's queue authority, so `VaultPaused`,
 `NotEnoughLiquidity` and `SlippageExceeded` surface as the vault's own codes and
 leave the request pending and untouched. The payout is the asset escrow's
 balance delta, forwarded to the request's recipient, whose increase must reach
-`min_assets_out` (`PayoutBelowFloor`, 6015); the request then closes with its
+`min_assets_out` (`PayoutBelowFloor`, 6014); the request then closes with its
 rent to the owner. Cancellation and `release_vault` are not implemented yet.
 
 **Do not deploy the queue program, or attach a queue, on any cluster yet.** Once
