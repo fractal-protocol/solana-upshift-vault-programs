@@ -11,4 +11,3 @@ pub mod queue_admin;
 pub mod request_withdrawal;
 pub mod set_cooldown;
 pub mod set_fulfillment_window;
-pub mod update_request;

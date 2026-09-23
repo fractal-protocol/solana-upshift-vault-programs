@@ -19,21 +19,21 @@ pub struct WithdrawalRequest {
         serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
     )]
     pub queue: Pubkey,
-    /// Who requested, pays rent, may update or cancel, and may always finalize.
+    /// Who requested, pays rent, may cancel, and may always finalize.
     #[cfg_attr(
         feature = "serde",
         serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
     )]
     pub owner: Pubkey,
     /// Deposit-mint token account paid at finalization. Never an escrow or the
-    /// vault reserve, checked at request and update. Owner may update.
+    /// vault reserve, checked at request and again at finalize.
     #[cfg_attr(
         feature = "serde",
         serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
     )]
     pub recipient_token_account: Pubkey,
     /// Who may finalize besides the owner. Zero means anyone. Read it through
-    /// [`Self::may_finalize`]. Owner may update.
+    /// [`Self::may_finalize`].
     #[cfg_attr(
         feature = "serde",
         serde(with = "serde_with::As::<serde_with::DisplayFromStr>")
@@ -42,7 +42,7 @@ pub struct WithdrawalRequest {
     /// Shares held in the queue's escrow for this request.
     pub shares: u64,
     /// The owner's floor on net payout, same semantics as `redeem_checked`.
-    /// Owner may update.
+    /// Fixed at request time.
     pub min_assets_out: u64,
     /// Owner-chosen id, unique per owner while this account exists.
     pub request_id: u64,

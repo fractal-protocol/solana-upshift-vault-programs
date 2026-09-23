@@ -17,7 +17,7 @@
 //!
 //! This crate carries the program identity, the error ABI pin, the build wiring,
 //! the two state accounts (`state`), the admin check (`auth`), the queue's
-//! admin instructions, and the owner's request and update instructions.
+//! admin instructions, and the owner's request instruction.
 //! Finalization, cancellation and release arrive with their own changes.
 //!
 //! **Deployment blocker.** `initialize_queue` is what first makes a queue
@@ -36,7 +36,6 @@ pub mod state;
 use instructions::initialize_queue::*;
 use instructions::queue_admin::*;
 use instructions::request_withdrawal::*;
-use instructions::update_request::*;
 
 use anchor_lang::prelude::*;
 
@@ -105,30 +104,6 @@ pub mod august_withdrawal_queue {
             ctx,
             request_id,
             shares,
-            min_assets_out,
-            finalizer,
-        );
-    }
-
-    /// The owner changes a pending, unexpired request's floor, finalizer, or
-    /// recipient (passed as the optional `new_recipient` account). A field left
-    /// `None`, or a recipient left out, is unchanged; a call that would change
-    /// nothing is refused. `Some(Pubkey::default())` clears the finalizer.
-    ///
-    /// ### Parameters
-    /// - `expected_sequence` - The request's stamp, so a delayed call cannot land
-    ///   on a recreated request with the same id
-    /// - `min_assets_out` - New floor on the net payout, if changing
-    /// - `finalizer` - New request-level finalizer, if changing; zero clears it
-    pub fn update_request(
-        ctx: Context<UpdateRequest>,
-        expected_sequence: u64,
-        min_assets_out: Option<u64>,
-        finalizer: Option<Pubkey>,
-    ) -> Result<()> {
-        return instructions::update_request::handler(
-            ctx,
-            expected_sequence,
             min_assets_out,
             finalizer,
         );

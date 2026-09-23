@@ -7,13 +7,11 @@
 // governed by version 2.0 of the Apache License.
 
 //! `request_withdrawal` escrows shares and stamps a request with the cooldown
-//! and window in force; `update_request` lets the owner change floor, recipient
-//! and finalizer, nothing else. Neither writes the vault; `request_withdrawal`
-//! reads its gate.
+//! and window in force. It never writes the vault, only reads its gate.
 
 use august_vault::state::vault::VAULT_STATE_SEED;
 use august_withdrawal_queue::errors::{ErrorCode, ANCHOR_USER_ERROR_OFFSET};
-use august_withdrawal_queue::events::{WithdrawalRequestUpdated, WithdrawalRequested};
+use august_withdrawal_queue::events::WithdrawalRequested;
 use august_withdrawal_queue::state::{WithdrawalRequest, WITHDRAWAL_REQUEST_SEED};
 use integration_tests::harness::{
     assert_anchor_framework_err, events_of, VaultCtx, DEPOSIT_DECIMALS, VAULT_VERSION,
@@ -75,28 +73,6 @@ fn assert_full_request_event(
     assert_eq!(e.recipient_token_account, r.recipient_token_account);
     assert_eq!(e.finalizer, r.finalizer);
     assert_eq!((e.eligible_at, e.expires_at), (r.eligible_at, r.expires_at));
-}
-
-fn assert_full_update_event(
-    meta: &litesvm::types::TransactionMetadata,
-    ctx: &VaultCtx,
-    owner: &Pubkey,
-    id: u64,
-) {
-    let r = ctx.request_state_data(owner, id);
-    let events = events_of::<WithdrawalRequestUpdated>(meta);
-    assert_eq!(events.len(), 1, "exactly one WithdrawalRequestUpdated");
-    let e = &events[0];
-    assert_eq!(e.vault, ctx.vault_state);
-    assert_eq!(e.queue, ctx.withdrawal_queue_pda());
-    assert_eq!(e.request, ctx.request_pda(owner, id));
-    assert_eq!(
-        (e.request_id, e.owner, e.sequence),
-        (id, *owner, r.sequence)
-    );
-    assert_eq!(e.min_assets_out, r.min_assets_out);
-    assert_eq!(e.recipient_token_account, r.recipient_token_account);
-    assert_eq!(e.finalizer, r.finalizer);
 }
 
 // ---- request_withdrawal ----
@@ -180,10 +156,6 @@ fn a_token_2022_holder_escrows_shares_too() {
     assert_eq!(escrow_shares_balance(&ctx), shares / 2);
     assert_eq!(ctx.request_state_data(&user, 1).shares, shares / 2);
     assert_full_request_event(&meta, &ctx, &user, 1);
-
-    ctx.update_request(1, 1, Some(9), None, None)
-        .expect("update under Token-2022");
-    assert_eq!(ctx.request_state_data(&user, 1).min_assets_out, 9);
 }
 
 /// The request-level finalizer is the owner's time control (decision 14); it
@@ -449,21 +421,15 @@ fn a_queue_the_vault_no_longer_points_at_refuses_requests() {
     assert_queue_err(&err, ErrorCode::QueueNotActiveOnVault);
 }
 
-/// Decision 7: pause guards asset movement on the vault. Requests and updates
-/// move only the owner's own shares and keep working.
+/// Decision 7: pause guards asset movement on the vault. A request moves only
+/// the owner's own shares and keeps working.
 #[test]
 fn pause_does_not_block_the_owner() {
     let (mut ctx, shares) = open_vault_with_holder(DAY);
     ctx.pause().expect("pause");
     ctx.request_withdrawal(1, shares / 2, 0)
         .expect("request while paused");
-    ctx.update_request(1, 1, Some(5), None, None)
-        .expect("update while paused");
-    ctx.unpause().expect("unpause");
-    assert_eq!(
-        ctx.request_state_data(&ctx.user.pubkey(), 1).min_assets_out,
-        5
-    );
+    assert_eq!(escrow_shares_balance(&ctx), shares / 2);
 }
 
 /// Design decision 5: a deposit-mint account, and neither program's.
@@ -549,161 +515,4 @@ fn counters_track_the_escrow_across_many_requests() {
             i as u64 + 1
         );
     }
-}
-
-// ---- update_request ----
-
-#[test]
-fn the_owner_updates_only_what_they_ask_for() {
-    let (mut ctx, shares) = open_vault_with_holder(DAY);
-    let user = ctx.user.pubkey();
-    ctx.request_withdrawal(1, shares / 2, 1_000)
-        .expect("request");
-    let before = ctx.request_state_data(&user, 1);
-    let ops = Pubkey::new_unique();
-    let elsewhere = ctx.fee_recipient_deposit_ata;
-
-    let meta = ctx
-        .update_request(1, 1, Some(2_000), None, None)
-        .expect("floor only");
-    let r = ctx.request_state_data(&user, 1);
-    assert_eq!(r.min_assets_out, 2_000);
-    assert_eq!(r.recipient_token_account, before.recipient_token_account);
-    assert_eq!(r.finalizer, before.finalizer);
-    assert_eq!(
-        (r.shares, r.eligible_at, r.expires_at, r.sequence),
-        (
-            before.shares,
-            before.eligible_at,
-            before.expires_at,
-            before.sequence
-        )
-    );
-    assert_full_update_event(&meta, &ctx, &user, 1);
-
-    let meta = ctx
-        .update_request(1, 1, None, Some(elsewhere), Some(ops))
-        .expect("recipient and finalizer");
-    let r = ctx.request_state_data(&user, 1);
-    assert_eq!(r.recipient_token_account, elsewhere);
-    assert_eq!(r.allowed_finalizer(), Some(ops));
-    assert_eq!(r.min_assets_out, 2_000, "untouched by the second update");
-    assert_full_update_event(&meta, &ctx, &user, 1);
-
-    ctx.update_request(1, 1, None, None, Some(Pubkey::default()))
-        .expect("zero lifts the finalizer restriction");
-    assert_eq!(ctx.request_state_data(&user, 1).allowed_finalizer(), None);
-}
-
-/// A call that changes nothing is refused rather than confirmed. The generated
-/// client sends an omitted account as the program id, so a client that meant to
-/// change the recipient and dropped the account would otherwise read a success.
-#[test]
-fn an_update_that_changes_nothing_is_refused() {
-    let (mut ctx, shares) = open_vault_with_holder(DAY);
-    let user = ctx.user.pubkey();
-    ctx.request_withdrawal(1, shares / 2, 1_000)
-        .expect("request");
-    let before = ctx
-        .svm
-        .get_account(&ctx.request_pda(&user, 1))
-        .expect("request")
-        .data;
-
-    let err = ctx
-        .update_request(1, 1, None, None, None)
-        .expect_err("nothing to update");
-    assert_queue_err(&err, ErrorCode::NothingToUpdate);
-    assert_anchor_framework_err(&err, 6012);
-    assert_eq!(
-        ctx.svm
-            .get_account(&ctx.request_pda(&user, 1))
-            .expect("request")
-            .data,
-        before
-    );
-
-    // Re-stating the current value is a change in intent, and allowed.
-    ctx.update_request(1, 1, Some(1_000), None, None)
-        .expect("same floor, stated");
-}
-
-/// Decision 11: an id may be reused once its account closes, so every
-/// instruction targeting a request quotes the stamp it was signed against.
-#[test]
-fn an_update_needs_the_requests_current_sequence() {
-    let (mut ctx, shares) = open_vault_with_holder(DAY);
-    ctx.request_withdrawal(1, shares / 2, 0).expect("request");
-    let err = ctx
-        .update_request(1, 2, Some(5), None, None)
-        .expect_err("wrong sequence");
-    assert_queue_err(&err, ErrorCode::StaleRequestSequence);
-    assert_anchor_framework_err(&err, 6011);
-    assert_eq!(
-        ctx.request_state_data(&ctx.user.pubkey(), 1).min_assets_out,
-        0
-    );
-}
-
-#[test]
-fn only_the_owner_updates_a_request() {
-    let (mut ctx, shares) = open_vault_with_holder(DAY);
-    let user = ctx.user.pubkey();
-    ctx.request_withdrawal(1, shares / 2, 0).expect("request");
-    let impostor = ctx.new_funded_keypair(1_000_000_000);
-
-    let err = ctx
-        .update_request_as(&impostor, &user, 1, 1, Some(5), None, None)
-        .expect_err("not the owner");
-    assert_queue_err(&err, ErrorCode::NotRequestOwner);
-    assert_anchor_framework_err(&err, 6009);
-}
-
-/// After the fulfillment window an update is refused: the request can only be
-/// cancelled. The deadline instant itself counts as expired.
-#[test]
-fn an_expired_request_cannot_be_updated() {
-    let (mut ctx, shares) = open_vault_with_holder(DAY);
-    ctx.set_fulfillment_window(DAY).expect("window");
-    ctx.request_withdrawal(1, shares / 2, 0).expect("request");
-    let r = ctx.request_state_data(&ctx.user.pubkey(), 1);
-
-    ctx.warp_forward_seconds(r.expires_at - ctx.now() - 1);
-    ctx.update_request(1, 1, Some(5), None, None)
-        .expect("one second before the deadline");
-
-    ctx.warp_forward_seconds(1);
-    let err = ctx
-        .update_request(1, 1, Some(6), None, None)
-        .expect_err("at the deadline");
-    assert_queue_err(&err, ErrorCode::RequestExpired);
-    assert_anchor_framework_err(&err, 6010);
-    assert_eq!(
-        ctx.request_state_data(&ctx.user.pubkey(), 1).min_assets_out,
-        5
-    );
-}
-
-#[test]
-fn a_new_recipient_follows_the_same_rule() {
-    let (mut ctx, shares) = open_vault_with_holder(DAY);
-    ctx.request_withdrawal(1, shares / 2, 0).expect("request");
-    let (queue_pda, deposit_mint) = (ctx.withdrawal_queue_pda(), ctx.deposit_mint);
-    let queue_owned = ctx.create_token_account_for(&queue_pda, &deposit_mint);
-    for bad in [
-        ctx.queue_escrow(&ctx.deposit_mint),
-        queue_owned,
-        ctx.vault_token_pda,
-        ctx.user_share_ata,
-    ] {
-        let err = ctx
-            .update_request(1, 1, None, Some(bad), None)
-            .expect_err("bad recipient");
-        assert_queue_err(&err, ErrorCode::InvalidRecipient);
-    }
-    assert_eq!(
-        ctx.request_state_data(&ctx.user.pubkey(), 1)
-            .recipient_token_account,
-        ctx.user_deposit_ata
-    );
 }

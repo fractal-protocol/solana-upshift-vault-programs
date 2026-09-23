@@ -31,18 +31,18 @@ pub const WITHDRAWAL_REQUEST_SEED: &[u8] = b"withdrawal_request";
 pub struct WithdrawalRequest {
     /// The queue holding this request's shares.
     pub queue: Pubkey,
-    /// Who requested, pays rent, may update or cancel, and may always finalize.
+    /// Who requested, pays rent, may cancel, and may always finalize.
     pub owner: Pubkey,
     /// Deposit-mint token account paid at finalization. Never an escrow or the
-    /// vault reserve, checked at request and update. Owner may update.
+    /// vault reserve, checked at request and again at finalize.
     pub recipient_token_account: Pubkey,
     /// Who may finalize besides the owner. Zero means anyone. Read it through
-    /// [`Self::may_finalize`]. Owner may update.
+    /// [`Self::may_finalize`].
     pub finalizer: Pubkey,
     /// Shares held in the queue's escrow for this request.
     pub shares: u64,
     /// The owner's floor on net payout, same semantics as `redeem_checked`.
-    /// Owner may update.
+    /// Fixed at request time.
     pub min_assets_out: u64,
     /// Owner-chosen id, unique per owner while this account exists.
     pub request_id: u64,
