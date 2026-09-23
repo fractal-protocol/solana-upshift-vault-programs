@@ -79,7 +79,7 @@ fn the_admin_releases_an_empty_queue_and_instant_redemption_returns() {
 
     ctx.redeem(shares / 4).expect("instant redemption is back");
     let err = ctx
-        .request_withdrawal(1, shares / 4, 0)
+        .request_withdrawal(1, shares / 4)
         .expect_err("no new requests once released");
     assert_queue_err(&err, ErrorCode::QueueNotActiveOnVault);
     let q = ctx.queue_state_data();
@@ -95,8 +95,8 @@ fn requests_pending_across_a_release_finalize_or_cancel_and_the_vault_reattaches
     let user = ctx.user.pubkey();
     let shares = ctx.token_account_amount(&ctx.user_share_ata);
     let quarter = shares / 4;
-    ctx.request_withdrawal(1, quarter, 0).expect("first");
-    ctx.request_withdrawal(2, quarter, 0).expect("second");
+    ctx.request_withdrawal(1, quarter).expect("first");
+    ctx.request_withdrawal(2, quarter).expect("second");
 
     let meta = ctx.release_vault().expect("release with two pending");
     assert_released(&meta, &ctx, (2, 2 * quarter));
@@ -118,8 +118,7 @@ fn requests_pending_across_a_release_finalize_or_cancel_and_the_vault_reattaches
     let pda = ctx.withdrawal_queue_pda();
     ctx.attach_withdrawal_queue(pda).expect("re-attach");
     assert!(ctx.redeem(1).is_err(), "gated again");
-    ctx.request_withdrawal(3, quarter, 0)
-        .expect("requests resume");
+    ctx.request_withdrawal(3, quarter).expect("requests resume");
     assert_eq!(
         ctx.request_state_data(&user, 3).sequence,
         3,
@@ -144,7 +143,7 @@ fn release_works_while_paused() {
 fn release_is_refused_while_the_reserve_cannot_cover_the_pending_set() {
     let mut ctx = attached_vault_with_holder();
     let shares = ctx.token_account_amount(&ctx.user_share_ata);
-    ctx.request_withdrawal(1, shares / 2, 0).expect("request");
+    ctx.request_withdrawal(1, shares / 2).expect("request");
     let (owed, _) = ctx.quote_redeem(shares / 2);
     let reserve = ctx.token_account_amount(&ctx.vault_token_pda);
     assert!(owed < reserve);
@@ -153,7 +152,7 @@ fn release_is_refused_while_the_reserve_cannot_cover_the_pending_set() {
     assert_eq!(ctx.vault_state_data().local_aum, owed - 1);
     let err = ctx.release_vault().expect_err("one token short");
     assert_queue_err(&err, ErrorCode::ReleaseUnderfunded);
-    assert_anchor_framework_err(&err, 6015);
+    assert_anchor_framework_err(&err, 6014);
     assert_eq!(
         ctx.vault_state_data().withdrawal_queue(),
         Some(ctx.withdrawal_queue_pda()),
@@ -175,7 +174,7 @@ fn release_is_refused_while_the_reserve_cannot_cover_the_pending_set() {
 fn an_empty_queue_releases_even_when_the_share_price_is_undefined() {
     let mut ctx = attached_vault_with_holder();
     let shares = ctx.token_account_amount(&ctx.user_share_ata);
-    ctx.request_withdrawal(1, shares / 2, 0).expect("request");
+    ctx.request_withdrawal(1, shares / 2).expect("request");
     let mut vault = ctx.vault_state_data();
     vault.local_aum = 0;
     vault.deployed_aum = 0;

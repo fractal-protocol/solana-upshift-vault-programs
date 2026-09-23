@@ -48,8 +48,6 @@ pub enum ErrorCode {
     CooldownNotElapsed,
     #[msg("Signer is neither the request's owner nor its finalizer")]
     FinalizerNotAllowed,
-    #[msg("The recipient received less than the request's min_assets_out")]
-    PayoutBelowFloor,
     #[msg("The vault's reserve does not cover the pending requests at today's price")]
     ReleaseUnderfunded,
 }
@@ -101,8 +99,7 @@ pin_error_abi! {
     StaleRequestSequence => 11,
     CooldownNotElapsed => 12,
     FinalizerNotAllowed => 13,
-    PayoutBelowFloor => 14,
-    ReleaseUnderfunded => 15,
+    ReleaseUnderfunded => 14,
 }
 
 #[cfg(test)]

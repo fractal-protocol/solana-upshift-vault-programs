@@ -66,7 +66,7 @@ fn holder_with_request(ctx: VaultCtx) -> (VaultCtx, u64) {
     ctx.deposit(DEPOSIT_AMOUNT).expect("deposit");
     ctx.open_queue(DAY);
     let half = ctx.token_account_amount(&ctx.user_share_ata) / 2;
-    ctx.request_withdrawal(1, half, 0).expect("request");
+    ctx.request_withdrawal(1, half).expect("request");
     (ctx, half)
 }
 
@@ -152,8 +152,8 @@ fn cancel_never_depends_on_the_vault() {
     let (mut ctx, half) = holder_with_request(VaultCtx::fresh());
     let quarter = half / 2;
     ctx.set_fulfillment_window(DAY).expect("window");
-    ctx.request_withdrawal(2, quarter, 0).expect("windowed");
-    ctx.request_withdrawal(3, quarter, 0).expect("third");
+    ctx.request_withdrawal(2, quarter).expect("windowed");
+    ctx.request_withdrawal(3, quarter).expect("third");
 
     ctx.pause().expect("pause");
     ctx.cancel_withdrawal(1, 1).expect("cancel while paused");
@@ -177,8 +177,8 @@ fn cancelling_one_request_leaves_the_others_untouched() {
     let (mut ctx, half) = holder_with_request(VaultCtx::fresh());
     let user = ctx.user.pubkey();
     let quarter = half / 2;
-    ctx.request_withdrawal(2, quarter, 0).expect("second");
-    ctx.request_withdrawal(3, quarter, 0).expect("third");
+    ctx.request_withdrawal(2, quarter).expect("second");
+    ctx.request_withdrawal(3, quarter).expect("third");
     let second = ctx.request_pda(&user, 2);
     let second_before = ctx.svm.get_account(&second).expect("second").data;
 
@@ -230,7 +230,7 @@ fn cancel_and_finalize_are_mutually_exclusive() {
     let (mut ctx, half) = holder_with_request(VaultCtx::fresh());
     let signer = ctx.user.insecure_clone();
     let user = signer.pubkey();
-    ctx.request_withdrawal(2, half / 2, 0).expect("second");
+    ctx.request_withdrawal(2, half / 2).expect("second");
     ctx.warp_forward_seconds(DAY as i64);
     let finalize_1 = ctx.finalize_withdrawal_accounts(&user, &user, 1);
     let cancel_2 = ctx.cancel_withdrawal_accounts(&user, &user, 2, ctx.user_share_ata);
@@ -257,8 +257,7 @@ fn a_cancel_signed_against_a_cancelled_request_cannot_hit_its_successor() {
     let (mut ctx, half) = holder_with_request(VaultCtx::fresh());
     let user = ctx.user.pubkey();
     ctx.cancel_withdrawal(1, 1).expect("cancel");
-    ctx.request_withdrawal(1, half / 2, 7)
-        .expect("reuse the id");
+    ctx.request_withdrawal(1, half / 2).expect("reuse the id");
     let successor = ctx.request_state_data(&user, 1);
     assert_eq!(successor.sequence, 2, "a fresh stamp");
 
@@ -268,8 +267,8 @@ fn a_cancel_signed_against_a_cancelled_request_cannot_hit_its_successor() {
     assert_queue_err(&err, ErrorCode::StaleRequestSequence);
     let after = ctx.request_state_data(&user, 1);
     assert_eq!(
-        (after.sequence, after.shares, after.min_assets_out),
-        (successor.sequence, successor.shares, 7)
+        (after.sequence, after.shares, after.requested_at),
+        (successor.sequence, successor.shares, successor.requested_at)
     );
 }
 
@@ -285,7 +284,7 @@ fn the_destination_is_any_existing_share_account_the_owner_controls() {
     let user = ctx.user.insecure_clone();
     let (ata, share_mint) = (ctx.user_share_ata, ctx.share_mint);
     let quarter = half / 2;
-    ctx.request_withdrawal(2, quarter, 0).expect("second");
+    ctx.request_withdrawal(2, quarter).expect("second");
     let before = untouched(&ctx, &user.pubkey(), 1, &ata);
 
     // Wrong mint, someone else's share account, an account that does not exist.

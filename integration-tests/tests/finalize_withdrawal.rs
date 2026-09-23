@@ -649,7 +649,7 @@ fn substituted_accounts_are_refused_and_a_finalizer_cannot_redirect_the_payout()
 /// with it is refused by the request's `has_one = queue` before the CPI.
 #[test]
 fn a_request_cannot_be_finalized_through_another_vaults_queue() {
-    let (mut ctx, _) = mature_request(0);
+    let (mut ctx, _) = mature_request();
     let signer = ctx.user.insecure_clone();
     let user = signer.pubkey();
     let other = ctx.new_vault_with_queue();
