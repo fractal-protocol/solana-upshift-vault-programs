@@ -54,9 +54,6 @@ pub enum AugustWithdrawalQueueError {
     /// 6013 - Signer is neither the request's owner nor its finalizer
     #[error("Signer is neither the request's owner nor its finalizer")]
     FinalizerNotAllowed = 0x177D,
-    /// 6014 - The recipient received less than the request's min_assets_out
-    #[error("The recipient received less than the request's min_assets_out")]
-    PayoutBelowFloor = 0x177E,
 }
 
 impl From<AugustWithdrawalQueueError> for solana_program_error::ProgramError {

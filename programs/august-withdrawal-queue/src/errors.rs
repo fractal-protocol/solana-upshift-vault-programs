@@ -48,8 +48,6 @@ pub enum ErrorCode {
     CooldownNotElapsed,
     #[msg("Signer is neither the request's owner nor its finalizer")]
     FinalizerNotAllowed,
-    #[msg("The recipient received less than the request's min_assets_out")]
-    PayoutBelowFloor,
 }
 
 /// Compile-time pin of the ABI above, generated from one list so completeness
@@ -99,7 +97,6 @@ pin_error_abi! {
     StaleRequestSequence => 11,
     CooldownNotElapsed => 12,
     FinalizerNotAllowed => 13,
-    PayoutBelowFloor => 14,
 }
 
 #[cfg(test)]

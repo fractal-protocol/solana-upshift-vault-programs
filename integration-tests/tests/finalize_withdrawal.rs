@@ -80,21 +80,21 @@ fn untouched(ctx: &VaultCtx, owner: &Pubkey, id: u64) -> Untouched {
 }
 
 /// A vault with a holder and its queue open under `cooldown`; the holder has
-/// requested half their shares as request 1 with floor `min`. Returns the
-/// context and the shares in that request.
-fn holder_with_request(ctx: VaultCtx, cooldown: u64, min: u64) -> (VaultCtx, u64) {
+/// requested half their shares as request 1. Returns the context and the
+/// shares in that request.
+fn holder_with_request(ctx: VaultCtx, cooldown: u64) -> (VaultCtx, u64) {
     let mut ctx = ctx;
     ctx.mint_to_user(DEPOSIT_AMOUNT);
     ctx.deposit(DEPOSIT_AMOUNT).expect("deposit");
     ctx.open_queue(cooldown);
     let half = ctx.token_account_amount(&ctx.user_share_ata) / 2;
-    ctx.request_withdrawal(1, half, min).expect("request");
+    ctx.request_withdrawal(1, half).expect("request");
     (ctx, half)
 }
 
 /// As above, on classic SPL, with the cooldown already run.
-fn mature_request(min: u64) -> (VaultCtx, u64) {
-    let (mut ctx, half) = holder_with_request(VaultCtx::fresh(), DAY, min);
+fn mature_request() -> (VaultCtx, u64) {
+    let (mut ctx, half) = holder_with_request(VaultCtx::fresh(), DAY);
     ctx.warp_forward_seconds(DAY as i64);
     (ctx, half)
 }
@@ -132,7 +132,7 @@ fn assert_full_finalized_event(
 /// escrow keeps nothing, and the request closes with its rent to the owner.
 #[test]
 fn anyone_finalizes_a_mature_request_and_the_recipient_gets_the_vaults_net_payout() {
-    let (mut ctx, half) = mature_request(0);
+    let (mut ctx, half) = mature_request();
     ctx.set_withdrawal_fee(ONE_PERCENT).expect("fee");
     let user = ctx.user.pubkey();
     let keeper = keeper(&mut ctx);
@@ -206,10 +206,10 @@ fn anyone_finalizes_a_mature_request_and_the_recipient_gets_the_vaults_net_payou
 }
 
 /// Pricing happens at finalization: a fee set after the request is charged on
-/// it, and the recipient's floor is the only protection against that.
+/// it.
 #[test]
 fn the_payout_is_priced_when_finalized_not_when_requested() {
-    let (mut ctx, half) = mature_request(0);
+    let (mut ctx, half) = mature_request();
     let (_, quoted_at_request) = ctx.quote_redeem(half);
     ctx.set_withdrawal_fee(ONE_PERCENT).expect("fee");
     let (_, quoted_now) = ctx.quote_redeem(half);
@@ -227,7 +227,7 @@ fn the_payout_is_priced_when_finalized_not_when_requested() {
 /// all go through the interface.
 #[test]
 fn a_token_2022_request_finalizes_too() {
-    let (mut ctx, half) = holder_with_request(VaultCtx::fresh_token_2022(), DAY, 0);
+    let (mut ctx, half) = holder_with_request(VaultCtx::fresh_token_2022(), DAY);
     ctx.warp_forward_seconds(DAY as i64);
     let user = ctx.user.pubkey();
     let (_, net) = ctx.quote_redeem(half);
@@ -251,7 +251,7 @@ fn a_token_2022_request_finalizes_too() {
 /// stays where it is; the recipient gets the delta only.
 #[test]
 fn a_donation_to_the_asset_escrow_is_not_paid_out() {
-    let (mut ctx, half) = mature_request(0);
+    let (mut ctx, half) = mature_request();
     let escrow = ctx.queue_escrow(&ctx.deposit_mint);
     ctx.mint_deposit_to(&escrow, 1_000_000);
     let (_, net) = ctx.quote_redeem(half);
@@ -272,11 +272,11 @@ fn a_donation_to_the_asset_escrow_is_not_paid_out() {
 
 #[test]
 fn finalizing_one_request_leaves_the_others_untouched() {
-    let (mut ctx, half) = mature_request(0);
+    let (mut ctx, half) = mature_request();
     let user = ctx.user.pubkey();
     let quarter = half / 2;
-    ctx.request_withdrawal(2, quarter, 0).expect("second");
-    ctx.request_withdrawal(3, quarter, 0).expect("third");
+    ctx.request_withdrawal(2, quarter).expect("second");
+    ctx.request_withdrawal(3, quarter).expect("third");
     ctx.warp_forward_seconds(DAY as i64);
     let second = ctx.request_pda(&user, 2);
     let second_before = ctx.svm.get_account(&second).expect("second").data;
@@ -302,8 +302,8 @@ fn finalizing_one_request_leaves_the_others_untouched() {
 /// writes the vault directly.
 #[test]
 fn a_cleared_gate_does_not_block_finalization() {
-    let (mut ctx, half) = mature_request(0);
-    ctx.request_withdrawal(2, half / 2, 0).expect("second");
+    let (mut ctx, half) = mature_request();
+    ctx.request_withdrawal(2, half / 2).expect("second");
     ctx.warp_forward_seconds(DAY as i64);
 
     let mut vault = ctx.vault_state_data();
@@ -319,7 +319,7 @@ fn a_cleared_gate_does_not_block_finalization() {
 
 #[test]
 fn early_is_refused_until_the_exact_eligibility_instant() {
-    let (mut ctx, _) = holder_with_request(VaultCtx::fresh(), DAY, 0);
+    let (mut ctx, _) = holder_with_request(VaultCtx::fresh(), DAY);
     let user = ctx.user.pubkey();
     let eligible_at = ctx.request_state_data(&user, 1).eligible_at;
     ctx.warp_forward_seconds(eligible_at - ctx.now() - 1);
@@ -338,7 +338,7 @@ fn early_is_refused_until_the_exact_eligibility_instant() {
 /// A zero cooldown is eligible in the same slot as the request.
 #[test]
 fn a_zero_cooldown_finalizes_immediately() {
-    let (mut ctx, _) = holder_with_request(VaultCtx::fresh(), 0, 0);
+    let (mut ctx, _) = holder_with_request(VaultCtx::fresh(), 0);
     ctx.finalize_withdrawal(1, 1).expect("no wait");
 }
 
@@ -346,14 +346,13 @@ fn a_zero_cooldown_finalizes_immediately() {
 /// counts as expired, and a disabled window never expires.
 #[test]
 fn an_expired_request_cannot_be_finalized() {
-    let (mut ctx, half) = holder_with_request(VaultCtx::fresh(), DAY, 0);
+    let (mut ctx, half) = holder_with_request(VaultCtx::fresh(), DAY);
     let user = ctx.user.pubkey();
     ctx.set_fulfillment_window(DAY).expect("window");
-    ctx.request_withdrawal(2, half / 4, 0).expect("windowed");
-    ctx.request_withdrawal(3, half / 4, 0)
-        .expect("windowed too");
+    ctx.request_withdrawal(2, half / 4).expect("windowed");
+    ctx.request_withdrawal(3, half / 4).expect("windowed too");
     ctx.set_fulfillment_window(0).expect("no window");
-    ctx.request_withdrawal(4, half / 4, 0).expect("unwindowed");
+    ctx.request_withdrawal(4, half / 4).expect("unwindowed");
     let expires_at = ctx.request_state_data(&user, 2).expires_at;
     assert_eq!(ctx.request_state_data(&user, 4).expires_at, 0);
 
@@ -376,7 +375,7 @@ fn an_expired_request_cannot_be_finalized() {
 
 #[test]
 fn a_stale_sequence_is_refused() {
-    let (mut ctx, _) = mature_request(0);
+    let (mut ctx, _) = mature_request();
     let user = ctx.user.pubkey();
     let before = untouched(&ctx, &user, 1);
     let err = ctx.finalize_withdrawal(1, 2).expect_err("wrong stamp");
@@ -388,7 +387,7 @@ fn a_stale_sequence_is_refused() {
 /// to act on, and the counters do not move again.
 #[test]
 fn a_finalized_request_cannot_be_finalized_again() {
-    let (mut ctx, _) = mature_request(0);
+    let (mut ctx, _) = mature_request();
     let signer = ctx.user.insecure_clone();
     let user = signer.pubkey();
     // Built while the request exists: once it is closed there is nothing left
@@ -404,7 +403,7 @@ fn a_finalized_request_cannot_be_finalized_again() {
     assert_eq!(untouched(&ctx, &user, 1), after);
 
     // The id is free again, and the new request carries a fresh stamp.
-    ctx.request_withdrawal(1, 1, 0).expect("reuse the id");
+    ctx.request_withdrawal(1, 1).expect("reuse the id");
     assert_eq!(ctx.request_state_data(&user, 1).sequence, 2);
 }
 
@@ -415,7 +414,7 @@ fn a_finalized_request_cannot_be_finalized_again() {
 /// nothing moved; then a permitted one finalizes.
 #[test]
 fn finalization_permission_follows_the_table() {
-    let (mut ctx, half) = mature_request(0);
+    let (mut ctx, half) = mature_request();
     let user = ctx.user.insecure_clone();
     let (share_account, recipient) = (ctx.user_share_ata, ctx.user_deposit_ata);
     let f = keeper(&mut ctx);
@@ -427,7 +426,7 @@ fn finalization_permission_follows_the_table() {
         (3, vec![&stranger], &user), // the owner, whatever is set
     ];
     for id in [2, 3] {
-        ctx.request_withdrawal_as(&user, share_account, recipient, id, half / 4, 0, f.pubkey())
+        ctx.request_withdrawal_as(&user, share_account, recipient, id, half / 4, f.pubkey())
             .expect("request");
     }
     ctx.warp_forward_seconds(DAY as i64);
@@ -454,7 +453,7 @@ fn finalization_permission_follows_the_table() {
 /// rollback: shares, supply, AUM, counters, request and rent all stay put.
 #[test]
 fn a_liquidity_shortfall_reverts_and_becomes_retryable_after_an_operator_deposit() {
-    let (mut ctx, _) = mature_request(0);
+    let (mut ctx, _) = mature_request();
     let user = ctx.user.pubkey();
     let reserve = ctx.token_account_amount(&ctx.vault_token_pda);
     ctx.operator_withdraw(reserve * 9 / 10).expect("deploy");
@@ -468,33 +467,25 @@ fn a_liquidity_shortfall_reverts_and_becomes_retryable_after_an_operator_deposit
     ctx.finalize_withdrawal(1, 1).expect("retry");
 }
 
-/// The floor is fixed at request time. A payout that falls below it reverts
-/// with nothing moved, and the request stays payable once the price recovers.
+/// The holder is paid the shares' value when the request is finalized, so any
+/// yield the vault earns during the cooldown is theirs.
 #[test]
-fn a_floor_the_vault_cannot_meet_reverts_until_the_payout_recovers() {
-    let mut ctx = VaultCtx::fresh();
-    ctx.mint_to_user(DEPOSIT_AMOUNT);
-    ctx.deposit(DEPOSIT_AMOUNT).expect("deposit");
-    ctx.open_queue(DAY);
-    let user = ctx.user.pubkey();
-    let half = ctx.token_account_amount(&ctx.user_share_ata) / 2;
-    let (_, quote) = ctx.quote_redeem(half);
-    ctx.request_withdrawal(1, half, quote)
-        .expect("floor at today's quote");
+fn yield_earned_during_the_cooldown_is_paid_out() {
+    let (mut ctx, half) = holder_with_request(VaultCtx::fresh(), DAY);
+    let (_, quoted_at_request) = ctx.quote_redeem(half);
+    let deployed = ctx.vault_state_data().local_aum / 4;
+    ctx.operator_withdraw(deployed).expect("deploy");
+    ctx.operator_update_aum(deployed + deployed / 1_000)
+        .expect("a 0.1% gain, inside the increase limit");
     ctx.warp_forward_seconds(DAY as i64);
-    ctx.set_withdrawal_fee(ONE_PERCENT).expect("fee rises");
-    let before = untouched(&ctx, &user, 1);
+    let (_, quoted_now) = ctx.quote_redeem(half);
+    assert!(quoted_now > quoted_at_request, "the share price rose");
 
-    let err = ctx.finalize_withdrawal(1, 1).expect_err("below the floor");
-    assert_anchor_err(&err, VaultError::SlippageExceeded);
-    assert_eq!(untouched(&ctx, &user, 1), before);
-
-    ctx.set_withdrawal_fee(0).expect("fee back down");
-    let paid_before = ctx.token_account_amount(&ctx.user_deposit_ata);
-    ctx.finalize_withdrawal(1, 1).expect("now it clears");
+    let before = ctx.token_account_amount(&ctx.user_deposit_ata);
+    ctx.finalize_withdrawal(1, 1).expect("finalize");
     assert_eq!(
-        ctx.token_account_amount(&ctx.user_deposit_ata) - paid_before,
-        quote
+        ctx.token_account_amount(&ctx.user_deposit_ata) - before,
+        quoted_now
     );
 }
 
@@ -502,7 +493,7 @@ fn a_floor_the_vault_cannot_meet_reverts_until_the_payout_recovers() {
 /// the CPI, and nothing else.
 #[test]
 fn a_paused_vault_refuses_finalization_and_the_request_survives() {
-    let (mut ctx, _) = mature_request(0);
+    let (mut ctx, _) = mature_request();
     let user = ctx.user.pubkey();
     ctx.pause().expect("pause");
     let before = untouched(&ctx, &user, 1);
@@ -523,7 +514,7 @@ fn a_paused_vault_refuses_finalization_and_the_request_survives() {
 /// re-checked. The request is fixed, so the owner's way out is to cancel.
 #[test]
 fn a_recipient_reassigned_to_the_queue_after_the_request_is_refused() {
-    let (mut ctx, _) = mature_request(0);
+    let (mut ctx, _) = mature_request();
     let user = ctx.user.insecure_clone();
     let (ata, queue_pda) = (ctx.user_deposit_ata, ctx.withdrawal_queue_pda());
     ctx.set_token_account_authority_as(&user, &ata, &queue_pda);
@@ -545,7 +536,7 @@ fn a_recipient_reassigned_to_the_queue_after_the_request_is_refused() {
 /// whatever now sits at that address; recreating it makes the request payable.
 #[test]
 fn a_recipient_closed_after_the_request_fails_closed() {
-    let (mut ctx, _) = mature_request(0);
+    let (mut ctx, _) = mature_request();
     let user = ctx.user.insecure_clone();
     let (ata, deposit_mint) = (ctx.user_deposit_ata, ctx.deposit_mint);
     assert_eq!(ctx.token_account_amount(&ata), 0, "closable");
@@ -568,7 +559,7 @@ fn a_recipient_closed_after_the_request_fails_closed() {
 /// themselves. Each substitution is refused with nothing moved.
 #[test]
 fn substituted_accounts_are_refused_and_a_finalizer_cannot_redirect_the_payout() {
-    let (mut ctx, _) = mature_request(0);
+    let (mut ctx, _) = mature_request();
     let user = ctx.user.pubkey();
     let keeper = keeper(&mut ctx);
     let keeper_key = keeper.pubkey();

@@ -108,8 +108,8 @@ pub mod august_withdrawal_queue {
     /// forwards the net payout to the request's recipient, and closes the
     /// request with its rent to the owner. Anyone the request's `finalizer`
     /// permits may call it, the owner always.
-    /// The vault's `VaultPaused`, `NotEnoughLiquidity` and `SlippageExceeded`
-    /// propagate unchanged and leave the request pending.
+    /// The vault's `VaultPaused` and `NotEnoughLiquidity` propagate unchanged
+    /// and leave the request pending.
     ///
     /// ### Parameters
     /// - `expected_sequence` - The request's stamp, so a delayed call cannot land

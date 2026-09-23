@@ -24,14 +24,13 @@ use august_vault::program::AugustVault;
 use august_vault::state::vault::VaultState;
 
 /// Checks, then the counters, then the two CPIs. A vault refusal (`VaultPaused`,
-/// `NotEnoughLiquidity`, `SlippageExceeded`) propagates as the vault's own code
-/// and rolls the transaction back, so the request stays pending and untouched.
+/// `NotEnoughLiquidity`) propagates as the vault's own code and rolls the
+/// transaction back, so the request stays pending and untouched.
 ///
-/// The payout is the `escrow_assets` balance delta across the redeem rather than
-/// the amount the vault computed, so a donation sitting in the escrow is never
-/// paid out. The floor is then re-checked on the recipient's own increase. With
-/// a decision-12 deposit mint the two amounts cannot differ, so that check is
-/// defence in depth behind the vault's `SlippageExceeded`, not the check.
+/// The payout is the shares' value at this moment, with no floor: there is no
+/// trade, so nothing can slip. It is the `escrow_assets` balance delta across
+/// the redeem rather than the amount the vault computed, so a donation sitting
+/// in the escrow is never paid out.
 pub fn handler(ctx: Context<FinalizeWithdrawal>, expected_sequence: u64) -> Result<()> {
     let request = &ctx.accounts.request;
     require!(
@@ -47,16 +46,15 @@ pub fn handler(ctx: Context<FinalizeWithdrawal>, expected_sequence: u64) -> Resu
     require!(!request.is_expired(now), ErrorCode::RequestExpired);
     require_valid_recipient(&ctx.accounts.recipient_token_account, &ctx.accounts.queue)?;
 
-    let (shares, min_assets_out) = (request.shares, request.min_assets_out);
+    let shares = request.shares;
     let escrow_before = ctx.accounts.escrow_assets.amount;
-    let recipient_before = ctx.accounts.recipient_token_account.amount;
 
     // Effects before interactions: the counters drop before any CPI.
     ctx.accounts.queue.close_request(shares)?;
 
     let seeds = ctx.accounts.queue.signer_seeds();
     let signer: &[&[&[u8]]] = &[&seeds];
-    august_vault::cpi::redeem_checked(
+    august_vault::cpi::redeem(
         CpiContext::new_with_signer(
             ctx.accounts.vault_program.to_account_info(),
             Redeem {
@@ -73,7 +71,6 @@ pub fn handler(ctx: Context<FinalizeWithdrawal>, expected_sequence: u64) -> Resu
             signer,
         ),
         shares,
-        min_assets_out,
     )?;
 
     ctx.accounts.escrow_assets.reload()?;
@@ -97,15 +94,6 @@ pub fn handler(ctx: Context<FinalizeWithdrawal>, expected_sequence: u64) -> Resu
         assets,
         ctx.accounts.deposit_mint.decimals,
     )?;
-
-    ctx.accounts.recipient_token_account.reload()?;
-    let received = ctx
-        .accounts
-        .recipient_token_account
-        .amount
-        .checked_sub(recipient_before)
-        .ok_or(ErrorCode::MathError)?;
-    require!(received >= min_assets_out, ErrorCode::PayoutBelowFloor);
 
     emit!(WithdrawalFinalized::snapshot(
         &ctx.accounts.request,
