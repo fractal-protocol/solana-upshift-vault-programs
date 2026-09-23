@@ -44,8 +44,6 @@ pub enum ErrorCode {
     RequestExpired,
     #[msg("expected_sequence does not match the request; it may have been recreated")]
     StaleRequestSequence,
-    #[msg("update_request would change nothing; pass a field or the new recipient account")]
-    NothingToUpdate,
     #[msg("The request's cooldown has not elapsed")]
     CooldownNotElapsed,
     #[msg("Signer is neither the request's owner nor its finalizer")]
@@ -115,18 +113,17 @@ pin_error_abi! {
     NotRequestOwner => 9,
     RequestExpired => 10,
     StaleRequestSequence => 11,
-    NothingToUpdate => 12,
-    CooldownNotElapsed => 13,
-    FinalizerNotAllowed => 14,
-    PayoutBelowFloor => 15,
-    ReleaseUnderfunded => 16,
-    QueueStillAttached => 17,
-    NotVaultAdminOrOperator => 18,
-    RequestAlreadyEligible => 19,
-    EmptyBatch => 20,
-    BatchLengthMismatch => 21,
-    RequestsNotSorted => 22,
-    BatchTooLarge => 23,
+    CooldownNotElapsed => 12,
+    FinalizerNotAllowed => 13,
+    PayoutBelowFloor => 14,
+    ReleaseUnderfunded => 15,
+    QueueStillAttached => 16,
+    NotVaultAdminOrOperator => 17,
+    RequestAlreadyEligible => 18,
+    EmptyBatch => 19,
+    BatchLengthMismatch => 20,
+    RequestsNotSorted => 21,
+    BatchTooLarge => 22,
 }
 
 #[cfg(test)]

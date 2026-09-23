@@ -1553,63 +1553,6 @@ impl VaultCtx {
         send_tx(&mut self.svm, owner, &[ix], &[owner])
     }
 
-    /// `update_request` as the user on their own request.
-    pub fn update_request(
-        &mut self,
-        request_id: u64,
-        expected_sequence: u64,
-        min_assets_out: Option<u64>,
-        new_recipient: Option<Pubkey>,
-        finalizer: Option<Pubkey>,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
-        let user = self.user.insecure_clone();
-        let owner = user.pubkey();
-        self.update_request_as(
-            &user,
-            &owner,
-            request_id,
-            expected_sequence,
-            min_assets_out,
-            new_recipient,
-            finalizer,
-        )
-    }
-
-    /// `update_request` signed by `signer` against `request_owner`'s request,
-    /// so a test can have the wrong person try.
-    #[allow(clippy::too_many_arguments)]
-    pub fn update_request_as(
-        &mut self,
-        signer: &Keypair,
-        request_owner: &Pubkey,
-        request_id: u64,
-        expected_sequence: u64,
-        min_assets_out: Option<u64>,
-        new_recipient: Option<Pubkey>,
-        finalizer: Option<Pubkey>,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
-        let accounts = q_accounts::UpdateRequest {
-            queue: self.withdrawal_queue_pda(),
-            owner: signer.pubkey(),
-            request: self.request_pda(request_owner, request_id),
-            new_recipient,
-            event_authority: event_authority_pda(),
-            program: august_withdrawal_queue::ID,
-        }
-        .to_account_metas(None);
-        let ix = Instruction {
-            program_id: august_withdrawal_queue::ID,
-            accounts,
-            data: q_ix::UpdateRequest {
-                expected_sequence,
-                min_assets_out,
-                finalizer,
-            }
-            .data(),
-        };
-        send_tx(&mut self.svm, signer, &[ix], &[signer])
-    }
-
     /// `finalize_withdrawal` on the user's own request, signed by the user.
     pub fn finalize_withdrawal(
         &mut self,

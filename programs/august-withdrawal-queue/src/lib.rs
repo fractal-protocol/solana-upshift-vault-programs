@@ -151,7 +151,8 @@ pub mod august_withdrawal_queue {
     /// abandoned escrow, which would otherwise block `close_vault`.
     ///
     /// ### Parameters
-    /// - `expected_sequence` - The request's stamp, as for `update_request`
+    /// - `expected_sequence` - The request's stamp, so a delayed call cannot land
+    ///   on a recreated request with the same id
     pub fn admin_cancel_withdrawal(
         ctx: Context<AdminCancelWithdrawal>,
         expected_sequence: u64,
@@ -165,7 +166,8 @@ pub mod august_withdrawal_queue {
     /// expired request is refused.
     ///
     /// ### Parameters
-    /// - `expected_sequence` - The request's stamp, as for `update_request`
+    /// - `expected_sequence` - The request's stamp, so a delayed call cannot land
+    ///   on a recreated request with the same id
     pub fn expedite_request(ctx: Context<ExpediteRequest>, expected_sequence: u64) -> Result<()> {
         return instructions::expedite_request::handler(ctx, expected_sequence);
     }
