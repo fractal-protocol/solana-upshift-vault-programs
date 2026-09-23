@@ -7,7 +7,7 @@ This workspace builds two programs:
 | Crate | Artifact | Status |
 |---|---|---|
 | `programs/august-vault` | `august_vault.so` | Live on mainnet and devnet. Everything below describes this program. |
-| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | `initialize_queue`, two config setters, `request_withdrawal`, `finalize_withdrawal`, `cancel_withdrawal` and `release_vault` over the `WithdrawalQueue` / `WithdrawalRequest` state accounts. Admin cancel, expedite and the batch forms are not implemented. **Not deployed anywhere.** |
+| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | `initialize_queue`, two config setters, `request_withdrawal`, `update_request`, `finalize_withdrawal`, `cancel_withdrawal`, `release_vault`, `admin_cancel_withdrawal`, `expedite_request(s)` and `finalize_withdrawals` over the `WithdrawalQueue` / `WithdrawalRequest` state accounts: the queue's full instruction set. **Not deployed anywhere.** |
 
 The queue will let a vault route redemptions through a request-and-cooldown flow
 instead of paying out instantly. The vault side of that is already in place: a
@@ -206,26 +206,31 @@ or a Token-2022 mint carrying at most the two metadata extensions
 and `set_fulfillment_window` (zero disables expiry, else at most 90 days)
 configure it. Attaching it on the vault is what makes it live.
 
-Holders use `request_withdrawal(request_id, shares, finalizer)`:
+Holders use `request_withdrawal(request_id, shares, min_assets_out, finalizer)`:
 their shares move to the queue's escrow and a request account is created at
 `["withdrawal_request", queue, owner, request_id]`, stamped with the cooldown and
 window in force at that moment. It requires the vault's gate to point at the
 queue, a nonzero amount (`ZeroShares`, 6007), and a recipient that holds the deposit mint
 and belongs to neither the queue nor the vault (`InvalidRecipient`, 6008).
-A request's recipient and finalizer are fixed once it is made; to change
-them the owner cancels and requests again.
+`update_request(expected_sequence, min?, finalizer?)` plus an optional new
+recipient account lets the owner (`NotRequestOwner`, 6009, otherwise) adjust
+those three fields while the request is pending and unexpired (`RequestExpired`,
+6010); the sequence stamp must match (`StaleRequestSequence`, 6011) so a delayed
+instruction cannot land on a recreated request, and a call that would change
+nothing is refused (`NothingToUpdate`, 6012).
 
 `finalize_withdrawal(expected_sequence)` pays a request once its cooldown has
-run (`CooldownNotElapsed`, 6012, before then) and while its window is open
+run (`CooldownNotElapsed`, 6013, before then) and while its window is open
 (`RequestExpired` after). Anyone the request's `finalizer` permits may call it,
 and the owner always can
-(`FinalizerNotAllowed`, 6013, otherwise): the caller picks the moment, never the
+(`FinalizerNotAllowed`, 6014, otherwise): the caller picks the moment, never the
 amount or the destination. The queue redeems the escrowed shares by CPI into
-`redeem` as the vault's queue authority, so `VaultPaused` and
-`NotEnoughLiquidity` surface as the vault's own codes and
+`redeem_checked` as the vault's queue authority, so `VaultPaused`,
+`NotEnoughLiquidity` and `SlippageExceeded` surface as the vault's own codes and
 leave the request pending and untouched. The payout is the asset escrow's
-balance delta, forwarded to the request's recipient, at the shares' value at
-that moment; the request then closes with its rent to the owner.
+balance delta, forwarded to the request's recipient, whose increase must reach
+`min_assets_out` (`PayoutBelowFloor`, 6015); the request then closes with its
+rent to the owner.
 
 `cancel_withdrawal(expected_sequence)` returns a pending request's shares to any
 share account whose authority is the owner and closes the request with its rent
@@ -237,14 +242,44 @@ and `StaleRequestSequence`, 6011, otherwise).
 
 `release_vault` returns the vault to instant redemption: the queue co-signs the
 vault's `detach_withdrawal_queue` by CPI as its PDA, the only place that
-signature is ever produced, and the admin signs too. It checks no liquidity:
-once the gate is off nothing could hold assets back for the pending set, so a
-queued holder exits like anyone else, by finalizing or by cancelling and
-redeeming, and whether to release is the admin's call. Pending requests survive the release and
+signature is ever produced, and the admin signs too. Its one precondition is
+liquidity: the vault's reserve must cover every pending request at today's
+price (`ReleaseUnderfunded`, 6016). Pending requests survive the release and
 finalize or cancel afterwards, since neither depends on the gate, while the
 gate stops new ones; the queue account persists, and `attach_withdrawal_queue`
-re-enables it with its sequence intact. Admin cancel, expedite and the batch
-forms are not implemented yet.
+re-enables it with its sequence intact.
+
+Three more instructions round out the set. `admin_cancel_withdrawal` lets the
+admin return any pending request's shares to its owner, into a share account
+the owner controls (created by the admin in the same transaction if need be),
+but only once the vault is released (`QueueStillAttached`, 6017): the tool for
+clearing abandoned escrow, which would otherwise block `close_vault`, and never
+a way to touch a live queue. `expedite_request` lets the admin or operator
+(`NotVaultAdminOrOperator`, 6018) move one not-yet-eligible request's
+`eligible_at` to now (`RequestAlreadyEligible`, 6019, otherwise);
+`scheduled_eligible_at` and `expires_at` never move, so the owner's window only
+ever widens. `expedite_requests` and `finalize_withdrawals` are the batch
+forms: the requests come as trailing accounts, one per request for expedite
+and three (request, owner, recipient) for finalize, in strictly ascending key
+order, with a parallel list of expected sequences (`EmptyBatch` 6020,
+`BatchLengthMismatch` 6021, `RequestsNotSorted` 6022, `BatchTooLarge` 6023).
+A batch is all or nothing, and each request is announced in the log before it
+is touched, so a failure names it. The bounds are 20 expedites and 5 finalizes
+per instruction (`MAX_EXPEDITE_BATCH`, `MAX_FINALIZE_BATCH`), and it is heap
+that sets them, not the packet or compute: the program's 32 KB bump allocator
+frees nothing within an instruction and ignores any larger heap frame a
+transaction requests, and the sixth finalize runs it out. Both bounds fit a
+legacy transaction (22 expedites and 6 finalizes would); a batch transaction
+needs a 1.4M CU limit. Measured: 15k CU per expedite in a batch, 78k per
+finalize (390k for 5).
+
+Every queue event is delivered by self-CPI (Anchor's `emit_cpi!`): it is an
+inner instruction of the queue program whose data is the event tag
+`1d9acb512ea545e4` followed by the event, not a `Program data:` log line, so
+the 10 KB log cap cannot cut a batch's events. Every queue instruction
+therefore ends its fixed accounts with `event_authority`, the PDA
+`["__event_authority"]`, and the program itself. The vault's own events are
+unchanged and stay in the log.
 
 **The queue program is not deployed on any cluster yet.** With `release_vault`
 in place, attaching a queue is reversible, which closes the one-way-door

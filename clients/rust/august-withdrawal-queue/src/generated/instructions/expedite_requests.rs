@@ -8,41 +8,47 @@
 use borsh::BorshDeserialize;
 use borsh::BorshSerialize;
 
-pub const SET_COOLDOWN_DISCRIMINATOR: [u8; 8] = [57, 78, 91, 178, 112, 152, 211, 87];
+pub const EXPEDITE_REQUESTS_DISCRIMINATOR: [u8; 8] = [92, 207, 226, 81, 164, 188, 166, 109];
 
 /// Accounts.
 #[derive(Debug)]
-pub struct SetCooldown {
+pub struct ExpediteRequests {
     pub queue: solana_pubkey::Pubkey,
 
     pub vault_state: solana_pubkey::Pubkey,
-
-    pub admin: solana_pubkey::Pubkey,
+    /// The vault's admin or operator.
+    pub authority: solana_pubkey::Pubkey,
 
     pub event_authority: solana_pubkey::Pubkey,
 
     pub program: solana_pubkey::Pubkey,
 }
 
-impl SetCooldown {
-    pub fn instruction(&self, args: SetCooldownInstructionArgs) -> solana_instruction::Instruction {
+impl ExpediteRequests {
+    pub fn instruction(
+        &self,
+        args: ExpediteRequestsInstructionArgs,
+    ) -> solana_instruction::Instruction {
         self.instruction_with_remaining_accounts(args, &[])
     }
     #[allow(clippy::arithmetic_side_effects)]
     #[allow(clippy::vec_init_then_push)]
     pub fn instruction_with_remaining_accounts(
         &self,
-        args: SetCooldownInstructionArgs,
+        args: ExpediteRequestsInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
         let mut accounts = Vec::with_capacity(5 + remaining_accounts.len());
-        accounts.push(solana_instruction::AccountMeta::new(self.queue, false));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.queue, false,
+        ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.vault_state,
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.admin, true,
+            self.authority,
+            true,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.event_authority,
@@ -53,7 +59,7 @@ impl SetCooldown {
             false,
         ));
         accounts.extend_from_slice(remaining_accounts);
-        let mut data = SetCooldownInstructionData::new().try_to_vec().unwrap();
+        let mut data = ExpediteRequestsInstructionData::new().try_to_vec().unwrap();
         let mut args = args.try_to_vec().unwrap();
         data.append(&mut args);
 
@@ -67,14 +73,14 @@ impl SetCooldown {
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SetCooldownInstructionData {
+pub struct ExpediteRequestsInstructionData {
     discriminator: [u8; 8],
 }
 
-impl SetCooldownInstructionData {
+impl ExpediteRequestsInstructionData {
     pub fn new() -> Self {
         Self {
-            discriminator: [57, 78, 91, 178, 112, 152, 211, 87],
+            discriminator: [92, 207, 226, 81, 164, 188, 166, 109],
         }
     }
 
@@ -83,7 +89,7 @@ impl SetCooldownInstructionData {
     }
 }
 
-impl Default for SetCooldownInstructionData {
+impl Default for ExpediteRequestsInstructionData {
     fn default() -> Self {
         Self::new()
     }
@@ -91,37 +97,37 @@ impl Default for SetCooldownInstructionData {
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SetCooldownInstructionArgs {
-    pub seconds: u64,
+pub struct ExpediteRequestsInstructionArgs {
+    pub expected_sequences: Vec<u64>,
 }
 
-impl SetCooldownInstructionArgs {
+impl ExpediteRequestsInstructionArgs {
     pub(crate) fn try_to_vec(&self) -> Result<Vec<u8>, std::io::Error> {
         borsh::to_vec(self)
     }
 }
 
-/// Instruction builder for `SetCooldown`.
+/// Instruction builder for `ExpediteRequests`.
 ///
 /// ### Accounts:
 ///
-///   0. `[writable]` queue
+///   0. `[]` queue
 ///   1. `[]` vault_state
-///   2. `[signer]` admin
+///   2. `[signer]` authority
 ///   3. `[]` event_authority
 ///   4. `[]` program
 #[derive(Clone, Debug, Default)]
-pub struct SetCooldownBuilder {
+pub struct ExpediteRequestsBuilder {
     queue: Option<solana_pubkey::Pubkey>,
     vault_state: Option<solana_pubkey::Pubkey>,
-    admin: Option<solana_pubkey::Pubkey>,
+    authority: Option<solana_pubkey::Pubkey>,
     event_authority: Option<solana_pubkey::Pubkey>,
     program: Option<solana_pubkey::Pubkey>,
-    seconds: Option<u64>,
+    expected_sequences: Option<Vec<u64>>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
-impl SetCooldownBuilder {
+impl ExpediteRequestsBuilder {
     pub fn new() -> Self {
         Self::default()
     }
@@ -135,9 +141,10 @@ impl SetCooldownBuilder {
         self.vault_state = Some(vault_state);
         self
     }
+    /// The vault's admin or operator.
     #[inline(always)]
-    pub fn admin(&mut self, admin: solana_pubkey::Pubkey) -> &mut Self {
-        self.admin = Some(admin);
+    pub fn authority(&mut self, authority: solana_pubkey::Pubkey) -> &mut Self {
+        self.authority = Some(authority);
         self
     }
     #[inline(always)]
@@ -151,8 +158,8 @@ impl SetCooldownBuilder {
         self
     }
     #[inline(always)]
-    pub fn seconds(&mut self, seconds: u64) -> &mut Self {
-        self.seconds = Some(seconds);
+    pub fn expected_sequences(&mut self, expected_sequences: Vec<u64>) -> &mut Self {
+        self.expected_sequences = Some(expected_sequences);
         self
     }
     /// Add an additional account to the instruction.
@@ -172,63 +179,66 @@ impl SetCooldownBuilder {
     }
     #[allow(clippy::clone_on_copy)]
     pub fn instruction(&self) -> solana_instruction::Instruction {
-        let accounts = SetCooldown {
+        let accounts = ExpediteRequests {
             queue: self.queue.expect("queue is not set"),
             vault_state: self.vault_state.expect("vault_state is not set"),
-            admin: self.admin.expect("admin is not set"),
+            authority: self.authority.expect("authority is not set"),
             event_authority: self.event_authority.expect("event_authority is not set"),
             program: self.program.expect("program is not set"),
         };
-        let args = SetCooldownInstructionArgs {
-            seconds: self.seconds.clone().expect("seconds is not set"),
+        let args = ExpediteRequestsInstructionArgs {
+            expected_sequences: self
+                .expected_sequences
+                .clone()
+                .expect("expected_sequences is not set"),
         };
 
         accounts.instruction_with_remaining_accounts(args, &self.__remaining_accounts)
     }
 }
 
-/// `set_cooldown` CPI accounts.
-pub struct SetCooldownCpiAccounts<'a, 'b> {
+/// `expedite_requests` CPI accounts.
+pub struct ExpediteRequestsCpiAccounts<'a, 'b> {
     pub queue: &'b solana_account_info::AccountInfo<'a>,
 
     pub vault_state: &'b solana_account_info::AccountInfo<'a>,
-
-    pub admin: &'b solana_account_info::AccountInfo<'a>,
+    /// The vault's admin or operator.
+    pub authority: &'b solana_account_info::AccountInfo<'a>,
 
     pub event_authority: &'b solana_account_info::AccountInfo<'a>,
 
     pub program: &'b solana_account_info::AccountInfo<'a>,
 }
 
-/// `set_cooldown` CPI instruction.
-pub struct SetCooldownCpi<'a, 'b> {
+/// `expedite_requests` CPI instruction.
+pub struct ExpediteRequestsCpi<'a, 'b> {
     /// The program to invoke.
     pub __program: &'b solana_account_info::AccountInfo<'a>,
 
     pub queue: &'b solana_account_info::AccountInfo<'a>,
 
     pub vault_state: &'b solana_account_info::AccountInfo<'a>,
-
-    pub admin: &'b solana_account_info::AccountInfo<'a>,
+    /// The vault's admin or operator.
+    pub authority: &'b solana_account_info::AccountInfo<'a>,
 
     pub event_authority: &'b solana_account_info::AccountInfo<'a>,
 
     pub program: &'b solana_account_info::AccountInfo<'a>,
     /// The arguments for the instruction.
-    pub __args: SetCooldownInstructionArgs,
+    pub __args: ExpediteRequestsInstructionArgs,
 }
 
-impl<'a, 'b> SetCooldownCpi<'a, 'b> {
+impl<'a, 'b> ExpediteRequestsCpi<'a, 'b> {
     pub fn new(
         program: &'b solana_account_info::AccountInfo<'a>,
-        accounts: SetCooldownCpiAccounts<'a, 'b>,
-        args: SetCooldownInstructionArgs,
+        accounts: ExpediteRequestsCpiAccounts<'a, 'b>,
+        args: ExpediteRequestsInstructionArgs,
     ) -> Self {
         Self {
             __program: program,
             queue: accounts.queue,
             vault_state: accounts.vault_state,
-            admin: accounts.admin,
+            authority: accounts.authority,
             event_authority: accounts.event_authority,
             program: accounts.program,
             __args: args,
@@ -258,13 +268,16 @@ impl<'a, 'b> SetCooldownCpi<'a, 'b> {
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
         let mut accounts = Vec::with_capacity(5 + remaining_accounts.len());
-        accounts.push(solana_instruction::AccountMeta::new(*self.queue.key, false));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.queue.key,
+            false,
+        ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.vault_state.key,
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.admin.key,
+            *self.authority.key,
             true,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
@@ -282,7 +295,7 @@ impl<'a, 'b> SetCooldownCpi<'a, 'b> {
                 is_writable: remaining_account.2,
             })
         });
-        let mut data = SetCooldownInstructionData::new().try_to_vec().unwrap();
+        let mut data = ExpediteRequestsInstructionData::new().try_to_vec().unwrap();
         let mut args = self.__args.try_to_vec().unwrap();
         data.append(&mut args);
 
@@ -295,7 +308,7 @@ impl<'a, 'b> SetCooldownCpi<'a, 'b> {
         account_infos.push(self.__program.clone());
         account_infos.push(self.queue.clone());
         account_infos.push(self.vault_state.clone());
-        account_infos.push(self.admin.clone());
+        account_infos.push(self.authority.clone());
         account_infos.push(self.event_authority.clone());
         account_infos.push(self.program.clone());
         remaining_accounts
@@ -310,30 +323,30 @@ impl<'a, 'b> SetCooldownCpi<'a, 'b> {
     }
 }
 
-/// Instruction builder for `SetCooldown` via CPI.
+/// Instruction builder for `ExpediteRequests` via CPI.
 ///
 /// ### Accounts:
 ///
-///   0. `[writable]` queue
+///   0. `[]` queue
 ///   1. `[]` vault_state
-///   2. `[signer]` admin
+///   2. `[signer]` authority
 ///   3. `[]` event_authority
 ///   4. `[]` program
 #[derive(Clone, Debug)]
-pub struct SetCooldownCpiBuilder<'a, 'b> {
-    instruction: Box<SetCooldownCpiBuilderInstruction<'a, 'b>>,
+pub struct ExpediteRequestsCpiBuilder<'a, 'b> {
+    instruction: Box<ExpediteRequestsCpiBuilderInstruction<'a, 'b>>,
 }
 
-impl<'a, 'b> SetCooldownCpiBuilder<'a, 'b> {
+impl<'a, 'b> ExpediteRequestsCpiBuilder<'a, 'b> {
     pub fn new(program: &'b solana_account_info::AccountInfo<'a>) -> Self {
-        let instruction = Box::new(SetCooldownCpiBuilderInstruction {
+        let instruction = Box::new(ExpediteRequestsCpiBuilderInstruction {
             __program: program,
             queue: None,
             vault_state: None,
-            admin: None,
+            authority: None,
             event_authority: None,
             program: None,
-            seconds: None,
+            expected_sequences: None,
             __remaining_accounts: Vec::new(),
         });
         Self { instruction }
@@ -351,9 +364,10 @@ impl<'a, 'b> SetCooldownCpiBuilder<'a, 'b> {
         self.instruction.vault_state = Some(vault_state);
         self
     }
+    /// The vault's admin or operator.
     #[inline(always)]
-    pub fn admin(&mut self, admin: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-        self.instruction.admin = Some(admin);
+    pub fn authority(&mut self, authority: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
+        self.instruction.authority = Some(authority);
         self
     }
     #[inline(always)]
@@ -370,8 +384,8 @@ impl<'a, 'b> SetCooldownCpiBuilder<'a, 'b> {
         self
     }
     #[inline(always)]
-    pub fn seconds(&mut self, seconds: u64) -> &mut Self {
-        self.instruction.seconds = Some(seconds);
+    pub fn expected_sequences(&mut self, expected_sequences: Vec<u64>) -> &mut Self {
+        self.instruction.expected_sequences = Some(expected_sequences);
         self
     }
     /// Add an additional account to the instruction.
@@ -408,14 +422,14 @@ impl<'a, 'b> SetCooldownCpiBuilder<'a, 'b> {
     #[allow(clippy::clone_on_copy)]
     #[allow(clippy::vec_init_then_push)]
     pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
-        let args = SetCooldownInstructionArgs {
-            seconds: self
+        let args = ExpediteRequestsInstructionArgs {
+            expected_sequences: self
                 .instruction
-                .seconds
+                .expected_sequences
                 .clone()
-                .expect("seconds is not set"),
+                .expect("expected_sequences is not set"),
         };
-        let instruction = SetCooldownCpi {
+        let instruction = ExpediteRequestsCpi {
             __program: self.instruction.__program,
 
             queue: self.instruction.queue.expect("queue is not set"),
@@ -425,7 +439,7 @@ impl<'a, 'b> SetCooldownCpiBuilder<'a, 'b> {
                 .vault_state
                 .expect("vault_state is not set"),
 
-            admin: self.instruction.admin.expect("admin is not set"),
+            authority: self.instruction.authority.expect("authority is not set"),
 
             event_authority: self
                 .instruction
@@ -443,14 +457,14 @@ impl<'a, 'b> SetCooldownCpiBuilder<'a, 'b> {
 }
 
 #[derive(Clone, Debug)]
-struct SetCooldownCpiBuilderInstruction<'a, 'b> {
+struct ExpediteRequestsCpiBuilderInstruction<'a, 'b> {
     __program: &'b solana_account_info::AccountInfo<'a>,
     queue: Option<&'b solana_account_info::AccountInfo<'a>>,
     vault_state: Option<&'b solana_account_info::AccountInfo<'a>>,
-    admin: Option<&'b solana_account_info::AccountInfo<'a>>,
+    authority: Option<&'b solana_account_info::AccountInfo<'a>>,
     event_authority: Option<&'b solana_account_info::AccountInfo<'a>>,
     program: Option<&'b solana_account_info::AccountInfo<'a>>,
-    seconds: Option<u64>,
+    expected_sequences: Option<Vec<u64>>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
 }

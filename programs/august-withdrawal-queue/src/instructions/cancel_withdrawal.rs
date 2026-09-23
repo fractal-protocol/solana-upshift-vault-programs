@@ -24,38 +24,63 @@ use anchor_spl::token_interface::{
 /// drop before the transfer; the account closes on exit with its rent to the
 /// owner.
 pub fn handler(ctx: Context<CancelWithdrawal>, expected_sequence: u64) -> Result<()> {
-    let request = &ctx.accounts.request;
     require!(
-        request.sequence == expected_sequence,
+        ctx.accounts.request.sequence == expected_sequence,
         ErrorCode::StaleRequestSequence
     );
-    let shares = request.shares;
-    ctx.accounts.queue.close_request(shares)?;
+    let event = return_shares(
+        &mut ctx.accounts.queue,
+        &ctx.accounts.request,
+        ctx.accounts.escrow_shares.to_account_info(),
+        ctx.accounts.destination_share_account.to_account_info(),
+        &ctx.accounts.share_mint,
+        ctx.accounts.token_program.to_account_info(),
+        ctx.accounts.owner.key(),
+    )?;
+    emit_cpi!(event);
+    Ok(())
+}
 
-    let seeds = ctx.accounts.queue.signer_seeds();
+/// The settlement both cancels share: the counters drop and the escrowed shares
+/// move to `destination` under the queue's signature. Returns the event naming
+/// `by` for the caller to emit, since `emit_cpi!` needs the caller's `ctx`. The
+/// caller's `close = owner` constraint returns the rent on exit.
+pub(crate) fn return_shares<'info>(
+    queue: &mut Account<'info, WithdrawalQueue>,
+    request: &Account<'info, WithdrawalRequest>,
+    escrow_shares: AccountInfo<'info>,
+    destination: AccountInfo<'info>,
+    share_mint: &InterfaceAccount<'info, Mint>,
+    token_program: AccountInfo<'info>,
+    by: Pubkey,
+) -> Result<WithdrawalCancelled> {
+    let shares = request.shares;
+    queue.close_request(shares)?;
+
+    let seeds = queue.signer_seeds();
+    let destination_key = destination.key();
     transfer_checked(
         CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
+            token_program,
             TransferChecked {
-                from: ctx.accounts.escrow_shares.to_account_info(),
-                to: ctx.accounts.destination_share_account.to_account_info(),
-                authority: ctx.accounts.queue.to_account_info(),
-                mint: ctx.accounts.share_mint.to_account_info(),
+                from: escrow_shares,
+                to: destination,
+                authority: queue.to_account_info(),
+                mint: share_mint.to_account_info(),
             },
             &[&seeds],
         ),
         shares,
-        ctx.accounts.share_mint.decimals,
+        share_mint.decimals,
     )?;
 
-    emit!(WithdrawalCancelled::snapshot(
-        &ctx.accounts.request,
-        ctx.accounts.queue.vault_state,
-        ctx.accounts.request.key(),
-        ctx.accounts.owner.key(),
-        ctx.accounts.destination_share_account.key(),
-    ));
-    Ok(())
+    Ok(WithdrawalCancelled::snapshot(
+        request,
+        queue.vault_state,
+        request.key(),
+        by,
+        destination_key,
+    ))
 }
 
 /// Every deserialized account is boxed; see `InitializeQueue` for why.
@@ -66,6 +91,7 @@ pub fn handler(ctx: Context<CancelWithdrawal>, expected_sequence: u64) -> Result
 /// own action. It must already exist. The SDK prepends the idempotent ATA
 /// create to the same transaction, so the owner pays for it exactly when it is
 /// missing.
+#[event_cpi]
 #[derive(Accounts)]
 pub struct CancelWithdrawal<'info> {
     #[account(

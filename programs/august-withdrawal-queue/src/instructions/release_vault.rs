@@ -47,7 +47,7 @@ pub fn handler(ctx: Context<ReleaseVault>) -> Result<()> {
     ))?;
 
     let queue = &ctx.accounts.queue;
-    emit!(VaultReleased {
+    emit_cpi!(VaultReleased {
         vault: queue.vault_state,
         queue: queue.key(),
         pending_requests: queue.pending_requests,
@@ -59,6 +59,7 @@ pub fn handler(ctx: Context<ReleaseVault>) -> Result<()> {
 /// Every deserialized account is boxed; see `InitializeQueue` for why. The
 /// admin signs the outer transaction and is passed through to the vault, whose
 /// own admin constraint is not waived by the queue's co-signature.
+#[event_cpi]
 #[derive(Accounts)]
 pub struct ReleaseVault<'info> {
     #[account(

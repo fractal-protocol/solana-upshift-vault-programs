@@ -20,6 +20,7 @@ use august_vault::state::vault::VaultState;
 /// stored vault, not the passed account, so that check speaks only to the stored
 /// bump: a queue created with a wrong bump fails here, on its first admin call,
 /// rather than at the first PDA-signed transfer.
+#[event_cpi]
 #[derive(Accounts)]
 pub struct QueueAdmin<'info> {
     #[account(

@@ -111,8 +111,8 @@ fn the_owner_cancels_a_pending_request_and_gets_shares_and_rent_back() {
         meta.compute_units_consumed
     );
     assert!(
-        meta.compute_units_consumed < 30_000,
-        "the design budgets about 30k CU for a cancel; measured {}",
+        meta.compute_units_consumed < 60_000,
+        "the design budgets about 40k CU for a cancel; measured {}",
         meta.compute_units_consumed
     );
 

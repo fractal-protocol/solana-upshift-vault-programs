@@ -23,6 +23,7 @@
 //! is produced. With it, attaching a queue is reversible.
 
 pub mod auth;
+pub mod batch;
 pub mod errors;
 pub mod events;
 pub mod instructions;
@@ -30,7 +31,9 @@ pub mod mint_policy;
 pub mod recipient;
 pub mod state;
 
+use instructions::admin_cancel_withdrawal::*;
 use instructions::cancel_withdrawal::*;
+use instructions::expedite_request::*;
 use instructions::finalize_withdrawal::*;
 use instructions::initialize_queue::*;
 use instructions::queue_admin::*;
@@ -139,5 +142,58 @@ pub mod august_withdrawal_queue {
     /// ones. The queue account persists, so the vault can be attached again.
     pub fn release_vault(ctx: Context<ReleaseVault>) -> Result<()> {
         return instructions::release_vault::handler(ctx);
+    }
+
+    /// Admin returns a request's shares to its owner without the owner's
+    /// involvement, into any share account the owner controls (created by the
+    /// admin in the same transaction if need be). Only once the vault is
+    /// released, so it can never reset a waiting user; it exists to clear
+    /// abandoned escrow, which would otherwise block `close_vault`.
+    ///
+    /// ### Parameters
+    /// - `expected_sequence` - The request's stamp, as for `update_request`
+    pub fn admin_cancel_withdrawal(
+        ctx: Context<AdminCancelWithdrawal>,
+        expected_sequence: u64,
+    ) -> Result<()> {
+        return instructions::admin_cancel_withdrawal::handler(ctx, expected_sequence);
+    }
+
+    /// Admin or operator makes one not-yet-eligible request finalizable now:
+    /// `eligible_at` moves to the current time; `scheduled_eligible_at` and
+    /// `expires_at` do not, so the window only ever widens. An eligible or
+    /// expired request is refused.
+    ///
+    /// ### Parameters
+    /// - `expected_sequence` - The request's stamp, as for `update_request`
+    pub fn expedite_request(ctx: Context<ExpediteRequest>, expected_sequence: u64) -> Result<()> {
+        return instructions::expedite_request::handler(ctx, expected_sequence);
+    }
+
+    /// `expedite_request` over the trailing request accounts, one expected
+    /// sequence each, in strictly ascending key order. Any request failing a
+    /// precondition aborts the whole batch.
+    ///
+    /// ### Parameters
+    /// - `expected_sequences` - One stamp per trailing request account, in order
+    pub fn expedite_requests<'info>(
+        ctx: Context<'_, '_, 'info, 'info, ExpediteRequests<'info>>,
+        expected_sequences: Vec<u64>,
+    ) -> Result<()> {
+        return instructions::expedite_request::handler_batch(ctx, expected_sequences);
+    }
+
+    /// `finalize_withdrawal` over the trailing accounts, three per request:
+    /// the request, its owner and its recipient, in strictly ascending request
+    /// order. The vault-side accounts are passed once. Any request failing a
+    /// precondition, a liquidity shortfall included, aborts the whole batch.
+    ///
+    /// ### Parameters
+    /// - `expected_sequences` - One stamp per request, in order
+    pub fn finalize_withdrawals<'info>(
+        ctx: Context<'_, '_, 'info, 'info, FinalizeWithdrawals<'info>>,
+        expected_sequences: Vec<u64>,
+    ) -> Result<()> {
+        return instructions::finalize_withdrawal::handler_batch(ctx, expected_sequences);
     }
 }

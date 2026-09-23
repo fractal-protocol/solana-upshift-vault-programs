@@ -36,6 +36,27 @@ pub fn require_vault_admin(
     Ok(())
 }
 
+/// Requires `signer` to be the current admin or operator of the vault this
+/// queue serves, for the fast-track (decision 15), which product gave to both
+/// keys since the operator runs day-to-day liquidity.
+pub fn require_vault_admin_or_operator(
+    queue: &WithdrawalQueue,
+    vault_state: &Account<'_, VaultState>,
+    signer: &Signer<'_>,
+) -> Result<()> {
+    require_keys_eq!(
+        vault_state.key(),
+        queue.vault_state,
+        ErrorCode::VaultMismatch
+    );
+    let key = signer.key();
+    require!(
+        key == vault_state.admin || key == vault_state.operator,
+        ErrorCode::NotVaultAdminOrOperator
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

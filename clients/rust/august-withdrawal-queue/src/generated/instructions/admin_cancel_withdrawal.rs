@@ -8,34 +8,49 @@
 use borsh::BorshDeserialize;
 use borsh::BorshSerialize;
 
-pub const SET_COOLDOWN_DISCRIMINATOR: [u8; 8] = [57, 78, 91, 178, 112, 152, 211, 87];
+pub const ADMIN_CANCEL_WITHDRAWAL_DISCRIMINATOR: [u8; 8] = [230, 36, 74, 94, 52, 167, 241, 29];
 
 /// Accounts.
 #[derive(Debug)]
-pub struct SetCooldown {
+pub struct AdminCancelWithdrawal {
     pub queue: solana_pubkey::Pubkey,
-
+    /// Read for its admin and its authority, never written.
     pub vault_state: solana_pubkey::Pubkey,
 
     pub admin: solana_pubkey::Pubkey,
+    /// Closed with its rent to `owner`.
+    pub request: solana_pubkey::Pubkey,
+    /// need not sign.
+    pub owner: solana_pubkey::Pubkey,
+
+    pub escrow_shares: solana_pubkey::Pubkey,
+
+    pub share_mint: solana_pubkey::Pubkey,
+
+    pub destination_share_account: solana_pubkey::Pubkey,
+
+    pub token_program: solana_pubkey::Pubkey,
 
     pub event_authority: solana_pubkey::Pubkey,
 
     pub program: solana_pubkey::Pubkey,
 }
 
-impl SetCooldown {
-    pub fn instruction(&self, args: SetCooldownInstructionArgs) -> solana_instruction::Instruction {
+impl AdminCancelWithdrawal {
+    pub fn instruction(
+        &self,
+        args: AdminCancelWithdrawalInstructionArgs,
+    ) -> solana_instruction::Instruction {
         self.instruction_with_remaining_accounts(args, &[])
     }
     #[allow(clippy::arithmetic_side_effects)]
     #[allow(clippy::vec_init_then_push)]
     pub fn instruction_with_remaining_accounts(
         &self,
-        args: SetCooldownInstructionArgs,
+        args: AdminCancelWithdrawalInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
-        let mut accounts = Vec::with_capacity(5 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(11 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(self.queue, false));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.vault_state,
@@ -43,6 +58,24 @@ impl SetCooldown {
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.admin, true,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(self.request, false));
+        accounts.push(solana_instruction::AccountMeta::new(self.owner, false));
+        accounts.push(solana_instruction::AccountMeta::new(
+            self.escrow_shares,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.share_mint,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            self.destination_share_account,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.token_program,
+            false,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.event_authority,
@@ -53,7 +86,9 @@ impl SetCooldown {
             false,
         ));
         accounts.extend_from_slice(remaining_accounts);
-        let mut data = SetCooldownInstructionData::new().try_to_vec().unwrap();
+        let mut data = AdminCancelWithdrawalInstructionData::new()
+            .try_to_vec()
+            .unwrap();
         let mut args = args.try_to_vec().unwrap();
         data.append(&mut args);
 
@@ -67,14 +102,14 @@ impl SetCooldown {
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SetCooldownInstructionData {
+pub struct AdminCancelWithdrawalInstructionData {
     discriminator: [u8; 8],
 }
 
-impl SetCooldownInstructionData {
+impl AdminCancelWithdrawalInstructionData {
     pub fn new() -> Self {
         Self {
-            discriminator: [57, 78, 91, 178, 112, 152, 211, 87],
+            discriminator: [230, 36, 74, 94, 52, 167, 241, 29],
         }
     }
 
@@ -83,7 +118,7 @@ impl SetCooldownInstructionData {
     }
 }
 
-impl Default for SetCooldownInstructionData {
+impl Default for AdminCancelWithdrawalInstructionData {
     fn default() -> Self {
         Self::new()
     }
@@ -91,37 +126,49 @@ impl Default for SetCooldownInstructionData {
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SetCooldownInstructionArgs {
-    pub seconds: u64,
+pub struct AdminCancelWithdrawalInstructionArgs {
+    pub expected_sequence: u64,
 }
 
-impl SetCooldownInstructionArgs {
+impl AdminCancelWithdrawalInstructionArgs {
     pub(crate) fn try_to_vec(&self) -> Result<Vec<u8>, std::io::Error> {
         borsh::to_vec(self)
     }
 }
 
-/// Instruction builder for `SetCooldown`.
+/// Instruction builder for `AdminCancelWithdrawal`.
 ///
 /// ### Accounts:
 ///
 ///   0. `[writable]` queue
 ///   1. `[]` vault_state
 ///   2. `[signer]` admin
-///   3. `[]` event_authority
-///   4. `[]` program
+///   3. `[writable]` request
+///   4. `[writable]` owner
+///   5. `[writable]` escrow_shares
+///   6. `[]` share_mint
+///   7. `[writable]` destination_share_account
+///   8. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
+///   9. `[]` event_authority
+///   10. `[]` program
 #[derive(Clone, Debug, Default)]
-pub struct SetCooldownBuilder {
+pub struct AdminCancelWithdrawalBuilder {
     queue: Option<solana_pubkey::Pubkey>,
     vault_state: Option<solana_pubkey::Pubkey>,
     admin: Option<solana_pubkey::Pubkey>,
+    request: Option<solana_pubkey::Pubkey>,
+    owner: Option<solana_pubkey::Pubkey>,
+    escrow_shares: Option<solana_pubkey::Pubkey>,
+    share_mint: Option<solana_pubkey::Pubkey>,
+    destination_share_account: Option<solana_pubkey::Pubkey>,
+    token_program: Option<solana_pubkey::Pubkey>,
     event_authority: Option<solana_pubkey::Pubkey>,
     program: Option<solana_pubkey::Pubkey>,
-    seconds: Option<u64>,
+    expected_sequence: Option<u64>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
-impl SetCooldownBuilder {
+impl AdminCancelWithdrawalBuilder {
     pub fn new() -> Self {
         Self::default()
     }
@@ -130,6 +177,7 @@ impl SetCooldownBuilder {
         self.queue = Some(queue);
         self
     }
+    /// Read for its admin and its authority, never written.
     #[inline(always)]
     pub fn vault_state(&mut self, vault_state: solana_pubkey::Pubkey) -> &mut Self {
         self.vault_state = Some(vault_state);
@@ -138,6 +186,42 @@ impl SetCooldownBuilder {
     #[inline(always)]
     pub fn admin(&mut self, admin: solana_pubkey::Pubkey) -> &mut Self {
         self.admin = Some(admin);
+        self
+    }
+    /// Closed with its rent to `owner`.
+    #[inline(always)]
+    pub fn request(&mut self, request: solana_pubkey::Pubkey) -> &mut Self {
+        self.request = Some(request);
+        self
+    }
+    /// need not sign.
+    #[inline(always)]
+    pub fn owner(&mut self, owner: solana_pubkey::Pubkey) -> &mut Self {
+        self.owner = Some(owner);
+        self
+    }
+    #[inline(always)]
+    pub fn escrow_shares(&mut self, escrow_shares: solana_pubkey::Pubkey) -> &mut Self {
+        self.escrow_shares = Some(escrow_shares);
+        self
+    }
+    #[inline(always)]
+    pub fn share_mint(&mut self, share_mint: solana_pubkey::Pubkey) -> &mut Self {
+        self.share_mint = Some(share_mint);
+        self
+    }
+    #[inline(always)]
+    pub fn destination_share_account(
+        &mut self,
+        destination_share_account: solana_pubkey::Pubkey,
+    ) -> &mut Self {
+        self.destination_share_account = Some(destination_share_account);
+        self
+    }
+    /// `[optional account, default to 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA']`
+    #[inline(always)]
+    pub fn token_program(&mut self, token_program: solana_pubkey::Pubkey) -> &mut Self {
+        self.token_program = Some(token_program);
         self
     }
     #[inline(always)]
@@ -151,8 +235,8 @@ impl SetCooldownBuilder {
         self
     }
     #[inline(always)]
-    pub fn seconds(&mut self, seconds: u64) -> &mut Self {
-        self.seconds = Some(seconds);
+    pub fn expected_sequence(&mut self, expected_sequence: u64) -> &mut Self {
+        self.expected_sequence = Some(expected_sequence);
         self
     }
     /// Add an additional account to the instruction.
@@ -172,63 +256,106 @@ impl SetCooldownBuilder {
     }
     #[allow(clippy::clone_on_copy)]
     pub fn instruction(&self) -> solana_instruction::Instruction {
-        let accounts = SetCooldown {
+        let accounts = AdminCancelWithdrawal {
             queue: self.queue.expect("queue is not set"),
             vault_state: self.vault_state.expect("vault_state is not set"),
             admin: self.admin.expect("admin is not set"),
+            request: self.request.expect("request is not set"),
+            owner: self.owner.expect("owner is not set"),
+            escrow_shares: self.escrow_shares.expect("escrow_shares is not set"),
+            share_mint: self.share_mint.expect("share_mint is not set"),
+            destination_share_account: self
+                .destination_share_account
+                .expect("destination_share_account is not set"),
+            token_program: self.token_program.unwrap_or(solana_pubkey::pubkey!(
+                "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+            )),
             event_authority: self.event_authority.expect("event_authority is not set"),
             program: self.program.expect("program is not set"),
         };
-        let args = SetCooldownInstructionArgs {
-            seconds: self.seconds.clone().expect("seconds is not set"),
+        let args = AdminCancelWithdrawalInstructionArgs {
+            expected_sequence: self
+                .expected_sequence
+                .clone()
+                .expect("expected_sequence is not set"),
         };
 
         accounts.instruction_with_remaining_accounts(args, &self.__remaining_accounts)
     }
 }
 
-/// `set_cooldown` CPI accounts.
-pub struct SetCooldownCpiAccounts<'a, 'b> {
+/// `admin_cancel_withdrawal` CPI accounts.
+pub struct AdminCancelWithdrawalCpiAccounts<'a, 'b> {
     pub queue: &'b solana_account_info::AccountInfo<'a>,
-
+    /// Read for its admin and its authority, never written.
     pub vault_state: &'b solana_account_info::AccountInfo<'a>,
 
     pub admin: &'b solana_account_info::AccountInfo<'a>,
+    /// Closed with its rent to `owner`.
+    pub request: &'b solana_account_info::AccountInfo<'a>,
+    /// need not sign.
+    pub owner: &'b solana_account_info::AccountInfo<'a>,
+
+    pub escrow_shares: &'b solana_account_info::AccountInfo<'a>,
+
+    pub share_mint: &'b solana_account_info::AccountInfo<'a>,
+
+    pub destination_share_account: &'b solana_account_info::AccountInfo<'a>,
+
+    pub token_program: &'b solana_account_info::AccountInfo<'a>,
 
     pub event_authority: &'b solana_account_info::AccountInfo<'a>,
 
     pub program: &'b solana_account_info::AccountInfo<'a>,
 }
 
-/// `set_cooldown` CPI instruction.
-pub struct SetCooldownCpi<'a, 'b> {
+/// `admin_cancel_withdrawal` CPI instruction.
+pub struct AdminCancelWithdrawalCpi<'a, 'b> {
     /// The program to invoke.
     pub __program: &'b solana_account_info::AccountInfo<'a>,
 
     pub queue: &'b solana_account_info::AccountInfo<'a>,
-
+    /// Read for its admin and its authority, never written.
     pub vault_state: &'b solana_account_info::AccountInfo<'a>,
 
     pub admin: &'b solana_account_info::AccountInfo<'a>,
+    /// Closed with its rent to `owner`.
+    pub request: &'b solana_account_info::AccountInfo<'a>,
+    /// need not sign.
+    pub owner: &'b solana_account_info::AccountInfo<'a>,
+
+    pub escrow_shares: &'b solana_account_info::AccountInfo<'a>,
+
+    pub share_mint: &'b solana_account_info::AccountInfo<'a>,
+
+    pub destination_share_account: &'b solana_account_info::AccountInfo<'a>,
+
+    pub token_program: &'b solana_account_info::AccountInfo<'a>,
 
     pub event_authority: &'b solana_account_info::AccountInfo<'a>,
 
     pub program: &'b solana_account_info::AccountInfo<'a>,
     /// The arguments for the instruction.
-    pub __args: SetCooldownInstructionArgs,
+    pub __args: AdminCancelWithdrawalInstructionArgs,
 }
 
-impl<'a, 'b> SetCooldownCpi<'a, 'b> {
+impl<'a, 'b> AdminCancelWithdrawalCpi<'a, 'b> {
     pub fn new(
         program: &'b solana_account_info::AccountInfo<'a>,
-        accounts: SetCooldownCpiAccounts<'a, 'b>,
-        args: SetCooldownInstructionArgs,
+        accounts: AdminCancelWithdrawalCpiAccounts<'a, 'b>,
+        args: AdminCancelWithdrawalInstructionArgs,
     ) -> Self {
         Self {
             __program: program,
             queue: accounts.queue,
             vault_state: accounts.vault_state,
             admin: accounts.admin,
+            request: accounts.request,
+            owner: accounts.owner,
+            escrow_shares: accounts.escrow_shares,
+            share_mint: accounts.share_mint,
+            destination_share_account: accounts.destination_share_account,
+            token_program: accounts.token_program,
             event_authority: accounts.event_authority,
             program: accounts.program,
             __args: args,
@@ -257,7 +384,7 @@ impl<'a, 'b> SetCooldownCpi<'a, 'b> {
         signers_seeds: &[&[&[u8]]],
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
-        let mut accounts = Vec::with_capacity(5 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(11 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(*self.queue.key, false));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.vault_state.key,
@@ -266,6 +393,27 @@ impl<'a, 'b> SetCooldownCpi<'a, 'b> {
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.admin.key,
             true,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            *self.request.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(*self.owner.key, false));
+        accounts.push(solana_instruction::AccountMeta::new(
+            *self.escrow_shares.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.share_mint.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            *self.destination_share_account.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.token_program.key,
+            false,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.event_authority.key,
@@ -282,7 +430,9 @@ impl<'a, 'b> SetCooldownCpi<'a, 'b> {
                 is_writable: remaining_account.2,
             })
         });
-        let mut data = SetCooldownInstructionData::new().try_to_vec().unwrap();
+        let mut data = AdminCancelWithdrawalInstructionData::new()
+            .try_to_vec()
+            .unwrap();
         let mut args = self.__args.try_to_vec().unwrap();
         data.append(&mut args);
 
@@ -291,11 +441,17 @@ impl<'a, 'b> SetCooldownCpi<'a, 'b> {
             accounts,
             data,
         };
-        let mut account_infos = Vec::with_capacity(6 + remaining_accounts.len());
+        let mut account_infos = Vec::with_capacity(12 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
         account_infos.push(self.queue.clone());
         account_infos.push(self.vault_state.clone());
         account_infos.push(self.admin.clone());
+        account_infos.push(self.request.clone());
+        account_infos.push(self.owner.clone());
+        account_infos.push(self.escrow_shares.clone());
+        account_infos.push(self.share_mint.clone());
+        account_infos.push(self.destination_share_account.clone());
+        account_infos.push(self.token_program.clone());
         account_infos.push(self.event_authority.clone());
         account_infos.push(self.program.clone());
         remaining_accounts
@@ -310,30 +466,42 @@ impl<'a, 'b> SetCooldownCpi<'a, 'b> {
     }
 }
 
-/// Instruction builder for `SetCooldown` via CPI.
+/// Instruction builder for `AdminCancelWithdrawal` via CPI.
 ///
 /// ### Accounts:
 ///
 ///   0. `[writable]` queue
 ///   1. `[]` vault_state
 ///   2. `[signer]` admin
-///   3. `[]` event_authority
-///   4. `[]` program
+///   3. `[writable]` request
+///   4. `[writable]` owner
+///   5. `[writable]` escrow_shares
+///   6. `[]` share_mint
+///   7. `[writable]` destination_share_account
+///   8. `[]` token_program
+///   9. `[]` event_authority
+///   10. `[]` program
 #[derive(Clone, Debug)]
-pub struct SetCooldownCpiBuilder<'a, 'b> {
-    instruction: Box<SetCooldownCpiBuilderInstruction<'a, 'b>>,
+pub struct AdminCancelWithdrawalCpiBuilder<'a, 'b> {
+    instruction: Box<AdminCancelWithdrawalCpiBuilderInstruction<'a, 'b>>,
 }
 
-impl<'a, 'b> SetCooldownCpiBuilder<'a, 'b> {
+impl<'a, 'b> AdminCancelWithdrawalCpiBuilder<'a, 'b> {
     pub fn new(program: &'b solana_account_info::AccountInfo<'a>) -> Self {
-        let instruction = Box::new(SetCooldownCpiBuilderInstruction {
+        let instruction = Box::new(AdminCancelWithdrawalCpiBuilderInstruction {
             __program: program,
             queue: None,
             vault_state: None,
             admin: None,
+            request: None,
+            owner: None,
+            escrow_shares: None,
+            share_mint: None,
+            destination_share_account: None,
+            token_program: None,
             event_authority: None,
             program: None,
-            seconds: None,
+            expected_sequence: None,
             __remaining_accounts: Vec::new(),
         });
         Self { instruction }
@@ -343,6 +511,7 @@ impl<'a, 'b> SetCooldownCpiBuilder<'a, 'b> {
         self.instruction.queue = Some(queue);
         self
     }
+    /// Read for its admin and its authority, never written.
     #[inline(always)]
     pub fn vault_state(
         &mut self,
@@ -354,6 +523,50 @@ impl<'a, 'b> SetCooldownCpiBuilder<'a, 'b> {
     #[inline(always)]
     pub fn admin(&mut self, admin: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.admin = Some(admin);
+        self
+    }
+    /// Closed with its rent to `owner`.
+    #[inline(always)]
+    pub fn request(&mut self, request: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
+        self.instruction.request = Some(request);
+        self
+    }
+    /// need not sign.
+    #[inline(always)]
+    pub fn owner(&mut self, owner: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
+        self.instruction.owner = Some(owner);
+        self
+    }
+    #[inline(always)]
+    pub fn escrow_shares(
+        &mut self,
+        escrow_shares: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.escrow_shares = Some(escrow_shares);
+        self
+    }
+    #[inline(always)]
+    pub fn share_mint(
+        &mut self,
+        share_mint: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.share_mint = Some(share_mint);
+        self
+    }
+    #[inline(always)]
+    pub fn destination_share_account(
+        &mut self,
+        destination_share_account: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.destination_share_account = Some(destination_share_account);
+        self
+    }
+    #[inline(always)]
+    pub fn token_program(
+        &mut self,
+        token_program: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.token_program = Some(token_program);
         self
     }
     #[inline(always)]
@@ -370,8 +583,8 @@ impl<'a, 'b> SetCooldownCpiBuilder<'a, 'b> {
         self
     }
     #[inline(always)]
-    pub fn seconds(&mut self, seconds: u64) -> &mut Self {
-        self.instruction.seconds = Some(seconds);
+    pub fn expected_sequence(&mut self, expected_sequence: u64) -> &mut Self {
+        self.instruction.expected_sequence = Some(expected_sequence);
         self
     }
     /// Add an additional account to the instruction.
@@ -408,14 +621,14 @@ impl<'a, 'b> SetCooldownCpiBuilder<'a, 'b> {
     #[allow(clippy::clone_on_copy)]
     #[allow(clippy::vec_init_then_push)]
     pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
-        let args = SetCooldownInstructionArgs {
-            seconds: self
+        let args = AdminCancelWithdrawalInstructionArgs {
+            expected_sequence: self
                 .instruction
-                .seconds
+                .expected_sequence
                 .clone()
-                .expect("seconds is not set"),
+                .expect("expected_sequence is not set"),
         };
-        let instruction = SetCooldownCpi {
+        let instruction = AdminCancelWithdrawalCpi {
             __program: self.instruction.__program,
 
             queue: self.instruction.queue.expect("queue is not set"),
@@ -426,6 +639,27 @@ impl<'a, 'b> SetCooldownCpiBuilder<'a, 'b> {
                 .expect("vault_state is not set"),
 
             admin: self.instruction.admin.expect("admin is not set"),
+
+            request: self.instruction.request.expect("request is not set"),
+
+            owner: self.instruction.owner.expect("owner is not set"),
+
+            escrow_shares: self
+                .instruction
+                .escrow_shares
+                .expect("escrow_shares is not set"),
+
+            share_mint: self.instruction.share_mint.expect("share_mint is not set"),
+
+            destination_share_account: self
+                .instruction
+                .destination_share_account
+                .expect("destination_share_account is not set"),
+
+            token_program: self
+                .instruction
+                .token_program
+                .expect("token_program is not set"),
 
             event_authority: self
                 .instruction
@@ -443,14 +677,20 @@ impl<'a, 'b> SetCooldownCpiBuilder<'a, 'b> {
 }
 
 #[derive(Clone, Debug)]
-struct SetCooldownCpiBuilderInstruction<'a, 'b> {
+struct AdminCancelWithdrawalCpiBuilderInstruction<'a, 'b> {
     __program: &'b solana_account_info::AccountInfo<'a>,
     queue: Option<&'b solana_account_info::AccountInfo<'a>>,
     vault_state: Option<&'b solana_account_info::AccountInfo<'a>>,
     admin: Option<&'b solana_account_info::AccountInfo<'a>>,
+    request: Option<&'b solana_account_info::AccountInfo<'a>>,
+    owner: Option<&'b solana_account_info::AccountInfo<'a>>,
+    escrow_shares: Option<&'b solana_account_info::AccountInfo<'a>>,
+    share_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
+    destination_share_account: Option<&'b solana_account_info::AccountInfo<'a>>,
+    token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
     event_authority: Option<&'b solana_account_info::AccountInfo<'a>>,
     program: Option<&'b solana_account_info::AccountInfo<'a>>,
-    seconds: Option<u64>,
+    expected_sequence: Option<u64>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
 }

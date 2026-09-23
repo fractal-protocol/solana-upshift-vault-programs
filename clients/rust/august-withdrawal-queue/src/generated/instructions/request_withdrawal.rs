@@ -35,6 +35,10 @@ pub struct RequestWithdrawal {
     pub token_program: solana_pubkey::Pubkey,
 
     pub system_program: solana_pubkey::Pubkey,
+
+    pub event_authority: solana_pubkey::Pubkey,
+
+    pub program: solana_pubkey::Pubkey,
 }
 
 impl RequestWithdrawal {
@@ -51,7 +55,7 @@ impl RequestWithdrawal {
         args: RequestWithdrawalInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
-        let mut accounts = Vec::with_capacity(10 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(12 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(self.queue, false));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.vault_state,
@@ -81,6 +85,14 @@ impl RequestWithdrawal {
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.system_program,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.event_authority,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.program,
             false,
         ));
         accounts.extend_from_slice(remaining_accounts);
@@ -150,6 +162,8 @@ impl RequestWithdrawalInstructionArgs {
 ///   7. `[writable]` request
 ///   8. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
 ///   9. `[optional]` system_program (default to `11111111111111111111111111111111`)
+///   10. `[]` event_authority
+///   11. `[]` program
 #[derive(Clone, Debug, Default)]
 pub struct RequestWithdrawalBuilder {
     queue: Option<solana_pubkey::Pubkey>,
@@ -162,6 +176,8 @@ pub struct RequestWithdrawalBuilder {
     request: Option<solana_pubkey::Pubkey>,
     token_program: Option<solana_pubkey::Pubkey>,
     system_program: Option<solana_pubkey::Pubkey>,
+    event_authority: Option<solana_pubkey::Pubkey>,
+    program: Option<solana_pubkey::Pubkey>,
     request_id: Option<u64>,
     shares: Option<u64>,
     finalizer: Option<Pubkey>,
@@ -233,6 +249,16 @@ impl RequestWithdrawalBuilder {
         self
     }
     #[inline(always)]
+    pub fn event_authority(&mut self, event_authority: solana_pubkey::Pubkey) -> &mut Self {
+        self.event_authority = Some(event_authority);
+        self
+    }
+    #[inline(always)]
+    pub fn program(&mut self, program: solana_pubkey::Pubkey) -> &mut Self {
+        self.program = Some(program);
+        self
+    }
+    #[inline(always)]
     pub fn request_id(&mut self, request_id: u64) -> &mut Self {
         self.request_id = Some(request_id);
         self
@@ -283,6 +309,8 @@ impl RequestWithdrawalBuilder {
             system_program: self
                 .system_program
                 .unwrap_or(solana_pubkey::pubkey!("11111111111111111111111111111111")),
+            event_authority: self.event_authority.expect("event_authority is not set"),
+            program: self.program.expect("program is not set"),
         };
         let args = RequestWithdrawalInstructionArgs {
             request_id: self.request_id.clone().expect("request_id is not set"),
@@ -317,6 +345,10 @@ pub struct RequestWithdrawalCpiAccounts<'a, 'b> {
     pub token_program: &'b solana_account_info::AccountInfo<'a>,
 
     pub system_program: &'b solana_account_info::AccountInfo<'a>,
+
+    pub event_authority: &'b solana_account_info::AccountInfo<'a>,
+
+    pub program: &'b solana_account_info::AccountInfo<'a>,
 }
 
 /// `request_withdrawal` CPI instruction.
@@ -345,6 +377,10 @@ pub struct RequestWithdrawalCpi<'a, 'b> {
     pub token_program: &'b solana_account_info::AccountInfo<'a>,
 
     pub system_program: &'b solana_account_info::AccountInfo<'a>,
+
+    pub event_authority: &'b solana_account_info::AccountInfo<'a>,
+
+    pub program: &'b solana_account_info::AccountInfo<'a>,
     /// The arguments for the instruction.
     pub __args: RequestWithdrawalInstructionArgs,
 }
@@ -367,6 +403,8 @@ impl<'a, 'b> RequestWithdrawalCpi<'a, 'b> {
             request: accounts.request,
             token_program: accounts.token_program,
             system_program: accounts.system_program,
+            event_authority: accounts.event_authority,
+            program: accounts.program,
             __args: args,
         }
     }
@@ -393,7 +431,7 @@ impl<'a, 'b> RequestWithdrawalCpi<'a, 'b> {
         signers_seeds: &[&[&[u8]]],
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
-        let mut accounts = Vec::with_capacity(10 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(12 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(*self.queue.key, false));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.vault_state.key,
@@ -428,6 +466,14 @@ impl<'a, 'b> RequestWithdrawalCpi<'a, 'b> {
             *self.system_program.key,
             false,
         ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.event_authority.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.program.key,
+            false,
+        ));
         remaining_accounts.iter().for_each(|remaining_account| {
             accounts.push(solana_instruction::AccountMeta {
                 pubkey: *remaining_account.0.key,
@@ -446,7 +492,7 @@ impl<'a, 'b> RequestWithdrawalCpi<'a, 'b> {
             accounts,
             data,
         };
-        let mut account_infos = Vec::with_capacity(11 + remaining_accounts.len());
+        let mut account_infos = Vec::with_capacity(13 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
         account_infos.push(self.queue.clone());
         account_infos.push(self.vault_state.clone());
@@ -458,6 +504,8 @@ impl<'a, 'b> RequestWithdrawalCpi<'a, 'b> {
         account_infos.push(self.request.clone());
         account_infos.push(self.token_program.clone());
         account_infos.push(self.system_program.clone());
+        account_infos.push(self.event_authority.clone());
+        account_infos.push(self.program.clone());
         remaining_accounts
             .iter()
             .for_each(|remaining_account| account_infos.push(remaining_account.0.clone()));
@@ -484,6 +532,8 @@ impl<'a, 'b> RequestWithdrawalCpi<'a, 'b> {
 ///   7. `[writable]` request
 ///   8. `[]` token_program
 ///   9. `[]` system_program
+///   10. `[]` event_authority
+///   11. `[]` program
 #[derive(Clone, Debug)]
 pub struct RequestWithdrawalCpiBuilder<'a, 'b> {
     instruction: Box<RequestWithdrawalCpiBuilderInstruction<'a, 'b>>,
@@ -503,6 +553,8 @@ impl<'a, 'b> RequestWithdrawalCpiBuilder<'a, 'b> {
             request: None,
             token_program: None,
             system_program: None,
+            event_authority: None,
+            program: None,
             request_id: None,
             shares: None,
             finalizer: None,
@@ -584,6 +636,19 @@ impl<'a, 'b> RequestWithdrawalCpiBuilder<'a, 'b> {
         system_program: &'b solana_account_info::AccountInfo<'a>,
     ) -> &mut Self {
         self.instruction.system_program = Some(system_program);
+        self
+    }
+    #[inline(always)]
+    pub fn event_authority(
+        &mut self,
+        event_authority: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.event_authority = Some(event_authority);
+        self
+    }
+    #[inline(always)]
+    pub fn program(&mut self, program: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
+        self.instruction.program = Some(program);
         self
     }
     #[inline(always)]
@@ -688,6 +753,13 @@ impl<'a, 'b> RequestWithdrawalCpiBuilder<'a, 'b> {
                 .instruction
                 .system_program
                 .expect("system_program is not set"),
+
+            event_authority: self
+                .instruction
+                .event_authority
+                .expect("event_authority is not set"),
+
+            program: self.instruction.program.expect("program is not set"),
             __args: args,
         };
         instruction.invoke_signed_with_remaining_accounts(
@@ -710,6 +782,8 @@ struct RequestWithdrawalCpiBuilderInstruction<'a, 'b> {
     request: Option<&'b solana_account_info::AccountInfo<'a>>,
     token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
     system_program: Option<&'b solana_account_info::AccountInfo<'a>>,
+    event_authority: Option<&'b solana_account_info::AccountInfo<'a>>,
+    program: Option<&'b solana_account_info::AccountInfo<'a>>,
     request_id: Option<u64>,
     shares: Option<u64>,
     finalizer: Option<Pubkey>,

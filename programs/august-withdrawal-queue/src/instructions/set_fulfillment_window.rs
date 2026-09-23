@@ -21,6 +21,7 @@ pub fn handler(ctx: Context<QueueAdmin>, seconds: u64) -> Result<()> {
     let key = ctx.accounts.queue.key();
     let queue = &mut ctx.accounts.queue;
     queue.set_fulfillment_window(seconds)?;
-    emit!(QueueConfigUpdated::snapshot(queue, key));
+    let event = QueueConfigUpdated::snapshot(queue, key);
+    emit_cpi!(event);
     Ok(())
 }

@@ -8,23 +8,30 @@
 use borsh::BorshDeserialize;
 use borsh::BorshSerialize;
 
-pub const CANCEL_WITHDRAWAL_DISCRIMINATOR: [u8; 8] = [183, 104, 181, 250, 28, 128, 210, 70];
+pub const FINALIZE_WITHDRAWALS_DISCRIMINATOR: [u8; 8] = [255, 78, 62, 187, 134, 96, 144, 216];
 
 /// Accounts.
 #[derive(Debug)]
-pub struct CancelWithdrawal {
+pub struct FinalizeWithdrawals {
     pub queue: solana_pubkey::Pubkey,
-    /// Signs, and receives the request's rent.
-    pub owner: solana_pubkey::Pubkey,
-    /// Seeds come from its own stored fields rather than the signer, so a wrong
-    /// signer is reported as `NotRequestOwner`.
-    pub request: solana_pubkey::Pubkey,
+
+    pub vault_state: solana_pubkey::Pubkey,
+
+    pub vault_deposit_ata: solana_pubkey::Pubkey,
+
+    pub fee_recipient_account: solana_pubkey::Pubkey,
 
     pub escrow_shares: solana_pubkey::Pubkey,
 
+    pub escrow_assets: solana_pubkey::Pubkey,
+
     pub share_mint: solana_pubkey::Pubkey,
 
-    pub destination_share_account: solana_pubkey::Pubkey,
+    pub deposit_mint: solana_pubkey::Pubkey,
+    /// Whoever chooses the moment, for every request in the batch.
+    pub finalizer: solana_pubkey::Pubkey,
+
+    pub vault_program: solana_pubkey::Pubkey,
 
     pub token_program: solana_pubkey::Pubkey,
 
@@ -33,10 +40,10 @@ pub struct CancelWithdrawal {
     pub program: solana_pubkey::Pubkey,
 }
 
-impl CancelWithdrawal {
+impl FinalizeWithdrawals {
     pub fn instruction(
         &self,
-        args: CancelWithdrawalInstructionArgs,
+        args: FinalizeWithdrawalsInstructionArgs,
     ) -> solana_instruction::Instruction {
         self.instruction_with_remaining_accounts(args, &[])
     }
@@ -44,23 +51,42 @@ impl CancelWithdrawal {
     #[allow(clippy::vec_init_then_push)]
     pub fn instruction_with_remaining_accounts(
         &self,
-        args: CancelWithdrawalInstructionArgs,
+        args: FinalizeWithdrawalsInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
-        let mut accounts = Vec::with_capacity(9 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(13 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(self.queue, false));
-        accounts.push(solana_instruction::AccountMeta::new(self.owner, true));
-        accounts.push(solana_instruction::AccountMeta::new(self.request, false));
+        accounts.push(solana_instruction::AccountMeta::new(
+            self.vault_state,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            self.vault_deposit_ata,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            self.fee_recipient_account,
+            false,
+        ));
         accounts.push(solana_instruction::AccountMeta::new(
             self.escrow_shares,
             false,
         ));
-        accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.share_mint,
+        accounts.push(solana_instruction::AccountMeta::new(
+            self.escrow_assets,
             false,
         ));
+        accounts.push(solana_instruction::AccountMeta::new(self.share_mint, false));
         accounts.push(solana_instruction::AccountMeta::new(
-            self.destination_share_account,
+            self.deposit_mint,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.finalizer,
+            true,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.vault_program,
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
@@ -76,7 +102,9 @@ impl CancelWithdrawal {
             false,
         ));
         accounts.extend_from_slice(remaining_accounts);
-        let mut data = CancelWithdrawalInstructionData::new().try_to_vec().unwrap();
+        let mut data = FinalizeWithdrawalsInstructionData::new()
+            .try_to_vec()
+            .unwrap();
         let mut args = args.try_to_vec().unwrap();
         data.append(&mut args);
 
@@ -90,14 +118,14 @@ impl CancelWithdrawal {
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct CancelWithdrawalInstructionData {
+pub struct FinalizeWithdrawalsInstructionData {
     discriminator: [u8; 8],
 }
 
-impl CancelWithdrawalInstructionData {
+impl FinalizeWithdrawalsInstructionData {
     pub fn new() -> Self {
         Self {
-            discriminator: [183, 104, 181, 250, 28, 128, 210, 70],
+            discriminator: [255, 78, 62, 187, 134, 96, 144, 216],
         }
     }
 
@@ -106,7 +134,7 @@ impl CancelWithdrawalInstructionData {
     }
 }
 
-impl Default for CancelWithdrawalInstructionData {
+impl Default for FinalizeWithdrawalsInstructionData {
     fn default() -> Self {
         Self::new()
     }
@@ -114,45 +142,53 @@ impl Default for CancelWithdrawalInstructionData {
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct CancelWithdrawalInstructionArgs {
-    pub expected_sequence: u64,
+pub struct FinalizeWithdrawalsInstructionArgs {
+    pub expected_sequences: Vec<u64>,
 }
 
-impl CancelWithdrawalInstructionArgs {
+impl FinalizeWithdrawalsInstructionArgs {
     pub(crate) fn try_to_vec(&self) -> Result<Vec<u8>, std::io::Error> {
         borsh::to_vec(self)
     }
 }
 
-/// Instruction builder for `CancelWithdrawal`.
+/// Instruction builder for `FinalizeWithdrawals`.
 ///
 /// ### Accounts:
 ///
 ///   0. `[writable]` queue
-///   1. `[writable, signer]` owner
-///   2. `[writable]` request
-///   3. `[writable]` escrow_shares
-///   4. `[]` share_mint
-///   5. `[writable]` destination_share_account
-///   6. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
-///   7. `[]` event_authority
-///   8. `[]` program
+///   1. `[writable]` vault_state
+///   2. `[writable]` vault_deposit_ata
+///   3. `[writable]` fee_recipient_account
+///   4. `[writable]` escrow_shares
+///   5. `[writable]` escrow_assets
+///   6. `[writable]` share_mint
+///   7. `[writable]` deposit_mint
+///   8. `[signer]` finalizer
+///   9. `[optional]` vault_program (default to `up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt`)
+///   10. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
+///   11. `[]` event_authority
+///   12. `[]` program
 #[derive(Clone, Debug, Default)]
-pub struct CancelWithdrawalBuilder {
+pub struct FinalizeWithdrawalsBuilder {
     queue: Option<solana_pubkey::Pubkey>,
-    owner: Option<solana_pubkey::Pubkey>,
-    request: Option<solana_pubkey::Pubkey>,
+    vault_state: Option<solana_pubkey::Pubkey>,
+    vault_deposit_ata: Option<solana_pubkey::Pubkey>,
+    fee_recipient_account: Option<solana_pubkey::Pubkey>,
     escrow_shares: Option<solana_pubkey::Pubkey>,
+    escrow_assets: Option<solana_pubkey::Pubkey>,
     share_mint: Option<solana_pubkey::Pubkey>,
-    destination_share_account: Option<solana_pubkey::Pubkey>,
+    deposit_mint: Option<solana_pubkey::Pubkey>,
+    finalizer: Option<solana_pubkey::Pubkey>,
+    vault_program: Option<solana_pubkey::Pubkey>,
     token_program: Option<solana_pubkey::Pubkey>,
     event_authority: Option<solana_pubkey::Pubkey>,
     program: Option<solana_pubkey::Pubkey>,
-    expected_sequence: Option<u64>,
+    expected_sequences: Option<Vec<u64>>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
-impl CancelWithdrawalBuilder {
+impl FinalizeWithdrawalsBuilder {
     pub fn new() -> Self {
         Self::default()
     }
@@ -161,17 +197,22 @@ impl CancelWithdrawalBuilder {
         self.queue = Some(queue);
         self
     }
-    /// Signs, and receives the request's rent.
     #[inline(always)]
-    pub fn owner(&mut self, owner: solana_pubkey::Pubkey) -> &mut Self {
-        self.owner = Some(owner);
+    pub fn vault_state(&mut self, vault_state: solana_pubkey::Pubkey) -> &mut Self {
+        self.vault_state = Some(vault_state);
         self
     }
-    /// Seeds come from its own stored fields rather than the signer, so a wrong
-    /// signer is reported as `NotRequestOwner`.
     #[inline(always)]
-    pub fn request(&mut self, request: solana_pubkey::Pubkey) -> &mut Self {
-        self.request = Some(request);
+    pub fn vault_deposit_ata(&mut self, vault_deposit_ata: solana_pubkey::Pubkey) -> &mut Self {
+        self.vault_deposit_ata = Some(vault_deposit_ata);
+        self
+    }
+    #[inline(always)]
+    pub fn fee_recipient_account(
+        &mut self,
+        fee_recipient_account: solana_pubkey::Pubkey,
+    ) -> &mut Self {
+        self.fee_recipient_account = Some(fee_recipient_account);
         self
     }
     #[inline(always)]
@@ -180,16 +221,30 @@ impl CancelWithdrawalBuilder {
         self
     }
     #[inline(always)]
+    pub fn escrow_assets(&mut self, escrow_assets: solana_pubkey::Pubkey) -> &mut Self {
+        self.escrow_assets = Some(escrow_assets);
+        self
+    }
+    #[inline(always)]
     pub fn share_mint(&mut self, share_mint: solana_pubkey::Pubkey) -> &mut Self {
         self.share_mint = Some(share_mint);
         self
     }
     #[inline(always)]
-    pub fn destination_share_account(
-        &mut self,
-        destination_share_account: solana_pubkey::Pubkey,
-    ) -> &mut Self {
-        self.destination_share_account = Some(destination_share_account);
+    pub fn deposit_mint(&mut self, deposit_mint: solana_pubkey::Pubkey) -> &mut Self {
+        self.deposit_mint = Some(deposit_mint);
+        self
+    }
+    /// Whoever chooses the moment, for every request in the batch.
+    #[inline(always)]
+    pub fn finalizer(&mut self, finalizer: solana_pubkey::Pubkey) -> &mut Self {
+        self.finalizer = Some(finalizer);
+        self
+    }
+    /// `[optional account, default to 'up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt']`
+    #[inline(always)]
+    pub fn vault_program(&mut self, vault_program: solana_pubkey::Pubkey) -> &mut Self {
+        self.vault_program = Some(vault_program);
         self
     }
     /// `[optional account, default to 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA']`
@@ -209,8 +264,8 @@ impl CancelWithdrawalBuilder {
         self
     }
     #[inline(always)]
-    pub fn expected_sequence(&mut self, expected_sequence: u64) -> &mut Self {
-        self.expected_sequence = Some(expected_sequence);
+    pub fn expected_sequences(&mut self, expected_sequences: Vec<u64>) -> &mut Self {
+        self.expected_sequences = Some(expected_sequences);
         self
     }
     /// Add an additional account to the instruction.
@@ -230,46 +285,61 @@ impl CancelWithdrawalBuilder {
     }
     #[allow(clippy::clone_on_copy)]
     pub fn instruction(&self) -> solana_instruction::Instruction {
-        let accounts = CancelWithdrawal {
+        let accounts = FinalizeWithdrawals {
             queue: self.queue.expect("queue is not set"),
-            owner: self.owner.expect("owner is not set"),
-            request: self.request.expect("request is not set"),
+            vault_state: self.vault_state.expect("vault_state is not set"),
+            vault_deposit_ata: self
+                .vault_deposit_ata
+                .expect("vault_deposit_ata is not set"),
+            fee_recipient_account: self
+                .fee_recipient_account
+                .expect("fee_recipient_account is not set"),
             escrow_shares: self.escrow_shares.expect("escrow_shares is not set"),
+            escrow_assets: self.escrow_assets.expect("escrow_assets is not set"),
             share_mint: self.share_mint.expect("share_mint is not set"),
-            destination_share_account: self
-                .destination_share_account
-                .expect("destination_share_account is not set"),
+            deposit_mint: self.deposit_mint.expect("deposit_mint is not set"),
+            finalizer: self.finalizer.expect("finalizer is not set"),
+            vault_program: self.vault_program.unwrap_or(solana_pubkey::pubkey!(
+                "up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt"
+            )),
             token_program: self.token_program.unwrap_or(solana_pubkey::pubkey!(
                 "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
             )),
             event_authority: self.event_authority.expect("event_authority is not set"),
             program: self.program.expect("program is not set"),
         };
-        let args = CancelWithdrawalInstructionArgs {
-            expected_sequence: self
-                .expected_sequence
+        let args = FinalizeWithdrawalsInstructionArgs {
+            expected_sequences: self
+                .expected_sequences
                 .clone()
-                .expect("expected_sequence is not set"),
+                .expect("expected_sequences is not set"),
         };
 
         accounts.instruction_with_remaining_accounts(args, &self.__remaining_accounts)
     }
 }
 
-/// `cancel_withdrawal` CPI accounts.
-pub struct CancelWithdrawalCpiAccounts<'a, 'b> {
+/// `finalize_withdrawals` CPI accounts.
+pub struct FinalizeWithdrawalsCpiAccounts<'a, 'b> {
     pub queue: &'b solana_account_info::AccountInfo<'a>,
-    /// Signs, and receives the request's rent.
-    pub owner: &'b solana_account_info::AccountInfo<'a>,
-    /// Seeds come from its own stored fields rather than the signer, so a wrong
-    /// signer is reported as `NotRequestOwner`.
-    pub request: &'b solana_account_info::AccountInfo<'a>,
+
+    pub vault_state: &'b solana_account_info::AccountInfo<'a>,
+
+    pub vault_deposit_ata: &'b solana_account_info::AccountInfo<'a>,
+
+    pub fee_recipient_account: &'b solana_account_info::AccountInfo<'a>,
 
     pub escrow_shares: &'b solana_account_info::AccountInfo<'a>,
 
+    pub escrow_assets: &'b solana_account_info::AccountInfo<'a>,
+
     pub share_mint: &'b solana_account_info::AccountInfo<'a>,
 
-    pub destination_share_account: &'b solana_account_info::AccountInfo<'a>,
+    pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
+    /// Whoever chooses the moment, for every request in the batch.
+    pub finalizer: &'b solana_account_info::AccountInfo<'a>,
+
+    pub vault_program: &'b solana_account_info::AccountInfo<'a>,
 
     pub token_program: &'b solana_account_info::AccountInfo<'a>,
 
@@ -278,23 +348,30 @@ pub struct CancelWithdrawalCpiAccounts<'a, 'b> {
     pub program: &'b solana_account_info::AccountInfo<'a>,
 }
 
-/// `cancel_withdrawal` CPI instruction.
-pub struct CancelWithdrawalCpi<'a, 'b> {
+/// `finalize_withdrawals` CPI instruction.
+pub struct FinalizeWithdrawalsCpi<'a, 'b> {
     /// The program to invoke.
     pub __program: &'b solana_account_info::AccountInfo<'a>,
 
     pub queue: &'b solana_account_info::AccountInfo<'a>,
-    /// Signs, and receives the request's rent.
-    pub owner: &'b solana_account_info::AccountInfo<'a>,
-    /// Seeds come from its own stored fields rather than the signer, so a wrong
-    /// signer is reported as `NotRequestOwner`.
-    pub request: &'b solana_account_info::AccountInfo<'a>,
+
+    pub vault_state: &'b solana_account_info::AccountInfo<'a>,
+
+    pub vault_deposit_ata: &'b solana_account_info::AccountInfo<'a>,
+
+    pub fee_recipient_account: &'b solana_account_info::AccountInfo<'a>,
 
     pub escrow_shares: &'b solana_account_info::AccountInfo<'a>,
 
+    pub escrow_assets: &'b solana_account_info::AccountInfo<'a>,
+
     pub share_mint: &'b solana_account_info::AccountInfo<'a>,
 
-    pub destination_share_account: &'b solana_account_info::AccountInfo<'a>,
+    pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
+    /// Whoever chooses the moment, for every request in the batch.
+    pub finalizer: &'b solana_account_info::AccountInfo<'a>,
+
+    pub vault_program: &'b solana_account_info::AccountInfo<'a>,
 
     pub token_program: &'b solana_account_info::AccountInfo<'a>,
 
@@ -302,23 +379,27 @@ pub struct CancelWithdrawalCpi<'a, 'b> {
 
     pub program: &'b solana_account_info::AccountInfo<'a>,
     /// The arguments for the instruction.
-    pub __args: CancelWithdrawalInstructionArgs,
+    pub __args: FinalizeWithdrawalsInstructionArgs,
 }
 
-impl<'a, 'b> CancelWithdrawalCpi<'a, 'b> {
+impl<'a, 'b> FinalizeWithdrawalsCpi<'a, 'b> {
     pub fn new(
         program: &'b solana_account_info::AccountInfo<'a>,
-        accounts: CancelWithdrawalCpiAccounts<'a, 'b>,
-        args: CancelWithdrawalInstructionArgs,
+        accounts: FinalizeWithdrawalsCpiAccounts<'a, 'b>,
+        args: FinalizeWithdrawalsInstructionArgs,
     ) -> Self {
         Self {
             __program: program,
             queue: accounts.queue,
-            owner: accounts.owner,
-            request: accounts.request,
+            vault_state: accounts.vault_state,
+            vault_deposit_ata: accounts.vault_deposit_ata,
+            fee_recipient_account: accounts.fee_recipient_account,
             escrow_shares: accounts.escrow_shares,
+            escrow_assets: accounts.escrow_assets,
             share_mint: accounts.share_mint,
-            destination_share_account: accounts.destination_share_account,
+            deposit_mint: accounts.deposit_mint,
+            finalizer: accounts.finalizer,
+            vault_program: accounts.vault_program,
             token_program: accounts.token_program,
             event_authority: accounts.event_authority,
             program: accounts.program,
@@ -348,23 +429,42 @@ impl<'a, 'b> CancelWithdrawalCpi<'a, 'b> {
         signers_seeds: &[&[&[u8]]],
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
-        let mut accounts = Vec::with_capacity(9 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(13 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(*self.queue.key, false));
-        accounts.push(solana_instruction::AccountMeta::new(*self.owner.key, true));
         accounts.push(solana_instruction::AccountMeta::new(
-            *self.request.key,
+            *self.vault_state.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            *self.vault_deposit_ata.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            *self.fee_recipient_account.key,
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new(
             *self.escrow_shares.key,
             false,
         ));
-        accounts.push(solana_instruction::AccountMeta::new_readonly(
+        accounts.push(solana_instruction::AccountMeta::new(
+            *self.escrow_assets.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
             *self.share_mint.key,
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new(
-            *self.destination_share_account.key,
+            *self.deposit_mint.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.finalizer.key,
+            true,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.vault_program.key,
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
@@ -386,7 +486,9 @@ impl<'a, 'b> CancelWithdrawalCpi<'a, 'b> {
                 is_writable: remaining_account.2,
             })
         });
-        let mut data = CancelWithdrawalInstructionData::new().try_to_vec().unwrap();
+        let mut data = FinalizeWithdrawalsInstructionData::new()
+            .try_to_vec()
+            .unwrap();
         let mut args = self.__args.try_to_vec().unwrap();
         data.append(&mut args);
 
@@ -395,14 +497,18 @@ impl<'a, 'b> CancelWithdrawalCpi<'a, 'b> {
             accounts,
             data,
         };
-        let mut account_infos = Vec::with_capacity(10 + remaining_accounts.len());
+        let mut account_infos = Vec::with_capacity(14 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
         account_infos.push(self.queue.clone());
-        account_infos.push(self.owner.clone());
-        account_infos.push(self.request.clone());
+        account_infos.push(self.vault_state.clone());
+        account_infos.push(self.vault_deposit_ata.clone());
+        account_infos.push(self.fee_recipient_account.clone());
         account_infos.push(self.escrow_shares.clone());
+        account_infos.push(self.escrow_assets.clone());
         account_infos.push(self.share_mint.clone());
-        account_infos.push(self.destination_share_account.clone());
+        account_infos.push(self.deposit_mint.clone());
+        account_infos.push(self.finalizer.clone());
+        account_infos.push(self.vault_program.clone());
         account_infos.push(self.token_program.clone());
         account_infos.push(self.event_authority.clone());
         account_infos.push(self.program.clone());
@@ -418,38 +524,46 @@ impl<'a, 'b> CancelWithdrawalCpi<'a, 'b> {
     }
 }
 
-/// Instruction builder for `CancelWithdrawal` via CPI.
+/// Instruction builder for `FinalizeWithdrawals` via CPI.
 ///
 /// ### Accounts:
 ///
 ///   0. `[writable]` queue
-///   1. `[writable, signer]` owner
-///   2. `[writable]` request
-///   3. `[writable]` escrow_shares
-///   4. `[]` share_mint
-///   5. `[writable]` destination_share_account
-///   6. `[]` token_program
-///   7. `[]` event_authority
-///   8. `[]` program
+///   1. `[writable]` vault_state
+///   2. `[writable]` vault_deposit_ata
+///   3. `[writable]` fee_recipient_account
+///   4. `[writable]` escrow_shares
+///   5. `[writable]` escrow_assets
+///   6. `[writable]` share_mint
+///   7. `[writable]` deposit_mint
+///   8. `[signer]` finalizer
+///   9. `[]` vault_program
+///   10. `[]` token_program
+///   11. `[]` event_authority
+///   12. `[]` program
 #[derive(Clone, Debug)]
-pub struct CancelWithdrawalCpiBuilder<'a, 'b> {
-    instruction: Box<CancelWithdrawalCpiBuilderInstruction<'a, 'b>>,
+pub struct FinalizeWithdrawalsCpiBuilder<'a, 'b> {
+    instruction: Box<FinalizeWithdrawalsCpiBuilderInstruction<'a, 'b>>,
 }
 
-impl<'a, 'b> CancelWithdrawalCpiBuilder<'a, 'b> {
+impl<'a, 'b> FinalizeWithdrawalsCpiBuilder<'a, 'b> {
     pub fn new(program: &'b solana_account_info::AccountInfo<'a>) -> Self {
-        let instruction = Box::new(CancelWithdrawalCpiBuilderInstruction {
+        let instruction = Box::new(FinalizeWithdrawalsCpiBuilderInstruction {
             __program: program,
             queue: None,
-            owner: None,
-            request: None,
+            vault_state: None,
+            vault_deposit_ata: None,
+            fee_recipient_account: None,
             escrow_shares: None,
+            escrow_assets: None,
             share_mint: None,
-            destination_share_account: None,
+            deposit_mint: None,
+            finalizer: None,
+            vault_program: None,
             token_program: None,
             event_authority: None,
             program: None,
-            expected_sequence: None,
+            expected_sequences: None,
             __remaining_accounts: Vec::new(),
         });
         Self { instruction }
@@ -459,17 +573,28 @@ impl<'a, 'b> CancelWithdrawalCpiBuilder<'a, 'b> {
         self.instruction.queue = Some(queue);
         self
     }
-    /// Signs, and receives the request's rent.
     #[inline(always)]
-    pub fn owner(&mut self, owner: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-        self.instruction.owner = Some(owner);
+    pub fn vault_state(
+        &mut self,
+        vault_state: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.vault_state = Some(vault_state);
         self
     }
-    /// Seeds come from its own stored fields rather than the signer, so a wrong
-    /// signer is reported as `NotRequestOwner`.
     #[inline(always)]
-    pub fn request(&mut self, request: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-        self.instruction.request = Some(request);
+    pub fn vault_deposit_ata(
+        &mut self,
+        vault_deposit_ata: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.vault_deposit_ata = Some(vault_deposit_ata);
+        self
+    }
+    #[inline(always)]
+    pub fn fee_recipient_account(
+        &mut self,
+        fee_recipient_account: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.fee_recipient_account = Some(fee_recipient_account);
         self
     }
     #[inline(always)]
@@ -481,6 +606,14 @@ impl<'a, 'b> CancelWithdrawalCpiBuilder<'a, 'b> {
         self
     }
     #[inline(always)]
+    pub fn escrow_assets(
+        &mut self,
+        escrow_assets: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.escrow_assets = Some(escrow_assets);
+        self
+    }
+    #[inline(always)]
     pub fn share_mint(
         &mut self,
         share_mint: &'b solana_account_info::AccountInfo<'a>,
@@ -489,11 +622,25 @@ impl<'a, 'b> CancelWithdrawalCpiBuilder<'a, 'b> {
         self
     }
     #[inline(always)]
-    pub fn destination_share_account(
+    pub fn deposit_mint(
         &mut self,
-        destination_share_account: &'b solana_account_info::AccountInfo<'a>,
+        deposit_mint: &'b solana_account_info::AccountInfo<'a>,
     ) -> &mut Self {
-        self.instruction.destination_share_account = Some(destination_share_account);
+        self.instruction.deposit_mint = Some(deposit_mint);
+        self
+    }
+    /// Whoever chooses the moment, for every request in the batch.
+    #[inline(always)]
+    pub fn finalizer(&mut self, finalizer: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
+        self.instruction.finalizer = Some(finalizer);
+        self
+    }
+    #[inline(always)]
+    pub fn vault_program(
+        &mut self,
+        vault_program: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.vault_program = Some(vault_program);
         self
     }
     #[inline(always)]
@@ -518,8 +665,8 @@ impl<'a, 'b> CancelWithdrawalCpiBuilder<'a, 'b> {
         self
     }
     #[inline(always)]
-    pub fn expected_sequence(&mut self, expected_sequence: u64) -> &mut Self {
-        self.instruction.expected_sequence = Some(expected_sequence);
+    pub fn expected_sequences(&mut self, expected_sequences: Vec<u64>) -> &mut Self {
+        self.instruction.expected_sequences = Some(expected_sequences);
         self
     }
     /// Add an additional account to the instruction.
@@ -556,33 +703,56 @@ impl<'a, 'b> CancelWithdrawalCpiBuilder<'a, 'b> {
     #[allow(clippy::clone_on_copy)]
     #[allow(clippy::vec_init_then_push)]
     pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
-        let args = CancelWithdrawalInstructionArgs {
-            expected_sequence: self
+        let args = FinalizeWithdrawalsInstructionArgs {
+            expected_sequences: self
                 .instruction
-                .expected_sequence
+                .expected_sequences
                 .clone()
-                .expect("expected_sequence is not set"),
+                .expect("expected_sequences is not set"),
         };
-        let instruction = CancelWithdrawalCpi {
+        let instruction = FinalizeWithdrawalsCpi {
             __program: self.instruction.__program,
 
             queue: self.instruction.queue.expect("queue is not set"),
 
-            owner: self.instruction.owner.expect("owner is not set"),
+            vault_state: self
+                .instruction
+                .vault_state
+                .expect("vault_state is not set"),
 
-            request: self.instruction.request.expect("request is not set"),
+            vault_deposit_ata: self
+                .instruction
+                .vault_deposit_ata
+                .expect("vault_deposit_ata is not set"),
+
+            fee_recipient_account: self
+                .instruction
+                .fee_recipient_account
+                .expect("fee_recipient_account is not set"),
 
             escrow_shares: self
                 .instruction
                 .escrow_shares
                 .expect("escrow_shares is not set"),
 
+            escrow_assets: self
+                .instruction
+                .escrow_assets
+                .expect("escrow_assets is not set"),
+
             share_mint: self.instruction.share_mint.expect("share_mint is not set"),
 
-            destination_share_account: self
+            deposit_mint: self
                 .instruction
-                .destination_share_account
-                .expect("destination_share_account is not set"),
+                .deposit_mint
+                .expect("deposit_mint is not set"),
+
+            finalizer: self.instruction.finalizer.expect("finalizer is not set"),
+
+            vault_program: self
+                .instruction
+                .vault_program
+                .expect("vault_program is not set"),
 
             token_program: self
                 .instruction
@@ -605,18 +775,22 @@ impl<'a, 'b> CancelWithdrawalCpiBuilder<'a, 'b> {
 }
 
 #[derive(Clone, Debug)]
-struct CancelWithdrawalCpiBuilderInstruction<'a, 'b> {
+struct FinalizeWithdrawalsCpiBuilderInstruction<'a, 'b> {
     __program: &'b solana_account_info::AccountInfo<'a>,
     queue: Option<&'b solana_account_info::AccountInfo<'a>>,
-    owner: Option<&'b solana_account_info::AccountInfo<'a>>,
-    request: Option<&'b solana_account_info::AccountInfo<'a>>,
+    vault_state: Option<&'b solana_account_info::AccountInfo<'a>>,
+    vault_deposit_ata: Option<&'b solana_account_info::AccountInfo<'a>>,
+    fee_recipient_account: Option<&'b solana_account_info::AccountInfo<'a>>,
     escrow_shares: Option<&'b solana_account_info::AccountInfo<'a>>,
+    escrow_assets: Option<&'b solana_account_info::AccountInfo<'a>>,
     share_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
-    destination_share_account: Option<&'b solana_account_info::AccountInfo<'a>>,
+    deposit_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
+    finalizer: Option<&'b solana_account_info::AccountInfo<'a>>,
+    vault_program: Option<&'b solana_account_info::AccountInfo<'a>>,
     token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
     event_authority: Option<&'b solana_account_info::AccountInfo<'a>>,
     program: Option<&'b solana_account_info::AccountInfo<'a>>,
-    expected_sequence: Option<u64>,
+    expected_sequences: Option<Vec<u64>>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
 }
