@@ -8,5 +8,6 @@
 
 pub mod initialize_queue;
 pub mod queue_admin;
+pub mod request_withdrawal;
 pub mod set_cooldown;
 pub mod set_fulfillment_window;

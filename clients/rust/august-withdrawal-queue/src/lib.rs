@@ -13,9 +13,7 @@
 //!
 //! Hand-written helpers belong here, outside `generated/`, the way the vault
 //! client carries `resolved_share_offset` and `min_first_deposit`. There are
-//! none yet. `WithdrawalRequest` is absent from `generated/` for now: Anchor
-//! writes an account type into the IDL only once an instruction references it,
-//! so it arrives with `request_withdrawal`.
+//! none yet.
 
 pub mod generated;
 
@@ -51,5 +49,28 @@ mod tests {
             (queue.sequence, queue.pending_requests, queue.pending_shares),
             (0, 0, 0)
         );
+    }
+
+    /// Same guard for the request account.
+    #[test]
+    fn a_zero_request_literal_never_expires() {
+        let zero = Pubkey::default();
+        let request = WithdrawalRequest {
+            discriminator: [0; 8],
+            queue: zero,
+            owner: zero,
+            recipient_token_account: zero,
+            finalizer: zero,
+            shares: 0,
+            request_id: 0,
+            sequence: 0,
+            requested_at: 0,
+            scheduled_eligible_at: 0,
+            eligible_at: 0,
+            expires_at: 0,
+            bump: 0,
+            padding: [0; 9],
+        };
+        assert_eq!(request.expires_at, 0, "zero means no deadline");
     }
 }

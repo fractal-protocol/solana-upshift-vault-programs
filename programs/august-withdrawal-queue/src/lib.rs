@@ -10,15 +10,15 @@
 //!
 //! The vault half is live: a vault whose `withdrawal_queue_authority` is set
 //! accepts redemptions from that key alone, and one left unset redeems instantly
-//! as before. What is missing is this side — holders will request a withdrawal
-//! here, wait out a cooldown, and the request will be finalized by CPI into the
-//! vault's `redeem_checked`, with this program's per-vault PDA signing as the
-//! authority the vault was pointed at.
+//! as before. Holders request a withdrawal here and wait out a cooldown;
+//! finalization by CPI into the vault's `redeem_checked`, with this program's
+//! per-vault PDA signing as the authority the vault was pointed at, is not yet
+//! implemented.
 //!
 //! This crate carries the program identity, the error ABI pin, the build wiring,
-//! the two state accounts (`state`), the admin check (`auth`) and the queue's
-//! admin instructions. Requests, finalization and release arrive with their own
-//! changes.
+//! the two state accounts (`state`), the admin check (`auth`), the queue's
+//! admin instructions, and the owner's request instruction.
+//! Finalization, cancellation and release arrive with their own changes.
 //!
 //! **Deployment blocker.** `initialize_queue` is what first makes a queue
 //! attachable on the vault side, and detaching needs `release_vault`, which does
@@ -30,10 +30,12 @@ pub mod errors;
 pub mod events;
 pub mod instructions;
 pub mod mint_policy;
+pub mod recipient;
 pub mod state;
 
 use instructions::initialize_queue::*;
 use instructions::queue_admin::*;
+use instructions::request_withdrawal::*;
 
 use anchor_lang::prelude::*;
 
@@ -80,5 +82,23 @@ pub mod august_withdrawal_queue {
     /// be finalized: zero disables expiry, otherwise at most 90 days.
     pub fn set_fulfillment_window(ctx: Context<QueueAdmin>, seconds: u64) -> Result<()> {
         return instructions::set_fulfillment_window::handler(ctx, seconds);
+    }
+
+    /// A holder escrows `shares` and opens a request that becomes finalizable
+    /// after the queue's cooldown, paying `recipient_token_account` the shares'
+    /// value at the moment of finalization. Requires the vault's gate to point
+    /// at this queue.
+    ///
+    /// ### Parameters
+    /// - `request_id` - Owner-chosen id, unique per owner while the request exists
+    /// - `shares` - Shares to escrow, nonzero
+    /// - `finalizer` - Who may finalize besides the owner; zero for anyone
+    pub fn request_withdrawal(
+        ctx: Context<RequestWithdrawal>,
+        request_id: u64,
+        shares: u64,
+        finalizer: Pubkey,
+    ) -> Result<()> {
+        return instructions::request_withdrawal::handler(ctx, request_id, shares, finalizer);
     }
 }

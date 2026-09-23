@@ -7,7 +7,7 @@ This workspace builds two programs:
 | Crate | Artifact | Status |
 |---|---|---|
 | `programs/august-vault` | `august_vault.so` | Live on mainnet and devnet. Everything below describes this program. |
-| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | **Admin instructions only** (`initialize_queue` and two config setters) over the `WithdrawalQueue` / `WithdrawalRequest` state accounts. Requests, finalization and `release_vault` are not implemented. **Not deployed anywhere, and must not be until `release_vault` lands.** |
+| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | `initialize_queue`, two config setters and `request_withdrawal` over the `WithdrawalQueue` / `WithdrawalRequest` state accounts. Finalization, cancellation and `release_vault` are not implemented. **Not deployed anywhere, and must not be until `release_vault` lands.** |
 
 The queue will let a vault route redemptions through a request-and-cooldown flow
 instead of paying out instantly. The vault side of that is already in place: a
@@ -204,8 +204,17 @@ queue PDA and its two escrow token accounts, for a classic SPL mint
 or a Token-2022 mint carrying at most the two metadata extensions
 (`UnsupportedDepositMint`, 6006, otherwise); `set_cooldown` (at most 30 days)
 and `set_fulfillment_window` (zero disables expiry, else at most 90 days)
-configure it. Attaching it on the vault is what makes it live. Requests,
-finalization and `release_vault` are not implemented yet.
+configure it. Attaching it on the vault is what makes it live.
+
+Holders use `request_withdrawal(request_id, shares, finalizer)`:
+their shares move to the queue's escrow and a request account is created at
+`["withdrawal_request", queue, owner, request_id]`, stamped with the cooldown and
+window in force at that moment. It requires the vault's gate to point at the
+queue, a nonzero amount (`ZeroShares`, 6007), and a recipient that holds the deposit mint
+and belongs to neither the queue nor the vault (`InvalidRecipient`, 6008).
+A request's recipient and finalizer are fixed once it is made; to change
+them the owner cancels and requests again. Finalization, cancellation and
+`release_vault` are not implemented yet.
 
 **Do not deploy the queue program, or attach a queue, on any cluster yet.** Once
 `initialize_queue` is deployable the queue PDA can be created, so attaching

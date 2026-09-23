@@ -31,19 +31,16 @@ pub const WITHDRAWAL_REQUEST_SEED: &[u8] = b"withdrawal_request";
 pub struct WithdrawalRequest {
     /// The queue holding this request's shares.
     pub queue: Pubkey,
-    /// Who requested, pays rent, may update or cancel, and may always finalize.
+    /// Who requested, pays rent, may cancel, and may always finalize.
     pub owner: Pubkey,
     /// Deposit-mint token account paid at finalization. Never an escrow or the
-    /// vault reserve, checked at request and update. Owner may update.
+    /// vault reserve, checked at request and again at finalize.
     pub recipient_token_account: Pubkey,
     /// Who may finalize besides the owner. Zero means anyone. Read it through
-    /// [`Self::may_finalize`]. Owner may update.
+    /// [`Self::may_finalize`].
     pub finalizer: Pubkey,
     /// Shares held in the queue's escrow for this request.
     pub shares: u64,
-    /// The owner's floor on net payout, same semantics as `redeem_checked`.
-    /// Owner may update.
-    pub min_assets_out: u64,
     /// Owner-chosen id, unique per owner while this account exists.
     pub request_id: u64,
     /// Queue-wide ordering stamp at creation, from `WithdrawalQueue::open_request`.
@@ -66,7 +63,7 @@ pub struct WithdrawalRequest {
     /// never signs.
     pub bump: u8,
     /// Reserved. Carve new fields **out of** this array so `LEN` stays 265.
-    pub padding: [u64; 8],
+    pub padding: [u64; 9],
 }
 
 const _: () = assert!(
@@ -76,6 +73,35 @@ const _: () = assert!(
 
 impl WithdrawalRequest {
     pub const LEN: usize = 8 + Self::INIT_SPACE;
+
+    /// Fills a freshly created request and stamps its schedule. The one writer of
+    /// a request's identity, so a handler cannot forget a field.
+    #[allow(clippy::too_many_arguments)]
+    pub fn open(
+        &mut self,
+        queue: Pubkey,
+        owner: Pubkey,
+        recipient_token_account: Pubkey,
+        finalizer: Pubkey,
+        shares: u64,
+        request_id: u64,
+        sequence: u64,
+        bump: u8,
+        now: i64,
+        cooldown_seconds: u64,
+        window_seconds: u64,
+    ) -> Result<()> {
+        self.queue = queue;
+        self.owner = owner;
+        self.recipient_token_account = recipient_token_account;
+        self.finalizer = finalizer;
+        self.shares = shares;
+        self.request_id = request_id;
+        self.sequence = sequence;
+        self.bump = bump;
+        self.padding = [0; 9];
+        self.schedule(now, cooldown_seconds, window_seconds)
+    }
 
     /// Writes every timestamp from one `now` and the queue's current settings.
     /// This is the only place the `expires_at` zero sentinel is decided: a
