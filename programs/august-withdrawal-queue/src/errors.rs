@@ -48,8 +48,6 @@ pub enum ErrorCode {
     CooldownNotElapsed,
     #[msg("Signer is neither the request's owner nor its finalizer")]
     FinalizerNotAllowed,
-    #[msg("The recipient received less than the request's min_assets_out")]
-    PayoutBelowFloor,
     #[msg("The vault's reserve does not cover the pending requests at today's price")]
     ReleaseUnderfunded,
     #[msg("The queue is still attached to the vault; admin cancel needs a released vault")]
@@ -121,18 +119,17 @@ pin_error_abi! {
     StaleRequestSequence => 11,
     CooldownNotElapsed => 12,
     FinalizerNotAllowed => 13,
-    PayoutBelowFloor => 14,
-    ReleaseUnderfunded => 15,
-    QueueStillAttached => 16,
-    NotVaultAdminOrOperator => 17,
-    RequestAlreadyEligible => 18,
-    EmptyBatch => 19,
-    BatchLengthMismatch => 20,
-    RequestsNotSorted => 21,
-    BatchTooLarge => 22,
-    AdminCancelTooEarly => 23,
-    FeeAccountIsEscrow => 24,
-    UnsupportedShareMint => 25,
+    ReleaseUnderfunded => 14,
+    QueueStillAttached => 15,
+    NotVaultAdminOrOperator => 16,
+    RequestAlreadyEligible => 17,
+    EmptyBatch => 18,
+    BatchLengthMismatch => 19,
+    RequestsNotSorted => 20,
+    BatchTooLarge => 21,
+    AdminCancelTooEarly => 22,
+    FeeAccountIsEscrow => 23,
+    UnsupportedShareMint => 24,
 }
 
 #[cfg(test)]

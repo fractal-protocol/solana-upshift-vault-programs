@@ -54,42 +54,39 @@ pub enum AugustWithdrawalQueueError {
     /// 6013 - Signer is neither the request's owner nor its finalizer
     #[error("Signer is neither the request's owner nor its finalizer")]
     FinalizerNotAllowed = 0x177D,
-    /// 6014 - The recipient received less than the request's min_assets_out
-    #[error("The recipient received less than the request's min_assets_out")]
-    PayoutBelowFloor = 0x177E,
-    /// 6015 - The vault's reserve does not cover the pending requests at today's price
+    /// 6014 - The vault's reserve does not cover the pending requests at today's price
     #[error("The vault's reserve does not cover the pending requests at today's price")]
-    ReleaseUnderfunded = 0x177F,
-    /// 6016 - The queue is still attached to the vault; admin cancel needs a released vault
+    ReleaseUnderfunded = 0x177E,
+    /// 6015 - The queue is still attached to the vault; admin cancel needs a released vault
     #[error("The queue is still attached to the vault; admin cancel needs a released vault")]
-    QueueStillAttached = 0x1780,
-    /// 6017 - Signer is neither the vault's admin nor its operator
+    QueueStillAttached = 0x177F,
+    /// 6016 - Signer is neither the vault's admin nor its operator
     #[error("Signer is neither the vault's admin nor its operator")]
-    NotVaultAdminOrOperator = 0x1781,
-    /// 6018 - The request is already eligible; there is nothing to expedite
+    NotVaultAdminOrOperator = 0x1780,
+    /// 6017 - The request is already eligible; there is nothing to expedite
     #[error("The request is already eligible; there is nothing to expedite")]
-    RequestAlreadyEligible = 0x1782,
-    /// 6019 - A batch needs at least one request
+    RequestAlreadyEligible = 0x1781,
+    /// 6018 - A batch needs at least one request
     #[error("A batch needs at least one request")]
-    EmptyBatch = 0x1783,
-    /// 6020 - The trailing accounts do not match the expected sequences
+    EmptyBatch = 0x1782,
+    /// 6019 - The trailing accounts do not match the expected sequences
     #[error("The trailing accounts do not match the expected sequences")]
-    BatchLengthMismatch = 0x1784,
-    /// 6021 - Batch requests must be in strictly ascending key order
+    BatchLengthMismatch = 0x1783,
+    /// 6020 - Batch requests must be in strictly ascending key order
     #[error("Batch requests must be in strictly ascending key order")]
-    RequestsNotSorted = 0x1785,
-    /// 6022 - More requests than the batch bound allows
+    RequestsNotSorted = 0x1784,
+    /// 6021 - More requests than the batch bound allows
     #[error("More requests than the batch bound allows")]
-    BatchTooLarge = 0x1786,
-    /// 6023 - The vault has not been released long enough for an admin cancel
+    BatchTooLarge = 0x1785,
+    /// 6022 - The vault has not been released long enough for an admin cancel
     #[error("The vault has not been released long enough for an admin cancel")]
-    AdminCancelTooEarly = 0x1787,
-    /// 6024 - The fee account is the queue's asset escrow
+    AdminCancelTooEarly = 0x1786,
+    /// 6023 - The fee account is the queue's asset escrow
     #[error("The fee account is the queue's asset escrow")]
-    FeeAccountIsEscrow = 0x1788,
-    /// 6025 - The share mint is freezable or carries an unsupported extension
+    FeeAccountIsEscrow = 0x1787,
+    /// 6024 - The share mint is freezable or carries an unsupported extension
     #[error("The share mint is freezable or carries an unsupported extension")]
-    UnsupportedShareMint = 0x1789,
+    UnsupportedShareMint = 0x1788,
 }
 
 impl From<AugustWithdrawalQueueError> for solana_program_error::ProgramError {

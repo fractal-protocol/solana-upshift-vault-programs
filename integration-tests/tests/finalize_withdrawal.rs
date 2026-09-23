@@ -651,7 +651,7 @@ fn substituted_accounts_are_refused_and_a_finalizer_cannot_redirect_the_payout()
 /// queue refuses the escrow in that slot whatever `fee_recipient` says.
 #[test]
 fn the_asset_escrow_is_refused_as_the_fee_account() {
-    let (mut ctx, _) = mature_request(0);
+    let (mut ctx, _) = mature_request();
     let user = ctx.user.pubkey();
     let admin = ctx.admin.insecure_clone();
     let queue = ctx.withdrawal_queue_pda();
@@ -667,7 +667,7 @@ fn the_asset_escrow_is_refused_as_the_fee_account() {
         .send_finalize_withdrawal(&user_kp, accounts, 1)
         .expect_err("the escrow as the fee account");
     assert_queue_err(&err, ErrorCode::FeeAccountIsEscrow);
-    assert_anchor_framework_err(&err, 6024);
+    assert_anchor_framework_err(&err, 6023);
     assert_eq!(untouched(&ctx, &user, 1), before);
 }
 

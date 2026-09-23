@@ -200,7 +200,7 @@ fn a_vault_with_no_assets_releases_with_a_request_pending() {
 fn an_empty_queue_releases_without_pricing_a_share() {
     let mut ctx = attached_vault_with_holder();
     let shares = ctx.token_account_amount(&ctx.user_share_ata);
-    ctx.request_withdrawal(1, shares / 2, 0).expect("request");
+    ctx.request_withdrawal(1, shares / 2).expect("request");
     ctx.cancel_withdrawal(1, 1).expect("cancel");
     let mut vault = ctx.vault_state_data();
     vault.local_aum = 0;

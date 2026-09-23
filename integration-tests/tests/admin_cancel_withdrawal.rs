@@ -80,7 +80,7 @@ fn admin_cancel_waits_a_full_day_after_the_release() {
         .admin_cancel_withdrawal(&user, 1, 1, ata)
         .expect_err("in the same slot as the release");
     assert_queue_err(&err, ErrorCode::AdminCancelTooEarly);
-    assert_anchor_framework_err(&err, 6023);
+    assert_anchor_framework_err(&err, 6022);
 
     ctx.warp_forward_seconds(ADMIN_CANCEL_DELAY_SECONDS - 1);
     let err = ctx
