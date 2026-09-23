@@ -325,10 +325,9 @@ pub mod august_vault {
 
     /// Admin detaches this vault's withdrawal queue, restoring direct redemption.
     ///
-    /// The attached queue must co-sign, which it will do from `release_vault`
-    /// (WQ-09) once every pending request has been finalized or cancelled. The
-    /// vault never reads queue state, so that signature is how "drained" is
-    /// expressed.
+    /// The attached queue must co-sign, which it does only from its
+    /// `release_vault`. The vault never reads queue state, so that signature is
+    /// how the queue's consent is expressed.
     pub fn detach_withdrawal_queue(ctx: Context<DetachWithdrawalQueue>) -> Result<()> {
         return instructions::detach_withdrawal_queue::handler(ctx);
     }

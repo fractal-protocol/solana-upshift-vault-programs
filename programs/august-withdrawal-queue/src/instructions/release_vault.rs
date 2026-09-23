@@ -22,17 +22,33 @@ use august_vault::cpi::accounts::DetachWithdrawalQueue;
 use august_vault::program::AugustVault;
 use august_vault::state::vault::VaultState;
 
-/// No precondition of the queue's own: nothing here could hold liquidity back
-/// for the pending set once the gate is off, so whether to release is the
-/// admin's judgement. Pending requests still finalize or cancel afterwards.
-/// Everything else, that a queue is attached and that it is this one, the vault
-/// checks inside the CPI and its errors propagate.
+/// One precondition of the queue's own: at the instant of release, the vault's
+/// reserve covers every pending request at today's price. It is a sanity check,
+/// not a reservation: once detached, instant redeemers and the operator can
+/// draw the reserve down in the very next instruction, and a queued holder's
+/// recourse is to cancel and redeem alongside them. Nothing is priced when
+/// nothing can be owed: an empty pending set, or a vault holding no assets,
+/// which the vault refuses to price and which must not pin the queue.
+/// Everything else, that a queue is attached and that it is this one, the
+/// vault checks inside the CPI and its errors propagate.
+///
+/// Stamps `released_at`, which starts the admin-cancel delay.
 pub fn handler(ctx: Context<ReleaseVault>) -> Result<()> {
     require_vault_admin(
         &ctx.accounts.queue,
         &ctx.accounts.vault_state,
         &ctx.accounts.admin,
     )?;
+    let vault = &ctx.accounts.vault_state;
+    let pending_shares = ctx.accounts.queue.pending_shares;
+    let total_assets = vault.total_assets()?;
+    let owed = if pending_shares == 0 || total_assets == 0 {
+        0
+    } else {
+        vault.assets_for_redeem(ctx.accounts.share_mint.supply, total_assets, pending_shares)?
+    };
+    require!(owed <= vault.local_aum, ErrorCode::ReleaseUnderfunded);
+    ctx.accounts.queue.released_at = Clock::get()?.unix_timestamp;
 
     let seeds = ctx.accounts.queue.signer_seeds();
     august_vault::cpi::detach_withdrawal_queue(CpiContext::new_with_signer(
@@ -52,6 +68,7 @@ pub fn handler(ctx: Context<ReleaseVault>) -> Result<()> {
         queue: queue.key(),
         pending_requests: queue.pending_requests,
         pending_shares: queue.pending_shares,
+        assets_owed: owed,
     });
     Ok(())
 }
@@ -62,11 +79,14 @@ pub fn handler(ctx: Context<ReleaseVault>) -> Result<()> {
 #[event_cpi]
 #[derive(Accounts)]
 pub struct ReleaseVault<'info> {
+    /// Written for `released_at` only.
     #[account(
+        mut,
         seeds = [WITHDRAWAL_QUEUE_SEED, queue.vault_state.as_ref()],
         bump = queue.bump,
         has_one = vault_state @ ErrorCode::VaultMismatch,
         has_one = deposit_mint,
+        has_one = share_mint,
     )]
     pub queue: Box<Account<'info, WithdrawalQueue>>,
 
@@ -75,6 +95,9 @@ pub struct ReleaseVault<'info> {
     pub vault_state: Box<Account<'info, VaultState>>,
 
     pub deposit_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    /// Read for its supply, which prices the pending set.
+    pub share_mint: Box<InterfaceAccount<'info, Mint>>,
 
     pub admin: Signer<'info>,
 

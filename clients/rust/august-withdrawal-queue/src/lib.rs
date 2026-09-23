@@ -43,7 +43,8 @@ mod tests {
             pending_requests: 0,
             pending_shares: 0,
             bump: 0,
-            padding: [0; 20],
+            released_at: 0,
+            padding: [0; 19],
         };
         assert_eq!(
             (queue.sequence, queue.pending_requests, queue.pending_shares),

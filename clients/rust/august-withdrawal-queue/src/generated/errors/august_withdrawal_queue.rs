@@ -22,8 +22,8 @@ pub enum AugustWithdrawalQueueError {
     /// 6003 - Cooldown exceeds the 30-day maximum
     #[error("Cooldown exceeds the 30-day maximum")]
     CooldownOutOfBounds = 0x1773,
-    /// 6004 - Fulfillment window exceeds the 90-day maximum
-    #[error("Fulfillment window exceeds the 90-day maximum")]
+    /// 6004 - Fulfillment window must be zero or between one and 90 days
+    #[error("Fulfillment window must be zero or between one and 90 days")]
     FulfillmentWindowOutOfBounds = 0x1774,
     /// 6005 - The vault's withdrawal_queue_authority does not point at this queue
     #[error("The vault's withdrawal_queue_authority does not point at this queue")]
@@ -48,18 +48,51 @@ pub enum AugustWithdrawalQueueError {
     /// 6011 - expected_sequence does not match the request; it may have been recreated
     #[error("expected_sequence does not match the request; it may have been recreated")]
     StaleRequestSequence = 0x177B,
-    /// 6012 - The request's cooldown has not elapsed
+    /// 6012 - update_request would change nothing; pass a field or the new recipient account
+    #[error("update_request would change nothing; pass a field or the new recipient account")]
+    NothingToUpdate = 0x177C,
+    /// 6013 - The request's cooldown has not elapsed
     #[error("The request's cooldown has not elapsed")]
-    CooldownNotElapsed = 0x177C,
-    /// 6013 - Signer is neither the request's owner nor its finalizer
+    CooldownNotElapsed = 0x177D,
+    /// 6014 - Signer is neither the request's owner nor its finalizer
     #[error("Signer is neither the request's owner nor its finalizer")]
-    FinalizerNotAllowed = 0x177D,
-    /// 6014 - Signer is neither the vault's admin nor its operator
+    FinalizerNotAllowed = 0x177E,
+    /// 6015 - The recipient received less than the request's min_assets_out
+    #[error("The recipient received less than the request's min_assets_out")]
+    PayoutBelowFloor = 0x177F,
+    /// 6016 - The vault's reserve does not cover the pending requests at today's price
+    #[error("The vault's reserve does not cover the pending requests at today's price")]
+    ReleaseUnderfunded = 0x1780,
+    /// 6017 - The queue is still attached to the vault; admin cancel needs a released vault
+    #[error("The queue is still attached to the vault; admin cancel needs a released vault")]
+    QueueStillAttached = 0x1781,
+    /// 6018 - Signer is neither the vault's admin nor its operator
     #[error("Signer is neither the vault's admin nor its operator")]
-    NotVaultAdminOrOperator = 0x177E,
-    /// 6015 - The request is already eligible; there is nothing to expedite
+    NotVaultAdminOrOperator = 0x1782,
+    /// 6019 - The request is already eligible; there is nothing to expedite
     #[error("The request is already eligible; there is nothing to expedite")]
-    RequestAlreadyEligible = 0x177F,
+    RequestAlreadyEligible = 0x1783,
+    /// 6020 - A batch needs at least one request
+    #[error("A batch needs at least one request")]
+    EmptyBatch = 0x1784,
+    /// 6021 - The trailing accounts do not match the expected sequences
+    #[error("The trailing accounts do not match the expected sequences")]
+    BatchLengthMismatch = 0x1785,
+    /// 6022 - Batch requests must be in strictly ascending key order
+    #[error("Batch requests must be in strictly ascending key order")]
+    RequestsNotSorted = 0x1786,
+    /// 6023 - More requests than the batch bound allows
+    #[error("More requests than the batch bound allows")]
+    BatchTooLarge = 0x1787,
+    /// 6024 - The vault has not been released long enough for an admin cancel
+    #[error("The vault has not been released long enough for an admin cancel")]
+    AdminCancelTooEarly = 0x1788,
+    /// 6025 - The fee account is the queue's asset escrow
+    #[error("The fee account is the queue's asset escrow")]
+    FeeAccountIsEscrow = 0x1789,
+    /// 6026 - The share mint is freezable or carries an unsupported extension
+    #[error("The share mint is freezable or carries an unsupported extension")]
+    UnsupportedShareMint = 0x178A,
 }
 
 impl From<AugustWithdrawalQueueError> for solana_program_error::ProgramError {

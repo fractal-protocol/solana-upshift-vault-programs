@@ -12,18 +12,18 @@
 
 use crate::errors::ErrorCode;
 use crate::events::QueueInitialized;
-use crate::mint_policy::require_supported_deposit_mint;
+use crate::mint_policy::{require_supported_deposit_mint, require_supported_share_mint};
 use crate::state::*;
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 use august_vault::state::vault::VaultState;
 
-/// The deposit mint must pass the extension allow-list, and the cooldown its
-/// bound. Everything else about a new queue is fixed: escrows are this PDA's
+/// Both mints must pass their policies, and the cooldown its bound. Everything else about a new queue is fixed: escrows are this PDA's
 /// ATAs, and it starts with no expiry window.
 pub fn handler(ctx: Context<InitializeQueue>, cooldown_seconds: u64) -> Result<()> {
     require_supported_deposit_mint(&ctx.accounts.deposit_mint)?;
+    require_supported_share_mint(&ctx.accounts.share_mint)?;
 
     let queue_key = ctx.accounts.queue.key();
     let queue = &mut ctx.accounts.queue;

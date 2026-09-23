@@ -18,12 +18,25 @@ pub const WITHDRAWAL_QUEUE_SEED: &[u8] = b"withdrawal_queue";
 /// Upper bound on `cooldown_seconds`: 30 days.
 pub const MAX_COOLDOWN_SECONDS: u64 = 30 * 24 * 60 * 60;
 
+/// Lower bound on a non-zero `fulfillment_window_seconds`: one day. A window
+/// is set in seconds, so this refuses `7` meant as a week, which would make
+/// every new request expire seconds after it matures.
+pub const MIN_FULFILLMENT_WINDOW_SECONDS: u64 = 24 * 60 * 60;
+
 /// Upper bound on `fulfillment_window_seconds`: 90 days.
 pub const MAX_FULFILLMENT_WINDOW_SECONDS: u64 = 90 * 24 * 60 * 60;
 
-// The design doc states both bounds as literals; pin the arithmetic to them.
+/// How long a vault must stay released before `admin_cancel_withdrawal` may
+/// touch a request: one day. Without it the admin could release, cancel and
+/// re-attach in one transaction, and no holder would ever see the instant exit
+/// the release is meant to offer.
+pub const ADMIN_CANCEL_DELAY_SECONDS: i64 = 24 * 60 * 60;
+
+// The design doc states these bounds as literals; pin the arithmetic to them.
 const _: () = assert!(MAX_COOLDOWN_SECONDS == 2_592_000);
+const _: () = assert!(MIN_FULFILLMENT_WINDOW_SECONDS == 86_400);
 const _: () = assert!(MAX_FULFILLMENT_WINDOW_SECONDS == 7_776_000);
+const _: () = assert!(ADMIN_CANCEL_DELAY_SECONDS == 86_400);
 
 /// One queue per vault, at `["withdrawal_queue", vault_state]`. It is the escrow
 /// authority for pending shares and the key that signs the vault's
@@ -51,8 +64,8 @@ pub struct WithdrawalQueue {
     /// per request at creation, so a change applies to new requests only.
     pub cooldown_seconds: u64,
     /// How long after scheduled eligibility a request may still be finalized,
-    /// `0` (never expires) or `1 ..= MAX_FULFILLMENT_WINDOW_SECONDS`. Stamped per
-    /// request at creation.
+    /// `0` (never expires) or `MIN_FULFILLMENT_WINDOW_SECONDS ..=
+    /// MAX_FULFILLMENT_WINDOW_SECONDS`. Stamped per request at creation.
     pub fulfillment_window_seconds: u64,
     /// Queue-wide counter, incremented before it is stamped on a request, so the
     /// first stamp is 1 and a zero stamp marks a request that was never opened.
@@ -68,10 +81,14 @@ pub struct WithdrawalQueue {
     /// Canonical bump of this PDA. The vault accepts the canonical address only,
     /// so this must come from Anchor's `bump` at init, never a caller.
     pub bump: u8,
+    /// Unix time of the latest `release_vault`, `0` if never released. Starts
+    /// the `ADMIN_CANCEL_DELAY_SECONDS` clock; a re-attach leaves it, since
+    /// admin cancel also requires the vault to be released.
+    pub released_at: i64,
     /// Reserved. Carve new fields **out of** this array so `LEN` stays 369. A
     /// field carved later reads zero on every queue that already exists, so zero
     /// must mean "legacy behaviour" for it, as it does for every field above.
-    pub padding: [u64; 20],
+    pub padding: [u64; 19],
 }
 
 const _: () = assert!(
@@ -105,7 +122,8 @@ impl WithdrawalQueue {
         self.pending_requests = 0;
         self.pending_shares = 0;
         self.bump = bump;
-        self.padding = [0; 20];
+        self.released_at = 0;
+        self.padding = [0; 19];
         self.set_cooldown(cooldown_seconds)
     }
 
@@ -119,13 +137,19 @@ impl WithdrawalQueue {
         Ok(())
     }
 
-    /// Sets the fulfillment window, refusing anything over
-    /// [`MAX_FULFILLMENT_WINDOW_SECONDS`]. Zero disables expiry.
+    /// Sets the fulfillment window. Zero disables expiry; anything else must lie
+    /// in [`MIN_FULFILLMENT_WINDOW_SECONDS`] ..= [`MAX_FULFILLMENT_WINDOW_SECONDS`].
     pub fn set_fulfillment_window(&mut self, seconds: u64) -> Result<()> {
         require!(
             seconds <= MAX_FULFILLMENT_WINDOW_SECONDS,
             ErrorCode::FulfillmentWindowOutOfBounds
         );
+        if seconds != 0 {
+            require!(
+                seconds >= MIN_FULFILLMENT_WINDOW_SECONDS,
+                ErrorCode::FulfillmentWindowOutOfBounds
+            );
+        }
         self.fulfillment_window_seconds = seconds;
         Ok(())
     }
@@ -164,6 +188,19 @@ impl WithdrawalQueue {
         self.pending_requests = pending_requests;
         self.pending_shares = pending_shares;
         Ok(())
+    }
+
+    /// Whether `ADMIN_CANCEL_DELAY_SECONDS` have passed since the latest release.
+    /// A queue never released has not waited at all.
+    pub fn admin_cancel_delay_elapsed(&self, now: i64) -> Result<bool> {
+        if self.released_at == 0 {
+            return Ok(false);
+        }
+        let opens_at = self
+            .released_at
+            .checked_add(ADMIN_CANCEL_DELAY_SECONDS)
+            .ok_or(ErrorCode::MathError)?;
+        Ok(now >= opens_at)
     }
 
     /// Seeds this PDA signs with, for `invoke_signed` into the vault and the token

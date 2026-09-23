@@ -49,8 +49,8 @@ pub struct WithdrawalQueue {
     /// per request at creation, so a change applies to new requests only.
     pub cooldown_seconds: u64,
     /// How long after scheduled eligibility a request may still be finalized,
-    /// `0` (never expires) or `1 ..= MAX_FULFILLMENT_WINDOW_SECONDS`. Stamped per
-    /// request at creation.
+    /// `0` (never expires) or `MIN_FULFILLMENT_WINDOW_SECONDS ..=
+    /// MAX_FULFILLMENT_WINDOW_SECONDS`. Stamped per request at creation.
     pub fulfillment_window_seconds: u64,
     /// Queue-wide counter, incremented before it is stamped on a request, so the
     /// first stamp is 1 and a zero stamp marks a request that was never opened.
@@ -66,10 +66,14 @@ pub struct WithdrawalQueue {
     /// Canonical bump of this PDA. The vault accepts the canonical address only,
     /// so this must come from Anchor's `bump` at init, never a caller.
     pub bump: u8,
+    /// Unix time of the latest `release_vault`, `0` if never released. Starts
+    /// the `ADMIN_CANCEL_DELAY_SECONDS` clock; a re-attach leaves it, since
+    /// admin cancel also requires the vault to be released.
+    pub released_at: i64,
     /// Reserved. Carve new fields **out of** this array so `LEN` stays 369. A
     /// field carved later reads zero on every queue that already exists, so zero
     /// must mean "legacy behaviour" for it, as it does for every field above.
-    pub padding: [u64; 20],
+    pub padding: [u64; 19],
 }
 
 pub const WITHDRAWAL_QUEUE_DISCRIMINATOR: [u8; 8] = [54, 56, 158, 88, 232, 203, 241, 163];

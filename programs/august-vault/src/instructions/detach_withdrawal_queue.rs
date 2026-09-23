@@ -8,12 +8,11 @@
 
 //! Detach this vault's withdrawal queue, restoring direct redemption.
 //!
-//! Leaving queue mode with requests still pending would let holders who never
-//! queued exit instantly ahead of those who accepted the cooldown, which is the
-//! run the queue exists to prevent. The vault never reads queue state, so
-//! "drained" is expressed as a signature: the attached queue must co-sign, and
-//! `release_vault` (WQ-09) will be the only instruction that provides one, only
-//! once its pending count is zero.
+//! When queue mode may end is the queue's decision, not the vault's: the vault
+//! never reads queue state, so that decision is expressed as a signature. The
+//! attached queue must co-sign, and its `release_vault` is the only instruction
+//! that provides one, after its own precondition on the pending set. Pending
+//! requests survive a detach and finalize or cancel afterwards.
 
 use crate::errors::ErrorCode;
 use crate::state::vault::*;

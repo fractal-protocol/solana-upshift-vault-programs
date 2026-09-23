@@ -645,6 +645,32 @@ fn substituted_accounts_are_refused_and_a_finalizer_cannot_redirect_the_payout()
         .expect("the genuine set still works");
 }
 
+/// The vault binds the fee account only by `fee_recipient`'s authority, so a
+/// `fee_recipient` set to the queue PDA would let the asset escrow pass as the
+/// fee account, and the fee would ride the balance delta to the recipient. The
+/// queue refuses the escrow in that slot whatever `fee_recipient` says.
+#[test]
+fn the_asset_escrow_is_refused_as_the_fee_account() {
+    let (mut ctx, _) = mature_request(0);
+    let user = ctx.user.pubkey();
+    let admin = ctx.admin.insecure_clone();
+    let queue = ctx.withdrawal_queue_pda();
+    ctx.set_fee_recipient_as(&admin, queue)
+        .expect("set_fee_recipient validates nothing");
+    let escrow_assets = ctx.queue_escrow(&ctx.deposit_mint);
+    let before = untouched(&ctx, &user, 1);
+
+    let mut accounts = ctx.finalize_withdrawal_accounts(&user, &user, 1);
+    accounts.fee_recipient_account = escrow_assets;
+    let user_kp = ctx.user.insecure_clone();
+    let err = ctx
+        .send_finalize_withdrawal(&user_kp, accounts, 1)
+        .expect_err("the escrow as the fee account");
+    assert_queue_err(&err, ErrorCode::FeeAccountIsEscrow);
+    assert_anchor_framework_err(&err, 6025);
+    assert_eq!(untouched(&ctx, &user, 1), before);
+}
+
 /// A request belongs to one queue. Presenting another vault's whole account set
 /// with it is refused by the request's `has_one = queue` before the CPI.
 #[test]

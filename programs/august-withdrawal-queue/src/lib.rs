@@ -30,6 +30,7 @@ pub mod mint_policy;
 pub mod recipient;
 pub mod state;
 
+use instructions::admin_cancel_withdrawal::*;
 use instructions::cancel_withdrawal::*;
 use instructions::expedite_request::*;
 use instructions::finalize_withdrawal::*;
@@ -80,7 +81,8 @@ pub mod august_withdrawal_queue {
     }
 
     /// Admin sets how long after scheduled eligibility a new request may still
-    /// be finalized: zero disables expiry, otherwise at most 90 days.
+    /// be finalized, in seconds: zero disables expiry, otherwise 86,400 (one
+    /// day) to 7,776,000 (90 days).
     pub fn set_fulfillment_window(ctx: Context<QueueAdmin>, seconds: u64) -> Result<()> {
         return instructions::set_fulfillment_window::handler(ctx, seconds);
     }
@@ -134,12 +136,30 @@ pub mod august_withdrawal_queue {
     }
 
     /// Admin returns the vault to instant redemption: the queue co-signs the
-    /// vault's `detach_withdrawal_queue` by CPI. It checks no liquidity: nothing
-    /// could hold assets back for the pending set once the gate is off. Pending requests
-    /// survive and finalize or cancel afterwards; the vault's gate stops new
-    /// ones. The queue account persists, so the vault can be attached again.
+    /// vault's `detach_withdrawal_queue` by CPI. Refused unless, at that
+    /// instant, the vault's reserve covers every pending request at today's
+    /// price; a sanity check, not a reservation. Pending requests survive and
+    /// finalize or cancel afterwards; the vault's gate stops new ones. The
+    /// queue account persists, so the vault can be attached again.
     pub fn release_vault(ctx: Context<ReleaseVault>) -> Result<()> {
         return instructions::release_vault::handler(ctx);
+    }
+
+    /// Admin returns a request's shares to its owner without the owner's
+    /// involvement, into any share account the owner controls (created by the
+    /// admin in the same transaction if need be). Only once the vault has been
+    /// released for a day, so every owner first had a day to redeem instantly
+    /// and a waiting user is never reset; it exists to clear abandoned escrow,
+    /// which would otherwise block `close_vault`.
+    ///
+    /// ### Parameters
+    /// - `expected_sequence` - The request's stamp, so a delayed call cannot land
+    ///   on a recreated request with the same id
+    pub fn admin_cancel_withdrawal(
+        ctx: Context<AdminCancelWithdrawal>,
+        expected_sequence: u64,
+    ) -> Result<()> {
+        return instructions::admin_cancel_withdrawal::handler(ctx, expected_sequence);
     }
 
     /// Admin or operator makes one not-yet-eligible request finalizable now:

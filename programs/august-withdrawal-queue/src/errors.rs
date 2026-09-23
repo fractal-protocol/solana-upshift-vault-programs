@@ -26,7 +26,7 @@ pub enum ErrorCode {
     VaultMismatch,
     #[msg("Cooldown exceeds the 30-day maximum")]
     CooldownOutOfBounds,
-    #[msg("Fulfillment window exceeds the 90-day maximum")]
+    #[msg("Fulfillment window must be zero or between one and 90 days")]
     FulfillmentWindowOutOfBounds,
     #[msg("The vault's withdrawal_queue_authority does not point at this queue")]
     QueueNotActiveOnVault,
@@ -44,14 +44,36 @@ pub enum ErrorCode {
     RequestExpired,
     #[msg("expected_sequence does not match the request; it may have been recreated")]
     StaleRequestSequence,
+    #[msg("update_request would change nothing; pass a field or the new recipient account")]
+    NothingToUpdate,
     #[msg("The request's cooldown has not elapsed")]
     CooldownNotElapsed,
     #[msg("Signer is neither the request's owner nor its finalizer")]
     FinalizerNotAllowed,
+    #[msg("The recipient received less than the request's min_assets_out")]
+    PayoutBelowFloor,
+    #[msg("The vault's reserve does not cover the pending requests at today's price")]
+    ReleaseUnderfunded,
+    #[msg("The queue is still attached to the vault; admin cancel needs a released vault")]
+    QueueStillAttached,
     #[msg("Signer is neither the vault's admin nor its operator")]
     NotVaultAdminOrOperator,
     #[msg("The request is already eligible; there is nothing to expedite")]
     RequestAlreadyEligible,
+    #[msg("A batch needs at least one request")]
+    EmptyBatch,
+    #[msg("The trailing accounts do not match the expected sequences")]
+    BatchLengthMismatch,
+    #[msg("Batch requests must be in strictly ascending key order")]
+    RequestsNotSorted,
+    #[msg("More requests than the batch bound allows")]
+    BatchTooLarge,
+    #[msg("The vault has not been released long enough for an admin cancel")]
+    AdminCancelTooEarly,
+    #[msg("The fee account is the queue's asset escrow")]
+    FeeAccountIsEscrow,
+    #[msg("The share mint is freezable or carries an unsupported extension")]
+    UnsupportedShareMint,
 }
 
 /// Compile-time pin of the ABI above, generated from one list so completeness
@@ -99,10 +121,21 @@ pin_error_abi! {
     NotRequestOwner => 9,
     RequestExpired => 10,
     StaleRequestSequence => 11,
-    CooldownNotElapsed => 12,
-    FinalizerNotAllowed => 13,
-    NotVaultAdminOrOperator => 14,
-    RequestAlreadyEligible => 15,
+    NothingToUpdate => 12,
+    CooldownNotElapsed => 13,
+    FinalizerNotAllowed => 14,
+    PayoutBelowFloor => 15,
+    ReleaseUnderfunded => 16,
+    QueueStillAttached => 17,
+    NotVaultAdminOrOperator => 18,
+    RequestAlreadyEligible => 19,
+    EmptyBatch => 20,
+    BatchLengthMismatch => 21,
+    RequestsNotSorted => 22,
+    BatchTooLarge => 23,
+    AdminCancelTooEarly => 24,
+    FeeAccountIsEscrow => 25,
+    UnsupportedShareMint => 26,
 }
 
 #[cfg(test)]

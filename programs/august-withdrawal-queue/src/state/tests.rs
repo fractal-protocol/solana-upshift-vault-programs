@@ -71,6 +71,7 @@ fn withdrawal_queue_every_field_stays_at_its_byte_offset() {
     const SEQ: u64 = 0x3333_3333_3333_3333;
     const PENDING: u64 = 0x4444_4444_4444_4444;
     const SHARES: u64 = 0x5555_5555_5555_5555;
+    const RELEASED: i64 = 0x0666_6666_6666_6666;
     const PAD: u64 = 0x9999_9999_9999_9999;
 
     let queue = WithdrawalQueue {
@@ -85,7 +86,8 @@ fn withdrawal_queue_every_field_stays_at_its_byte_offset() {
         pending_requests: PENDING,
         pending_shares: SHARES,
         bump: 0x77,
-        padding: [PAD; 20],
+        released_at: RELEASED,
+        padding: [PAD; 19],
     };
     let mut bytes = Vec::new();
     queue.try_serialize(&mut bytes).expect("serialize");
@@ -106,10 +108,11 @@ fn withdrawal_queue_every_field_stays_at_its_byte_offset() {
         ("pending_requests", 192, PENDING.to_le_bytes().to_vec()),
         ("pending_shares", 200, SHARES.to_le_bytes().to_vec()),
         ("bump", 208, vec![0x77]),
+        ("released_at", 209, RELEASED.to_le_bytes().to_vec()),
         (
             "padding",
-            209,
-            [PAD; 20].iter().flat_map(|w| w.to_le_bytes()).collect(),
+            217,
+            [PAD; 19].iter().flat_map(|w| w.to_le_bytes()).collect(),
         ),
     ];
     // sha256("account:WithdrawalQueue")[..8]
@@ -203,7 +206,8 @@ fn init_starts_with_empty_counters() {
         sequence: 5,
         pending_requests: 5,
         pending_shares: 5,
-        padding: [7; 20],
+        released_at: 5,
+        padding: [7; 19],
         ..Default::default()
     };
     queue
@@ -221,7 +225,8 @@ fn init_starts_with_empty_counters() {
     assert_eq!(queue.sequence, 0);
     assert_eq!(queue.pending_requests, 0);
     assert_eq!(queue.pending_shares, 0);
-    assert_eq!(queue.padding, [0; 20]);
+    assert_eq!(queue.released_at, 0);
+    assert_eq!(queue.padding, [0; 19]);
 
     let err = WithdrawalQueue::default()
         .init(
@@ -273,6 +278,45 @@ fn cooldown_and_window_are_bounded_inclusively() {
         queue.fulfillment_window_seconds,
         MAX_FULFILLMENT_WINDOW_SECONDS
     );
+
+    queue
+        .set_fulfillment_window(MIN_FULFILLMENT_WINDOW_SECONDS)
+        .expect("the minimum itself is allowed");
+    for seconds in [1, 7, MIN_FULFILLMENT_WINDOW_SECONDS - 1] {
+        let err = queue
+            .set_fulfillment_window(seconds)
+            .expect_err("a non-zero window under a day is refused");
+        assert_eq!(
+            code_of(err),
+            expected(ErrorCode::FulfillmentWindowOutOfBounds)
+        );
+    }
+    assert_eq!(
+        queue.fulfillment_window_seconds,
+        MIN_FULFILLMENT_WINDOW_SECONDS
+    );
+}
+
+#[test]
+fn admin_cancel_opens_a_full_delay_after_the_latest_release() {
+    let mut queue = WithdrawalQueue::default();
+    assert!(
+        !queue.admin_cancel_delay_elapsed(i64::MAX).expect("never"),
+        "a queue never released has not waited"
+    );
+
+    queue.released_at = 1_000;
+    let opens_at = 1_000 + ADMIN_CANCEL_DELAY_SECONDS;
+    assert!(!queue
+        .admin_cancel_delay_elapsed(opens_at - 1)
+        .expect("early"));
+    assert!(queue.admin_cancel_delay_elapsed(opens_at).expect("on time"));
+
+    queue.released_at = i64::MAX;
+    let err = queue
+        .admin_cancel_delay_elapsed(i64::MAX)
+        .expect_err("overflow is refused, not wrapped");
+    assert_eq!(code_of(err), expected(ErrorCode::MathError));
 }
 
 #[test]
