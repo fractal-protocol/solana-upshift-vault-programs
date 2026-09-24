@@ -5,7 +5,6 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
-pub(crate) mod r#admin_cancel_withdrawal;
 pub(crate) mod r#cancel_withdrawal;
 pub(crate) mod r#expedite_request;
 pub(crate) mod r#expedite_requests;
@@ -17,7 +16,6 @@ pub(crate) mod r#request_withdrawal;
 pub(crate) mod r#set_cooldown;
 pub(crate) mod r#set_fulfillment_window;
 
-pub use self::r#admin_cancel_withdrawal::*;
 pub use self::r#cancel_withdrawal::*;
 pub use self::r#expedite_request::*;
 pub use self::r#expedite_requests::*;

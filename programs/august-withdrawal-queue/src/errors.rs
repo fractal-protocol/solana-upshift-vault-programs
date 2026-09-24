@@ -48,8 +48,6 @@ pub enum ErrorCode {
     CooldownNotElapsed,
     #[msg("Signer is neither the request's owner nor its finalizer")]
     FinalizerNotAllowed,
-    #[msg("The queue is still attached to the vault; admin cancel needs a released vault")]
-    QueueStillAttached,
     #[msg("Signer is neither the vault's admin nor its operator")]
     NotVaultAdminOrOperator,
     #[msg("The request is already eligible; there is nothing to expedite")]
@@ -111,13 +109,12 @@ pin_error_abi! {
     StaleRequestSequence => 11,
     CooldownNotElapsed => 12,
     FinalizerNotAllowed => 13,
-    QueueStillAttached => 14,
-    NotVaultAdminOrOperator => 15,
-    RequestAlreadyEligible => 16,
-    EmptyBatch => 17,
-    BatchLengthMismatch => 18,
-    RequestsNotSorted => 19,
-    BatchTooLarge => 20,
+    NotVaultAdminOrOperator => 14,
+    RequestAlreadyEligible => 15,
+    EmptyBatch => 16,
+    BatchLengthMismatch => 17,
+    RequestsNotSorted => 18,
+    BatchTooLarge => 19,
 }
 
 #[cfg(test)]

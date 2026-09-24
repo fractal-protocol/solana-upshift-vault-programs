@@ -41,7 +41,7 @@ pub fn handler(ctx: Context<CancelWithdrawal>, expected_sequence: u64) -> Result
     Ok(())
 }
 
-/// The settlement both cancels share: the counters drop and the escrowed shares
+/// The cancel settlement: the counters drop and the escrowed shares
 /// move to `destination` under the queue's signature. Returns the event naming
 /// `by` for the caller to emit, since `emit_cpi!` needs the caller's `ctx`. The
 /// caller's `close = owner` constraint returns the rent on exit.

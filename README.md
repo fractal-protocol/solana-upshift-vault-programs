@@ -7,7 +7,7 @@ This workspace builds two programs:
 | Crate | Artifact | Status |
 |---|---|---|
 | `programs/august-vault` | `august_vault.so` | Live on mainnet and devnet. Everything below describes this program. |
-| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | `initialize_queue`, two config setters, `request_withdrawal`, `finalize_withdrawal`, `cancel_withdrawal`, `release_vault`, `admin_cancel_withdrawal`, `expedite_request(s)` and `finalize_withdrawals` over the `WithdrawalQueue` / `WithdrawalRequest` state accounts: the queue's full instruction set. **Not deployed anywhere.** |
+| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | `initialize_queue`, two config setters, `request_withdrawal`, `finalize_withdrawal`, `cancel_withdrawal`, `release_vault`, `expedite_request(s)` and `finalize_withdrawals` over the `WithdrawalQueue` / `WithdrawalRequest` state accounts: the queue's full instruction set. **Not deployed anywhere.** |
 
 The queue will let a vault route redemptions through a request-and-cooldown flow
 instead of paying out instantly. The vault side of that is already in place: a
@@ -245,20 +245,15 @@ finalize or cancel afterwards, since neither depends on the gate, while the
 gate stops new ones; the queue account persists, and `attach_withdrawal_queue`
 re-enables it with its sequence intact.
 
-Three more instructions round out the set. `admin_cancel_withdrawal` lets the
-admin return any pending request's shares to its owner, into a share account
-the owner controls (created by the admin in the same transaction if need be),
-but only once the vault is released (`QueueStillAttached`, 6014): the tool for
-clearing abandoned escrow, which would otherwise block `close_vault`, and never
-a way to touch a live queue. `expedite_request` lets the admin or operator
-(`NotVaultAdminOrOperator`, 6015) move one not-yet-eligible request's
-`eligible_at` to now (`RequestAlreadyEligible`, 6016, otherwise);
+The rest are for operations. `expedite_request` lets the admin or operator
+(`NotVaultAdminOrOperator`, 6014) move one not-yet-eligible request's
+`eligible_at` to now (`RequestAlreadyEligible`, 6015, otherwise);
 `scheduled_eligible_at` and `expires_at` never move, so the owner's window only
 ever widens. `expedite_requests` and `finalize_withdrawals` are the batch
 forms: the requests come as trailing accounts, one per request for expedite
 and three (request, owner, recipient) for finalize, in strictly ascending key
-order, with a parallel list of expected sequences (`EmptyBatch` 6017,
-`BatchLengthMismatch` 6018, `RequestsNotSorted` 6019, `BatchTooLarge` 6020).
+order, with a parallel list of expected sequences (`EmptyBatch` 6016,
+`BatchLengthMismatch` 6017, `RequestsNotSorted` 6018, `BatchTooLarge` 6019).
 A batch is all or nothing, and each request is announced in the log before it
 is touched, so a failure names it. The bounds are 20 expedites and 5 finalizes
 per instruction (`MAX_EXPEDITE_BATCH`, `MAX_FINALIZE_BATCH`), and it is heap

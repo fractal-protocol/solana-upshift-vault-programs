@@ -173,7 +173,7 @@ fn every_other_case_is_refused_and_changes_nothing() {
         .expedite_request_as(&stranger, &user, 1, 1)
         .expect_err("neither admin nor operator");
     assert_queue_err(&err, ErrorCode::NotVaultAdminOrOperator);
-    assert_anchor_framework_err(&err, 6015);
+    assert_anchor_framework_err(&err, 6014);
     let err = ctx.expedite_request(&user, 1, 9).expect_err("stale stamp");
     assert_queue_err(&err, ErrorCode::StaleRequestSequence);
     assert_eq!(request_bytes(&ctx, &fresh), bytes);
@@ -185,7 +185,7 @@ fn every_other_case_is_refused_and_changes_nothing() {
         .expedite_request(&user, 1, 1)
         .expect_err("already eligible");
     assert_queue_err(&err, ErrorCode::RequestAlreadyEligible);
-    assert_anchor_framework_err(&err, 6016);
+    assert_anchor_framework_err(&err, 6015);
     assert_eq!(
         request_bytes(&ctx, &fresh),
         bytes,
@@ -323,20 +323,20 @@ fn malformed_batches_are_refused() {
         .expedite_requests_as(&admin, &[], &[])
         .expect_err("empty");
     assert_queue_err(&err, ErrorCode::EmptyBatch);
-    assert_anchor_framework_err(&err, 6017);
+    assert_anchor_framework_err(&err, 6016);
 
     let err = ctx
         .expedite_requests_as(&admin, &requests, &sequences[..1])
         .expect_err("more accounts than sequences");
     assert_queue_err(&err, ErrorCode::BatchLengthMismatch);
-    assert_anchor_framework_err(&err, 6018);
+    assert_anchor_framework_err(&err, 6017);
 
     let reversed: Vec<Pubkey> = requests.iter().rev().copied().collect();
     let err = ctx
         .expedite_requests_as(&admin, &reversed, &seqs(&ctx, &reversed))
         .expect_err("descending");
     assert_queue_err(&err, ErrorCode::RequestsNotSorted);
-    assert_anchor_framework_err(&err, 6019);
+    assert_anchor_framework_err(&err, 6018);
 
     let doubled = [requests[0], requests[0]];
     let err = ctx
@@ -403,7 +403,7 @@ fn a_full_batch_goes_through_and_one_over_the_bound_is_refused() {
         .expedite_requests_as(&admin, &requests, &sequences)
         .expect_err("one over the bound");
     assert_queue_err(&err, ErrorCode::BatchTooLarge);
-    assert_anchor_framework_err(&err, 6020);
+    assert_anchor_framework_err(&err, 6019);
 
     let meta = ctx
         .expedite_requests_as(

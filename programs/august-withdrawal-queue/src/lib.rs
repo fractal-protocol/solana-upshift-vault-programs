@@ -31,7 +31,6 @@ pub mod mint_policy;
 pub mod recipient;
 pub mod state;
 
-use instructions::admin_cancel_withdrawal::*;
 use instructions::cancel_withdrawal::*;
 use instructions::expedite_request::*;
 use instructions::finalize_withdrawal::*;
@@ -142,22 +141,6 @@ pub mod august_withdrawal_queue {
     /// ones. The queue account persists, so the vault can be attached again.
     pub fn release_vault(ctx: Context<ReleaseVault>) -> Result<()> {
         return instructions::release_vault::handler(ctx);
-    }
-
-    /// Admin returns a request's shares to its owner without the owner's
-    /// involvement, into any share account the owner controls (created by the
-    /// admin in the same transaction if need be). Only once the vault is
-    /// released, so it can never reset a waiting user; it exists to clear
-    /// abandoned escrow, which would otherwise block `close_vault`.
-    ///
-    /// ### Parameters
-    /// - `expected_sequence` - The request's stamp, so a delayed call cannot land
-    ///   on a recreated request with the same id
-    pub fn admin_cancel_withdrawal(
-        ctx: Context<AdminCancelWithdrawal>,
-        expected_sequence: u64,
-    ) -> Result<()> {
-        return instructions::admin_cancel_withdrawal::handler(ctx, expected_sequence);
     }
 
     /// Admin or operator makes one not-yet-eligible request finalizable now:

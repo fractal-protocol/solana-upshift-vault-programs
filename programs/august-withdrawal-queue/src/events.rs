@@ -109,8 +109,8 @@ impl WithdrawalFinalized {
     }
 }
 
-/// A request was cancelled and its shares returned. `by` is the signer: the
-/// owner, or the admin through `admin_cancel_withdrawal`.
+/// A request was cancelled and its shares returned. `by` is the signer, always
+/// the owner.
 #[event]
 pub struct WithdrawalCancelled {
     pub vault: Pubkey,
