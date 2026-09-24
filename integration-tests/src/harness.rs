@@ -28,7 +28,7 @@ use litesvm::{types::FailedTransactionMetadata, LiteSVM};
 use solana_sdk::bpf_loader_upgradeable::{self, UpgradeableLoaderState};
 use solana_sdk::{
     account::Account as SolanaAccount,
-    instruction::{AccountMeta, Instruction, InstructionError},
+    instruction::{Instruction, InstructionError},
     program_pack::Pack,
     pubkey::Pubkey,
     rent::Rent,
@@ -1624,6 +1624,33 @@ impl VaultCtx {
         send_tx(&mut self.svm, finalizer, &[ix], &[finalizer])
     }
 
+    /// The genuine `finalize_withdrawal` instruction for `request_owner`'s
+    /// request, for tests that put several in one transaction.
+    pub fn finalize_withdrawal_ix(
+        &self,
+        finalizer: &Pubkey,
+        request_owner: &Pubkey,
+        request_id: u64,
+        expected_sequence: u64,
+    ) -> Instruction {
+        Instruction {
+            program_id: august_withdrawal_queue::ID,
+            accounts: self
+                .finalize_withdrawal_accounts(finalizer, request_owner, request_id)
+                .to_account_metas(None),
+            data: q_ix::FinalizeWithdrawal { expected_sequence }.data(),
+        }
+    }
+
+    /// Sends `ixs` as one transaction, signed and paid by `signer`.
+    pub fn send_instructions(
+        &mut self,
+        signer: &Keypair,
+        ixs: &[Instruction],
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        send_tx(&mut self.svm, signer, ixs, &[signer])
+    }
+
     /// What the vault would pay for `shares` right now, by its own math:
     /// `(gross, net)`, where net is what the redeemer receives after the fee.
     pub fn quote_redeem(&self, shares: u64) -> (u64, u64) {
@@ -1947,6 +1974,24 @@ impl VaultCtx {
         }
     }
 
+    /// The genuine `expedite_request` instruction, signed by `authority`, for
+    /// tests that put it in one transaction with other instructions.
+    pub fn expedite_request_ix(
+        &self,
+        authority: &Pubkey,
+        request_owner: &Pubkey,
+        request_id: u64,
+        expected_sequence: u64,
+    ) -> Instruction {
+        Instruction {
+            program_id: august_withdrawal_queue::ID,
+            accounts: self
+                .expedite_request_accounts(authority, request_owner, request_id)
+                .to_account_metas(None),
+            data: q_ix::ExpediteRequest { expected_sequence }.data(),
+        }
+    }
+
     pub fn send_expedite_request(
         &mut self,
         authority: &Keypair,
@@ -1959,116 +2004,6 @@ impl VaultCtx {
             data: q_ix::ExpediteRequest { expected_sequence }.data(),
         };
         send_tx(&mut self.svm, authority, &[ix], &[authority])
-    }
-
-    /// The `expedite_requests` instruction with `requests` as trailing accounts
-    /// in the order given, so a test can send an unsorted or duplicated batch.
-    pub fn expedite_requests_ix(
-        &self,
-        authority: &Pubkey,
-        requests: &[Pubkey],
-        expected_sequences: &[u64],
-    ) -> Instruction {
-        let mut accounts = q_accounts::ExpediteRequests {
-            queue: self.withdrawal_queue_pda(),
-            vault_state: self.vault_state,
-            authority: *authority,
-            event_authority: event_authority_pda(),
-            program: august_withdrawal_queue::ID,
-        }
-        .to_account_metas(None);
-        accounts.extend(requests.iter().map(|r| AccountMeta::new(*r, false)));
-        Instruction {
-            program_id: august_withdrawal_queue::ID,
-            accounts,
-            data: q_ix::ExpediteRequests {
-                expected_sequences: expected_sequences.to_vec(),
-            }
-            .data(),
-        }
-    }
-
-    pub fn expedite_requests_as(
-        &mut self,
-        authority: &Keypair,
-        requests: &[Pubkey],
-        expected_sequences: &[u64],
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
-        let ix = self.expedite_requests_ix(&authority.pubkey(), requests, expected_sequences);
-        send_tx(
-            &mut self.svm,
-            authority,
-            &with_batch_budget(ix),
-            &[authority],
-        )
-    }
-
-    // ---- batch finalize ----
-
-    /// A request's trailing-account group for `finalize_withdrawals`: the
-    /// request, its owner and its recipient, read off the request itself.
-    pub fn request_group(&self, owner: &Pubkey, request_id: u64) -> RequestGroup {
-        let r = self.request_state_data(owner, request_id);
-        RequestGroup {
-            request: self.request_pda(owner, request_id),
-            owner: r.owner,
-            recipient: r.recipient_token_account,
-        }
-    }
-
-    /// The `finalize_withdrawals` instruction with the groups as trailing
-    /// accounts in the order given. Every trailing account is writable, as the
-    /// program requires.
-    pub fn finalize_withdrawals_ix(
-        &self,
-        finalizer: &Pubkey,
-        groups: &[RequestGroup],
-        expected_sequences: &[u64],
-    ) -> Instruction {
-        let mut accounts = q_accounts::FinalizeWithdrawals {
-            queue: self.withdrawal_queue_pda(),
-            vault_state: self.vault_state,
-            vault_deposit_ata: self.vault_token_pda,
-            fee_recipient_account: self.fee_recipient_deposit_ata,
-            escrow_shares: self.queue_escrow(&self.share_mint),
-            escrow_assets: self.queue_escrow(&self.deposit_mint),
-            share_mint: self.share_mint,
-            deposit_mint: self.deposit_mint,
-            finalizer: *finalizer,
-            vault_program: august_vault::ID,
-            token_program: self.token_program.id(),
-            event_authority: event_authority_pda(),
-            program: august_withdrawal_queue::ID,
-        }
-        .to_account_metas(None);
-        for g in groups {
-            accounts.push(AccountMeta::new(g.request, false));
-            accounts.push(AccountMeta::new(g.owner, false));
-            accounts.push(AccountMeta::new(g.recipient, false));
-        }
-        Instruction {
-            program_id: august_withdrawal_queue::ID,
-            accounts,
-            data: q_ix::FinalizeWithdrawals {
-                expected_sequences: expected_sequences.to_vec(),
-            }
-            .data(),
-        }
-    }
-
-    pub fn finalize_withdrawals_as(
-        &mut self,
-        finalizer: &Keypair,
-        groups: &[RequestGroup],
-        expected_sequences: &[u64],
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
-        let ix = self.finalize_withdrawals_ix(&finalizer.pubkey(), groups, expected_sequences);
-        send_tx(
-            &mut self.svm,
-            finalizer,
-            &with_batch_budget(ix),
-            &[finalizer],
-        )
     }
 
     /// Create and fund a throwaway keypair (for impostor-signer tests).
@@ -2630,35 +2565,9 @@ impl QueueCoSigner<'_> {
     }
 }
 
-/// A batch instruction behind the compute budget a batch transaction requests:
-/// the 1.4M CU ceiling the design measures batches against. The SDK sends the
-/// same. No heap frame: the program's allocator is fixed at 32 KB whatever the
-/// transaction requests, which is what bounds a batch (see the program's
-/// `batch` module).
-pub fn with_batch_budget(ix: Instruction) -> Vec<Instruction> {
-    vec![
-        solana_sdk::compute_budget::ComputeBudgetInstruction::set_compute_unit_limit(1_400_000),
-        ix,
-    ]
-}
-
 /// The queue program's event authority: the PDA that signs its event self-CPIs.
 pub fn event_authority_pda() -> Pubkey {
     Pubkey::find_program_address(&[b"__event_authority"], &august_withdrawal_queue::ID).0
-}
-
-/// One request's trailing accounts for `finalize_withdrawals`.
-#[derive(Clone, Copy, Debug)]
-pub struct RequestGroup {
-    pub request: Pubkey,
-    pub owner: Pubkey,
-    pub recipient: Pubkey,
-}
-
-/// Sorts groups into the strictly ascending request order the batch requires.
-pub fn sorted_by_request(mut groups: Vec<RequestGroup>) -> Vec<RequestGroup> {
-    groups.sort_by_key(|g| g.request);
-    groups
 }
 
 /// A second vault and its queue, as [`VaultCtx::new_vault_with_queue`] built

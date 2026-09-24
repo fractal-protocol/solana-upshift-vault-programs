@@ -23,7 +23,6 @@
 //! is produced. With it, attaching a queue is reversible.
 
 pub mod auth;
-pub mod batch;
 pub mod errors;
 pub mod events;
 pub mod instructions;
@@ -108,7 +107,8 @@ pub mod august_withdrawal_queue {
     /// queue redeems the escrowed shares by CPI into the vault as its PDA,
     /// forwards the net payout to the request's recipient, and closes the
     /// request with its rent to the owner. Anyone the request's `finalizer`
-    /// permits may call it, the owner always.
+    /// permits may call it, the owner always; before `scheduled_eligible_at`,
+    /// reachable only after an expedite, only the owner or a named finalizer.
     /// The vault's `VaultPaused` and `NotEnoughLiquidity` propagate unchanged
     /// and leave the request pending.
     ///
@@ -155,32 +155,5 @@ pub mod august_withdrawal_queue {
     ///   on a recreated request with the same id
     pub fn expedite_request(ctx: Context<ExpediteRequest>, expected_sequence: u64) -> Result<()> {
         return instructions::expedite_request::handler(ctx, expected_sequence);
-    }
-
-    /// `expedite_request` over the trailing request accounts, one expected
-    /// sequence each, in strictly ascending key order. Any request failing a
-    /// precondition aborts the whole batch.
-    ///
-    /// ### Parameters
-    /// - `expected_sequences` - One stamp per trailing request account, in order
-    pub fn expedite_requests<'info>(
-        ctx: Context<'_, '_, 'info, 'info, ExpediteRequests<'info>>,
-        expected_sequences: Vec<u64>,
-    ) -> Result<()> {
-        return instructions::expedite_request::handler_batch(ctx, expected_sequences);
-    }
-
-    /// `finalize_withdrawal` over the trailing accounts, three per request:
-    /// the request, its owner and its recipient, in strictly ascending request
-    /// order. The vault-side accounts are passed once. Any request failing a
-    /// precondition, a liquidity shortfall included, aborts the whole batch.
-    ///
-    /// ### Parameters
-    /// - `expected_sequences` - One stamp per request, in order
-    pub fn finalize_withdrawals<'info>(
-        ctx: Context<'_, '_, 'info, 'info, FinalizeWithdrawals<'info>>,
-        expected_sequences: Vec<u64>,
-    ) -> Result<()> {
-        return instructions::finalize_withdrawal::handler_batch(ctx, expected_sequences);
     }
 }

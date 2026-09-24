@@ -6,50 +6,23 @@
 // As of 10 March 2036 (the "Change Date"), use of this software will be
 // governed by version 2.0 of the Apache License.
 
-//! `expedite_request` moves one request's eligibility to now, and its batch
-//! form does the same for a set. Both only ever widen the owner's window:
-//! `scheduled_eligible_at` and `expires_at` are never touched.
+//! `expedite_request` moves one request's eligibility to now. It only ever
+//! widens the owner's window: `scheduled_eligible_at` and `expires_at` are never
+//! touched.
 
-use august_withdrawal_queue::batch::MAX_EXPEDITE_BATCH;
 use august_withdrawal_queue::errors::{ErrorCode, ANCHOR_USER_ERROR_OFFSET};
 use august_withdrawal_queue::events::WithdrawalExpedited;
 use integration_tests::harness::{
-    assert_anchor_framework_err, events_of, with_batch_budget, VaultCtx, DEPOSIT_DECIMALS,
+    assert_anchor_framework_err, events_of, VaultCtx, DEPOSIT_DECIMALS,
 };
 use litesvm::types::FailedTransactionMetadata;
-use solana_sdk::{
-    hash::Hash, pubkey::Pubkey, signature::Keypair, signer::Signer, transaction::Transaction,
-};
+use solana_sdk::{pubkey::Pubkey, signer::Signer};
 
 const DEPOSIT_AMOUNT: u64 = 10 * 10u64.pow(DEPOSIT_DECIMALS as u32);
 const DAY: u64 = 24 * 60 * 60;
-/// A legacy transaction's wire limit.
-const PACKET_DATA_SIZE: usize = 1232;
-/// How many requests a legacy transaction has room for, measured. The
-/// program's bound is lower, so size never binds an expedite batch.
-const MEASURED_LEGACY_ROOM: usize = 22;
 
 fn assert_queue_err(err: &FailedTransactionMetadata, code: ErrorCode) {
     assert_anchor_framework_err(err, code as u32 + ANCHOR_USER_ERROR_OFFSET);
-}
-
-/// The last request announced before the failure is the offending one.
-fn assert_blamed(err: &FailedTransactionMetadata, request: &Pubkey) {
-    let logs = &err.meta.logs;
-    let last = logs
-        .iter()
-        .rposition(|l| l == "Program log: request")
-        .expect("a request was announced");
-    assert_eq!(
-        logs.get(last + 1).map(String::as_str),
-        Some(format!("Program log: {request}").as_str()),
-        "logs:
-{}",
-        logs.join(
-            "
-"
-        )
-    );
 }
 
 /// A vault with a holder and its queue attached under a one-day cooldown.
@@ -61,37 +34,9 @@ fn attached_vault_with_holder() -> VaultCtx {
     ctx
 }
 
-/// Opens `n` requests of `each` shares for the user, ids 1..=n, and returns
-/// their PDAs in id order.
-fn open_requests(ctx: &mut VaultCtx, n: u64, each: u64) -> Vec<Pubkey> {
-    let user = ctx.user.pubkey();
-    (1..=n)
-        .map(|id| {
-            ctx.request_withdrawal(id, each).expect("request");
-            ctx.request_pda(&user, id)
-        })
-        .collect()
-}
-
 fn request_bytes(ctx: &VaultCtx, pda: &Pubkey) -> Vec<u8> {
     ctx.svm.get_account(pda).expect("request").data
 }
-
-/// The sequences of the user's requests `1..=n`, in the order of `requests`.
-fn sequences_of(ctx: &VaultCtx, n: u64, requests: &[Pubkey]) -> Vec<u64> {
-    let user = ctx.user.pubkey();
-    requests
-        .iter()
-        .map(|r| {
-            let id = (1..=n)
-                .find(|id| ctx.request_pda(&user, *id) == *r)
-                .expect("id");
-            ctx.request_state_data(&user, id).sequence
-        })
-        .collect()
-}
-
-// ---- single ----
 
 /// Admin and operator both may; the request becomes finalizable at once, and
 /// only `eligible_at` moved.
@@ -221,249 +166,6 @@ fn every_other_case_is_refused_and_changes_nothing() {
     assert_anchor_framework_err(&err, 2001);
 }
 
-// ---- batch ----
-
-#[test]
-fn a_batch_expedites_every_request_and_emits_one_event_each() {
-    let mut ctx = attached_vault_with_holder();
-    let user = ctx.user.pubkey();
-    let shares = ctx.token_account_amount(&ctx.user_share_ata);
-    let mut requests = open_requests(&mut ctx, 5, shares / 10);
-    requests.sort();
-    let sequences: Vec<u64> = requests
-        .iter()
-        .map(|r| {
-            let id = (1..=5)
-                .find(|id| ctx.request_pda(&user, *id) == *r)
-                .expect("id");
-            ctx.request_state_data(&user, id).sequence
-        })
-        .collect();
-    ctx.warp_forward_seconds(60);
-    let now = ctx.now();
-    let admin = ctx.admin.insecure_clone();
-
-    let meta = ctx
-        .expedite_requests_as(&admin, &requests, &sequences)
-        .expect("batch");
-    eprintln!(
-        "expedite_requests({}) consumed {} CU",
-        requests.len(),
-        meta.compute_units_consumed
-    );
-    let events = events_of::<WithdrawalExpedited>(&meta);
-    assert_eq!(events.len(), 5);
-    for (e, r) in events.iter().zip(&requests) {
-        assert_eq!(e.request, *r);
-        assert_eq!(e.new_eligible_at, now);
-    }
-    for id in 1..=5 {
-        assert_eq!(ctx.request_state_data(&user, id).eligible_at, now);
-    }
-}
-
-/// Decision 16: all or nothing, with the offending request named.
-#[test]
-fn a_batch_with_one_ineligible_request_changes_nothing() {
-    let mut ctx = attached_vault_with_holder();
-    let user = ctx.user.pubkey();
-    let shares = ctx.token_account_amount(&ctx.user_share_ata);
-    let mut requests = open_requests(&mut ctx, 3, shares / 6);
-    requests.sort();
-    // Make the middle one eligible already.
-    let middle_id = (1..=3)
-        .find(|id| ctx.request_pda(&user, *id) == requests[1])
-        .expect("id");
-    ctx.expedite_request(&user, middle_id, middle_id)
-        .expect("pre-expedite");
-    let bytes: Vec<Vec<u8>> = requests.iter().map(|r| request_bytes(&ctx, r)).collect();
-    let sequences: Vec<u64> = requests
-        .iter()
-        .map(|r| {
-            let id = (1..=3)
-                .find(|id| ctx.request_pda(&user, *id) == *r)
-                .unwrap();
-            ctx.request_state_data(&user, id).sequence
-        })
-        .collect();
-    ctx.warp_forward_seconds(60);
-    let admin = ctx.admin.insecure_clone();
-
-    let err = ctx
-        .expedite_requests_as(&admin, &requests, &sequences)
-        .expect_err("one request already eligible");
-    assert_queue_err(&err, ErrorCode::RequestAlreadyEligible);
-    assert_blamed(&err, &requests[1]);
-    for (r, b) in requests.iter().zip(&bytes) {
-        assert_eq!(request_bytes(&ctx, r), *b, "untouched: {r}");
-    }
-}
-
-#[test]
-fn malformed_batches_are_refused() {
-    let mut ctx = attached_vault_with_holder();
-    let user = ctx.user.pubkey();
-    let shares = ctx.token_account_amount(&ctx.user_share_ata);
-    let mut requests = open_requests(&mut ctx, 2, shares / 4);
-    requests.sort();
-    let seqs = |ctx: &VaultCtx, rs: &[Pubkey]| -> Vec<u64> {
-        rs.iter()
-            .map(|r| {
-                let id = (1..=2)
-                    .find(|id| ctx.request_pda(&user, *id) == *r)
-                    .unwrap();
-                ctx.request_state_data(&user, id).sequence
-            })
-            .collect()
-    };
-    let admin = ctx.admin.insecure_clone();
-    let sequences = seqs(&ctx, &requests);
-
-    let err = ctx
-        .expedite_requests_as(&admin, &[], &[])
-        .expect_err("empty");
-    assert_queue_err(&err, ErrorCode::EmptyBatch);
-    assert_anchor_framework_err(&err, 6016);
-
-    let err = ctx
-        .expedite_requests_as(&admin, &requests, &sequences[..1])
-        .expect_err("more accounts than sequences");
-    assert_queue_err(&err, ErrorCode::BatchLengthMismatch);
-    assert_anchor_framework_err(&err, 6017);
-
-    let reversed: Vec<Pubkey> = requests.iter().rev().copied().collect();
-    let err = ctx
-        .expedite_requests_as(&admin, &reversed, &seqs(&ctx, &reversed))
-        .expect_err("descending");
-    assert_queue_err(&err, ErrorCode::RequestsNotSorted);
-    assert_anchor_framework_err(&err, 6018);
-
-    let doubled = [requests[0], requests[0]];
-    let err = ctx
-        .expedite_requests_as(&admin, &doubled, &[sequences[0], sequences[0]])
-        .expect_err("duplicated");
-    assert_queue_err(&err, ErrorCode::RequestsNotSorted);
-
-    // Not a request at all, and a request the batch may not write.
-    let not_a_request = [ctx.withdrawal_queue_pda()];
-    let err = ctx
-        .expedite_requests_as(&admin, &not_a_request, &[1])
-        .expect_err("the queue account in a request slot");
-    assert_anchor_framework_err(&err, 3002);
-    let mut ix = ctx.expedite_requests_ix(&admin.pubkey(), &requests[..1], &sequences[..1]);
-    ix.accounts.last_mut().unwrap().is_writable = false;
-    let err = {
-        let tx = Transaction::new_signed_with_payer(
-            &[ix],
-            Some(&admin.pubkey()),
-            &[&admin],
-            ctx.svm.latest_blockhash(),
-        );
-        ctx.svm.send_transaction(tx).expect_err("read-only request")
-    };
-    assert_anchor_framework_err(&err, 2000);
-
-    // Another queue's request, genuine in every respect but its queue.
-    let other = ctx.new_vault_with_queue();
-    let user_ata = ctx.user_deposit_ata;
-    let foreign = ctx.install_foreign_request(&other, &user, 9, 1, user_ata);
-    let err = ctx
-        .expedite_requests_as(&admin, &[foreign], &[1])
-        .expect_err("another queue's request");
-    assert_anchor_framework_err(&err, 2001);
-
-    let stranger = ctx.new_funded_keypair(1_000_000_000);
-    let err = ctx
-        .expedite_requests_as(&stranger, &requests, &sequences)
-        .expect_err("not admin or operator");
-    assert_queue_err(&err, ErrorCode::NotVaultAdminOrOperator);
-    assert_eq!(
-        ctx.request_state_data(&user, 1).eligible_at,
-        ctx.request_state_data(&user, 1).scheduled_eligible_at
-    );
-}
-
-/// The bound is the program's, not the packet's: one over it is refused
-/// before anything else about the batch is looked at, and a full batch goes
-/// through under the batch budget.
-#[test]
-fn a_full_batch_goes_through_and_one_over_the_bound_is_refused() {
-    let mut ctx = attached_vault_with_holder();
-    let user = ctx.user.pubkey();
-    let shares = ctx.token_account_amount(&ctx.user_share_ata);
-    let n = MAX_EXPEDITE_BATCH as u64 + 1;
-    let mut requests = open_requests(&mut ctx, n, shares / (2 * n));
-    requests.sort();
-    let sequences = sequences_of(&ctx, n, &requests);
-    ctx.warp_forward_seconds(60);
-    let now = ctx.now();
-    let admin = ctx.admin.insecure_clone();
-
-    let err = ctx
-        .expedite_requests_as(&admin, &requests, &sequences)
-        .expect_err("one over the bound");
-    assert_queue_err(&err, ErrorCode::BatchTooLarge);
-    assert_anchor_framework_err(&err, 6019);
-
-    let meta = ctx
-        .expedite_requests_as(
-            &admin,
-            &requests[..MAX_EXPEDITE_BATCH],
-            &sequences[..MAX_EXPEDITE_BATCH],
-        )
-        .expect("a full batch");
-    eprintln!(
-        "expedite_requests({MAX_EXPEDITE_BATCH}) consumed {} CU",
-        meta.compute_units_consumed
-    );
-    assert_eq!(
-        events_of::<WithdrawalExpedited>(&meta).len(),
-        MAX_EXPEDITE_BATCH
-    );
-    let expedited = (1..=n)
-        .filter(|id| ctx.request_state_data(&user, *id).eligible_at == now)
-        .count();
-    assert_eq!(expedited, MAX_EXPEDITE_BATCH, "exactly the batch moved");
-}
-
-/// A legacy transaction has room for more than the bound, so the bound is
-/// what limits an expedite batch; the room is measured for the SDK.
-#[test]
-fn the_bound_fits_a_legacy_transaction() {
-    let ctx = attached_vault_with_holder();
-    let admin = Keypair::new();
-    let size_for = |n: usize| {
-        let requests: Vec<Pubkey> = (0..n).map(|_| Pubkey::new_unique()).collect();
-        let sequences: Vec<u64> = (1..=n as u64).collect();
-        let ix = ctx.expedite_requests_ix(&admin.pubkey(), &requests, &sequences);
-        let tx = Transaction::new_signed_with_payer(
-            &with_batch_budget(ix),
-            Some(&admin.pubkey()),
-            &[&admin],
-            Hash::default(),
-        );
-        // One byte of signature count, 64 per signature, then the message.
-        1 + 64 * tx.signatures.len() + tx.message_data().len()
-    };
-    let max = (1..=64)
-        .take_while(|n| size_for(*n) <= PACKET_DATA_SIZE)
-        .last()
-        .unwrap();
-    eprintln!(
-        "expedite_requests: {max} requests fit a legacy transaction with its compute-budget \
-         instruction ({} bytes at {max})",
-        size_for(max)
-    );
-    assert_eq!(
-        max, MEASURED_LEGACY_ROOM,
-        "the recorded room must be the measured one"
-    );
-    assert!(
-        max >= MAX_EXPEDITE_BATCH,
-        "the bound must fit a legacy transaction"
-    );
-}
-
 // ---- early settlement stays the owner's choice ----
 
 /// The independent review's P1: an operator who can mark the price down must not
@@ -485,7 +187,7 @@ fn an_expedited_request_is_settled_early_only_by_its_owner() {
         .finalize_withdrawal_as(&operator, &user, 1, 1)
         .expect_err("the operator may not settle it early");
     assert_queue_err(&err, ErrorCode::EarlyFinalizeRestricted);
-    assert_anchor_framework_err(&err, 6020);
+    assert_anchor_framework_err(&err, 6016);
     let keeper = ctx.new_funded_keypair(1_000_000_000);
     let err = ctx
         .finalize_withdrawal_as(&keeper, &user, 1, 1)
@@ -495,6 +197,29 @@ fn an_expedited_request_is_settled_early_only_by_its_owner() {
 
     ctx.finalize_withdrawal(1, 1)
         .expect("the owner takes the early exit");
+}
+
+/// The review's P1 exactly as an attacker would send it: expedite and finalize
+/// in one operator transaction. The finalize is refused, and the expedite
+/// rolls back with it.
+#[test]
+fn an_operator_cannot_expedite_and_settle_in_one_transaction() {
+    let mut ctx = attached_vault_with_holder();
+    let user = ctx.user.pubkey();
+    let shares = ctx.token_account_amount(&ctx.user_share_ata);
+    ctx.request_withdrawal(1, shares / 4).expect("request");
+    let operator = ctx.operator.insecure_clone();
+    let before = request_bytes(&ctx, &ctx.request_pda(&user, 1));
+    let ixs = [
+        ctx.expedite_request_ix(&operator.pubkey(), &user, 1, 1),
+        ctx.finalize_withdrawal_ix(&operator.pubkey(), &user, 1, 1),
+    ];
+
+    let err = ctx
+        .send_instructions(&operator, &ixs)
+        .expect_err("expedite then settle, atomically");
+    assert_queue_err(&err, ErrorCode::EarlyFinalizeRestricted);
+    assert_eq!(request_bytes(&ctx, &ctx.request_pda(&user, 1)), before);
 }
 
 /// The finalizer the owner named acts for the owner, early included.
@@ -534,24 +259,4 @@ fn from_its_original_eligibility_anyone_may_finalize_again() {
     ctx.warp_forward_seconds(1);
     ctx.finalize_withdrawal_as(&keeper, &user, 1, 1)
         .expect("at the original eligibility");
-}
-
-/// The batch form shares the check: a keeper's batch containing an expedited
-/// request is refused whole, and names the request.
-#[test]
-fn a_keepers_batch_cannot_settle_an_expedited_request_early() {
-    let mut ctx = attached_vault_with_holder();
-    let user = ctx.user.pubkey();
-    let shares = ctx.token_account_amount(&ctx.user_share_ata);
-    ctx.request_withdrawal(1, shares / 4).expect("request");
-    ctx.expedite_request(&user, 1, 1).expect("expedite");
-    let keeper = ctx.new_funded_keypair(1_000_000_000);
-    let group = ctx.request_group(&user, 1);
-
-    let err = ctx
-        .finalize_withdrawals_as(&keeper, &[group], &[1])
-        .expect_err("early, through the batch");
-    assert_queue_err(&err, ErrorCode::EarlyFinalizeRestricted);
-    assert_blamed(&err, &group.request);
-    assert_eq!(ctx.queue_state_data().pending_requests, 1);
 }

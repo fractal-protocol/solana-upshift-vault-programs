@@ -31,8 +31,8 @@ idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build", "august-vault/idl-
 # deterministic and anyone may create them first, so `init` alone would let a
 # stranger block `initialize_queue` for good. See `InitializeQueue`.
 # `event-cpi`: events go out as self-CPI instructions rather than log lines,
-# since logs are capped at 10 KB per transaction and a batch's events would be
-# cut. See design decision 17.
+# since logs are capped at 10 KB per transaction and a keeper transaction
+# carrying several finalizes would lose events. See design decision 17.
 anchor-lang = { version = "0.31.1", features = ["init-if-needed", "event-cpi"] }
 anchor-spl = "0.31.1"
 solana-security-txt = "1.1.1"

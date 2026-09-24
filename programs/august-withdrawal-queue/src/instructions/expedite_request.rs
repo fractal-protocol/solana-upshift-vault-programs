@@ -16,12 +16,10 @@
 //! price down, expedite and settle a holder in one transaction.
 
 use crate::auth::require_vault_admin_or_operator;
-use crate::batch;
 use crate::errors::ErrorCode;
 use crate::events::WithdrawalExpedited;
 use crate::state::*;
 use anchor_lang::prelude::*;
-use anchor_lang::AccountsExit;
 use august_vault::state::vault::VaultState;
 
 /// Moves `eligible_at` to `now` for a pending request that has not reached it.
@@ -57,43 +55,6 @@ pub fn handler(ctx: Context<ExpediteRequest>, expected_sequence: u64) -> Result<
     Ok(())
 }
 
-/// The batch form: one trailing request account per sequence, ascending, all
-/// or nothing. Each request is loaded, checked and written back by hand, since
-/// trailing accounts are not declared fields.
-pub fn handler_batch<'info>(
-    ctx: Context<'_, '_, 'info, 'info, ExpediteRequests<'info>>,
-    expected_sequences: Vec<u64>,
-) -> Result<()> {
-    require_vault_admin_or_operator(
-        &ctx.accounts.queue,
-        &ctx.accounts.vault_state,
-        &ctx.accounts.authority,
-    )?;
-    let now = Clock::get()?.unix_timestamp;
-    let queue_key = ctx.accounts.queue.key();
-    let groups = batch::groups(
-        ctx.remaining_accounts,
-        &expected_sequences,
-        1,
-        batch::MAX_EXPEDITE_BATCH,
-    )?;
-    for (group, expected_sequence) in groups.into_iter().zip(expected_sequences) {
-        let info = &group[0];
-        batch::announce(info.key);
-        let mut request = batch::load_request(info, &queue_key)?;
-        let previous = expedite_one(&mut request, now, expected_sequence)?;
-        request.exit(&crate::ID)?;
-        emit_cpi!(WithdrawalExpedited::snapshot(
-            &request,
-            ctx.accounts.queue.vault_state,
-            *info.key,
-            ctx.accounts.authority.key(),
-            previous,
-        ));
-    }
-    Ok(())
-}
-
 /// The admin-or-operator check binds `vault_state` to the queue; the queue's
 /// seeds bind the queue. Boxed as everywhere.
 #[event_cpi]
@@ -123,21 +84,4 @@ pub struct ExpediteRequest<'info> {
         has_one = queue,
     )]
     pub request: Box<Account<'info, WithdrawalRequest>>,
-}
-
-/// As `ExpediteRequest`, with the requests as trailing accounts.
-#[event_cpi]
-#[derive(Accounts)]
-pub struct ExpediteRequests<'info> {
-    #[account(
-        seeds = [WITHDRAWAL_QUEUE_SEED, queue.vault_state.as_ref()],
-        bump = queue.bump,
-        has_one = vault_state @ ErrorCode::VaultMismatch,
-    )]
-    pub queue: Box<Account<'info, WithdrawalQueue>>,
-
-    pub vault_state: Box<Account<'info, VaultState>>,
-
-    /// The vault's admin or operator.
-    pub authority: Signer<'info>,
 }
