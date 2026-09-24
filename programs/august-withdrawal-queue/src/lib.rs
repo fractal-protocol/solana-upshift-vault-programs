@@ -17,13 +17,10 @@
 //!
 //! This crate carries the program identity, the error ABI pin, the build wiring,
 //! the two state accounts (`state`), the admin check (`auth`), the queue's
-//! admin instructions, the owner's request instruction, and
-//! finalization. Cancellation and release arrive with their own changes.
-//!
-//! **Deployment blocker.** `initialize_queue` is what first makes a queue
-//! attachable on the vault side, and detaching needs `release_vault`, which does
-//! not exist yet. Deploying this program before it lands would make attaching a
-//! one-way door.
+//! admin instructions, the owner's request and cancel instructions,
+//! finalization, and `release_vault`, which returns the vault to instant
+//! redemption and is the one place the co-signature the vault's detach demands
+//! is produced. With it, attaching a queue is reversible.
 
 pub mod auth;
 pub mod errors;
@@ -33,9 +30,11 @@ pub mod mint_policy;
 pub mod recipient;
 pub mod state;
 
+use instructions::cancel_withdrawal::*;
 use instructions::finalize_withdrawal::*;
 use instructions::initialize_queue::*;
 use instructions::queue_admin::*;
+use instructions::release_vault::*;
 use instructions::request_withdrawal::*;
 
 use anchor_lang::prelude::*;
@@ -119,5 +118,26 @@ pub mod august_withdrawal_queue {
         expected_sequence: u64,
     ) -> Result<()> {
         return instructions::finalize_withdrawal::handler(ctx, expected_sequence);
+    }
+
+    /// The owner takes a pending request back: its shares return to a share
+    /// account the owner controls and the request closes with its rent to the
+    /// owner. Allowed at any time while the request exists, in either vault
+    /// state, and while the vault is paused.
+    ///
+    /// ### Parameters
+    /// - `expected_sequence` - The request's stamp, so a delayed call cannot land
+    ///   on a recreated request with the same id
+    pub fn cancel_withdrawal(ctx: Context<CancelWithdrawal>, expected_sequence: u64) -> Result<()> {
+        return instructions::cancel_withdrawal::handler(ctx, expected_sequence);
+    }
+
+    /// Admin returns the vault to instant redemption: the queue co-signs the
+    /// vault's `detach_withdrawal_queue` by CPI. It checks no liquidity: nothing
+    /// could hold assets back for the pending set once the gate is off. Pending requests
+    /// survive and finalize or cancel afterwards; the vault's gate stops new
+    /// ones. The queue account persists, so the vault can be attached again.
+    pub fn release_vault(ctx: Context<ReleaseVault>) -> Result<()> {
+        return instructions::release_vault::handler(ctx);
     }
 }

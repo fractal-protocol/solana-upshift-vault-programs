@@ -1688,6 +1688,155 @@ impl VaultCtx {
         send_tx(&mut self.svm, owner, &[ix], &[owner]).expect("close token account");
     }
 
+    /// `cancel_withdrawal` on the user's own request, into their share ATA.
+    pub fn cancel_withdrawal(
+        &mut self,
+        request_id: u64,
+        expected_sequence: u64,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let user = self.user.insecure_clone();
+        let (owner, destination) = (user.pubkey(), self.user_share_ata);
+        self.cancel_withdrawal_as(&user, &owner, request_id, expected_sequence, destination)
+    }
+
+    /// `cancel_withdrawal` on `request_owner`'s request, signed by `signer`,
+    /// paying `destination`, so a test can have the wrong person try or pick
+    /// any share account.
+    pub fn cancel_withdrawal_as(
+        &mut self,
+        signer: &Keypair,
+        request_owner: &Pubkey,
+        request_id: u64,
+        expected_sequence: u64,
+        destination: Pubkey,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let accounts = self.cancel_withdrawal_accounts(
+            &signer.pubkey(),
+            request_owner,
+            request_id,
+            destination,
+        );
+        self.send_cancel_withdrawal(signer, accounts, expected_sequence)
+    }
+
+    /// The genuine account set for a `cancel_withdrawal`; substitution tests
+    /// overwrite a field before sending.
+    pub fn cancel_withdrawal_accounts(
+        &self,
+        signer: &Pubkey,
+        request_owner: &Pubkey,
+        request_id: u64,
+        destination: Pubkey,
+    ) -> q_accounts::CancelWithdrawal {
+        q_accounts::CancelWithdrawal {
+            queue: self.withdrawal_queue_pda(),
+            owner: *signer,
+            request: self.request_pda(request_owner, request_id),
+            escrow_shares: self.queue_escrow(&self.share_mint),
+            share_mint: self.share_mint,
+            destination_share_account: destination,
+            token_program: self.token_program.id(),
+        }
+    }
+
+    /// Sends `cancel_withdrawal` with an explicit account set, signed and paid
+    /// by `signer`.
+    pub fn send_cancel_withdrawal(
+        &mut self,
+        signer: &Keypair,
+        accounts: q_accounts::CancelWithdrawal,
+        expected_sequence: u64,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_withdrawal_queue::ID,
+            accounts: accounts.to_account_metas(None),
+            data: q_ix::CancelWithdrawal { expected_sequence }.data(),
+        };
+        send_tx(&mut self.svm, signer, &[ix], &[signer])
+    }
+
+    /// `release_vault` as the admin.
+    pub fn release_vault(
+        &mut self,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let admin = self.admin.insecure_clone();
+        self.release_vault_as(&admin)
+    }
+
+    /// `release_vault` signed by `admin`, who may be the wrong person.
+    pub fn release_vault_as(
+        &mut self,
+        admin: &Keypair,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let accounts = self.release_vault_accounts(&admin.pubkey());
+        self.send_release_vault(admin, accounts)
+    }
+
+    /// The genuine account set for a `release_vault`.
+    pub fn release_vault_accounts(&self, admin: &Pubkey) -> q_accounts::ReleaseVault {
+        q_accounts::ReleaseVault {
+            queue: self.withdrawal_queue_pda(),
+            vault_state: self.vault_state,
+            deposit_mint: self.deposit_mint,
+            admin: *admin,
+            vault_program: august_vault::ID,
+        }
+    }
+
+    /// Sends `release_vault` with an explicit account set, signed by `admin`.
+    pub fn send_release_vault(
+        &mut self,
+        admin: &Keypair,
+        accounts: q_accounts::ReleaseVault,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_withdrawal_queue::ID,
+            accounts: accounts.to_account_metas(None),
+            data: q_ix::ReleaseVault {}.data(),
+        };
+        send_tx(&mut self.svm, admin, &[ix], &[admin])
+    }
+
+    /// A second vault on a fresh deposit mint, same admin, with its own queue
+    /// initialized (not attached) and both escrows created. For tests that
+    /// present one vault's queue accounts with another vault's request.
+    pub fn new_vault_with_queue(&mut self) -> OtherVault {
+        let deposit_mint = self.create_extra_deposit_mint();
+        let authority = self.protocol_authority.insecure_clone();
+        self.try_initialize_vault(&authority, deposit_mint, VAULT_VERSION)
+            .expect("second vault");
+        let [vault_state, share_mint, vault_token] = self.vault_pdas(deposit_mint, VAULT_VERSION);
+        let (admin, payer) = (self.admin.insecure_clone(), self.payer.insecure_clone());
+        self.initialize_queue_for_vault_as(
+            &admin,
+            &payer,
+            vault_state,
+            deposit_mint,
+            share_mint,
+            0,
+        )
+        .expect("second queue");
+        let queue = withdrawal_queue_pda(&vault_state);
+        let token_program = self.token_program.id();
+        OtherVault {
+            vault_state,
+            deposit_mint,
+            share_mint,
+            vault_token,
+            queue,
+            escrow_shares: get_associated_token_address_with_program_id(
+                &queue,
+                &share_mint,
+                &token_program,
+            ),
+            escrow_assets: get_associated_token_address_with_program_id(
+                &queue,
+                &deposit_mint,
+                &token_program,
+            ),
+        }
+    }
+
     /// Create and fund a throwaway keypair (for impostor-signer tests).
     pub fn new_funded_keypair(&mut self, lamports: u64) -> Keypair {
         airdrop_keypair(&mut self.svm, lamports)
@@ -2248,6 +2397,18 @@ impl QueueCoSigner<'_> {
 }
 
 /// An independent vault participant created by [`VaultCtx::new_depositor`].
+/// A second vault and its queue, as [`VaultCtx::new_vault_with_queue`] built
+/// them.
+pub struct OtherVault {
+    pub vault_state: Pubkey,
+    pub deposit_mint: Pubkey,
+    pub share_mint: Pubkey,
+    pub vault_token: Pubkey,
+    pub queue: Pubkey,
+    pub escrow_shares: Pubkey,
+    pub escrow_assets: Pubkey,
+}
+
 pub struct Depositor {
     pub keypair: Keypair,
     pub deposit_ata: Pubkey,

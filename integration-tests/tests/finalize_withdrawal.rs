@@ -644,3 +644,30 @@ fn substituted_accounts_are_refused_and_a_finalizer_cannot_redirect_the_payout()
     ctx.send_finalize_withdrawal(&keeper, genuine, 1)
         .expect("the genuine set still works");
 }
+
+/// A request belongs to one queue. Presenting another vault's whole account set
+/// with it is refused by the request's `has_one = queue` before the CPI.
+#[test]
+fn a_request_cannot_be_finalized_through_another_vaults_queue() {
+    let (mut ctx, _) = mature_request();
+    let signer = ctx.user.insecure_clone();
+    let user = signer.pubkey();
+    let other = ctx.new_vault_with_queue();
+    let fee_recipient = ctx.fee_recipient.pubkey();
+    let fee_account = ctx.create_ata_for(&fee_recipient, &other.deposit_mint);
+
+    let mut accounts = ctx.finalize_withdrawal_accounts(&user, &user, 1);
+    accounts.queue = other.queue;
+    accounts.vault_state = other.vault_state;
+    accounts.vault_deposit_ata = other.vault_token;
+    accounts.fee_recipient_account = fee_account;
+    accounts.escrow_shares = other.escrow_shares;
+    accounts.escrow_assets = other.escrow_assets;
+    accounts.share_mint = other.share_mint;
+    accounts.deposit_mint = other.deposit_mint;
+    let err = ctx
+        .send_finalize_withdrawal(&signer, accounts, 1)
+        .expect_err("another vault's queue");
+    assert_anchor_framework_err(&err, 2001);
+    assert!(ctx.svm.get_account(&ctx.request_pda(&user, 1)).is_some());
+}

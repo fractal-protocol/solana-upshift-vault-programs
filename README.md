@@ -7,7 +7,7 @@ This workspace builds two programs:
 | Crate | Artifact | Status |
 |---|---|---|
 | `programs/august-vault` | `august_vault.so` | Live on mainnet and devnet. Everything below describes this program. |
-| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | `initialize_queue`, two config setters, `request_withdrawal` and `finalize_withdrawal` over the `WithdrawalQueue` / `WithdrawalRequest` state accounts. Cancellation and `release_vault` are not implemented. **Not deployed anywhere, and must not be until `release_vault` lands.** |
+| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | `initialize_queue`, two config setters, `request_withdrawal`, `finalize_withdrawal`, `cancel_withdrawal` and `release_vault` over the `WithdrawalQueue` / `WithdrawalRequest` state accounts. Admin cancel, expedite and the batch forms are not implemented. **Not deployed anywhere.** |
 
 The queue will let a vault route redemptions through a request-and-cooldown flow
 instead of paying out instantly. The vault side of that is already in place: a
@@ -225,15 +225,30 @@ amount or the destination. The queue redeems the escrowed shares by CPI into
 `NotEnoughLiquidity` surface as the vault's own codes and
 leave the request pending and untouched. The payout is the asset escrow's
 balance delta, forwarded to the request's recipient, at the shares' value at
-that moment; the request then closes with its rent to the owner. Cancellation
-and `release_vault` are not implemented yet.
+that moment; the request then closes with its rent to the owner.
 
-**Do not deploy the queue program, or attach a queue, on any cluster yet.** Once
-`initialize_queue` is deployable the queue PDA can be created, so attaching
-becomes possible, while detaching needs `release_vault`, which does not exist.
-Attaching before it lands would be a one-way door: a gated vault could be
-reopened only by a vault program upgrade. Recorded as a merge blocker on
-AUGUST-7669 and AUGUST-7672.
+`cancel_withdrawal(expected_sequence)` returns a pending request's shares to any
+share account whose authority is the owner and closes the request with its rent
+to the owner. The destination must exist; the SDK prepends the idempotent ATA
+create when it is missing, so the owner pays for it exactly then. Cancel reads
+no vault account, so it works before eligibility, after expiry, while the vault
+is paused and whether or not the queue is attached (`NotRequestOwner`, 6009,
+and `StaleRequestSequence`, 6011, otherwise).
+
+`release_vault` returns the vault to instant redemption: the queue co-signs the
+vault's `detach_withdrawal_queue` by CPI as its PDA, the only place that
+signature is ever produced, and the admin signs too. It checks no liquidity:
+once the gate is off nothing could hold assets back for the pending set, so a
+queued holder exits like anyone else, by finalizing or by cancelling and
+redeeming, and whether to release is the admin's call. Pending requests survive the release and
+finalize or cancel afterwards, since neither depends on the gate, while the
+gate stops new ones; the queue account persists, and `attach_withdrawal_queue`
+re-enables it with its sequence intact. Admin cancel, expedite and the batch
+forms are not implemented yet.
+
+**The queue program is not deployed on any cluster yet.** With `release_vault`
+in place, attaching a queue is reversible, which closes the one-way-door
+concern recorded on AUGUST-7669 and AUGUST-7672.
 
 ### Operator subaccounts (optional, per vault)
 
