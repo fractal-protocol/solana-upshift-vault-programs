@@ -54,36 +54,30 @@ pub enum AugustWithdrawalQueueError {
     /// 6013 - Signer is neither the request's owner nor its finalizer
     #[error("Signer is neither the request's owner nor its finalizer")]
     FinalizerNotAllowed = 0x177D,
-    /// 6014 - The queue is still attached to the vault; admin cancel needs a released vault
-    #[error("The queue is still attached to the vault; admin cancel needs a released vault")]
-    QueueStillAttached = 0x177E,
-    /// 6015 - Signer is neither the vault's admin nor its operator
+    /// 6014 - Signer is neither the vault's admin nor its operator
     #[error("Signer is neither the vault's admin nor its operator")]
-    NotVaultAdminOrOperator = 0x177F,
-    /// 6016 - The request is already eligible; there is nothing to expedite
+    NotVaultAdminOrOperator = 0x177E,
+    /// 6015 - The request is already eligible; there is nothing to expedite
     #[error("The request is already eligible; there is nothing to expedite")]
-    RequestAlreadyEligible = 0x1780,
-    /// 6017 - A batch needs at least one request
+    RequestAlreadyEligible = 0x177F,
+    /// 6016 - A batch needs at least one request
     #[error("A batch needs at least one request")]
-    EmptyBatch = 0x1781,
-    /// 6018 - The trailing accounts do not match the expected sequences
+    EmptyBatch = 0x1780,
+    /// 6017 - The trailing accounts do not match the expected sequences
     #[error("The trailing accounts do not match the expected sequences")]
-    BatchLengthMismatch = 0x1782,
-    /// 6019 - Batch requests must be in strictly ascending key order
+    BatchLengthMismatch = 0x1781,
+    /// 6018 - Batch requests must be in strictly ascending key order
     #[error("Batch requests must be in strictly ascending key order")]
-    RequestsNotSorted = 0x1783,
-    /// 6020 - More requests than the batch bound allows
+    RequestsNotSorted = 0x1782,
+    /// 6019 - More requests than the batch bound allows
     #[error("More requests than the batch bound allows")]
-    BatchTooLarge = 0x1784,
-    /// 6021 - The vault has not been released long enough for an admin cancel
-    #[error("The vault has not been released long enough for an admin cancel")]
-    AdminCancelTooEarly = 0x1785,
-    /// 6022 - The fee account is the queue's asset escrow
+    BatchTooLarge = 0x1783,
+    /// 6020 - The fee account is the queue's asset escrow
     #[error("The fee account is the queue's asset escrow")]
-    FeeAccountIsEscrow = 0x1786,
-    /// 6023 - The share mint is freezable or carries an unsupported extension
+    FeeAccountIsEscrow = 0x1784,
+    /// 6021 - The share mint is freezable or carries an unsupported extension
     #[error("The share mint is freezable or carries an unsupported extension")]
-    UnsupportedShareMint = 0x1787,
+    UnsupportedShareMint = 0x1785,
 }
 
 impl From<AugustWithdrawalQueueError> for solana_program_error::ProgramError {

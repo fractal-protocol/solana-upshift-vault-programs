@@ -48,8 +48,6 @@ pub enum ErrorCode {
     CooldownNotElapsed,
     #[msg("Signer is neither the request's owner nor its finalizer")]
     FinalizerNotAllowed,
-    #[msg("The queue is still attached to the vault; admin cancel needs a released vault")]
-    QueueStillAttached,
     #[msg("Signer is neither the vault's admin nor its operator")]
     NotVaultAdminOrOperator,
     #[msg("The request is already eligible; there is nothing to expedite")]
@@ -62,8 +60,6 @@ pub enum ErrorCode {
     RequestsNotSorted,
     #[msg("More requests than the batch bound allows")]
     BatchTooLarge,
-    #[msg("The vault has not been released long enough for an admin cancel")]
-    AdminCancelTooEarly,
     #[msg("The fee account is the queue's asset escrow")]
     FeeAccountIsEscrow,
     #[msg("The share mint is freezable or carries an unsupported extension")]
@@ -117,16 +113,14 @@ pin_error_abi! {
     StaleRequestSequence => 11,
     CooldownNotElapsed => 12,
     FinalizerNotAllowed => 13,
-    QueueStillAttached => 14,
-    NotVaultAdminOrOperator => 15,
-    RequestAlreadyEligible => 16,
-    EmptyBatch => 17,
-    BatchLengthMismatch => 18,
-    RequestsNotSorted => 19,
-    BatchTooLarge => 20,
-    AdminCancelTooEarly => 21,
-    FeeAccountIsEscrow => 22,
-    UnsupportedShareMint => 23,
+    NotVaultAdminOrOperator => 14,
+    RequestAlreadyEligible => 15,
+    EmptyBatch => 16,
+    BatchLengthMismatch => 17,
+    RequestsNotSorted => 18,
+    BatchTooLarge => 19,
+    FeeAccountIsEscrow => 20,
+    UnsupportedShareMint => 21,
 }
 
 #[cfg(test)]

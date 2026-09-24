@@ -27,15 +27,12 @@ use august_vault::state::vault::VaultState;
 /// admin's judgement. Pending requests still finalize or cancel afterwards.
 /// Everything else, that a queue is attached and that it is this one, the vault
 /// checks inside the CPI and its errors propagate.
-///
-/// Stamps `released_at`, which starts the admin-cancel delay.
 pub fn handler(ctx: Context<ReleaseVault>) -> Result<()> {
     require_vault_admin(
         &ctx.accounts.queue,
         &ctx.accounts.vault_state,
         &ctx.accounts.admin,
     )?;
-    ctx.accounts.queue.released_at = Clock::get()?.unix_timestamp;
 
     let seeds = ctx.accounts.queue.signer_seeds();
     august_vault::cpi::detach_withdrawal_queue(CpiContext::new_with_signer(
@@ -65,9 +62,7 @@ pub fn handler(ctx: Context<ReleaseVault>) -> Result<()> {
 #[event_cpi]
 #[derive(Accounts)]
 pub struct ReleaseVault<'info> {
-    /// Written for `released_at` only.
     #[account(
-        mut,
         seeds = [WITHDRAWAL_QUEUE_SEED, queue.vault_state.as_ref()],
         bump = queue.bump,
         has_one = vault_state @ ErrorCode::VaultMismatch,

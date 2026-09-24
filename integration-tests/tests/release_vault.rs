@@ -157,15 +157,6 @@ fn a_vault_with_no_assets_releases_with_a_request_pending() {
         .expect("the owner reclaims the shares");
 }
 
-/// `released_at` records the latest release, for the admin-cancel delay.
-#[test]
-fn release_stamps_the_time() {
-    let mut ctx = attached_vault_with_holder();
-    assert_eq!(ctx.queue_state_data().released_at, 0);
-    ctx.release_vault().expect("release");
-    assert_eq!(ctx.queue_state_data().released_at, ctx.now());
-}
-
 /// Release checks no liquidity: with most of the reserve deployed it still goes
 /// through, and the pending request survives it, payable once liquidity is back
 /// or cancellable now.

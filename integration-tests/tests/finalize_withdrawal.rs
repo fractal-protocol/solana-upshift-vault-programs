@@ -667,7 +667,7 @@ fn the_asset_escrow_is_refused_as_the_fee_account() {
         .send_finalize_withdrawal(&user_kp, accounts, 1)
         .expect_err("the escrow as the fee account");
     assert_queue_err(&err, ErrorCode::FeeAccountIsEscrow);
-    assert_anchor_framework_err(&err, 6022);
+    assert_anchor_framework_err(&err, 6020);
     assert_eq!(untouched(&ctx, &user, 1), before);
 }
 

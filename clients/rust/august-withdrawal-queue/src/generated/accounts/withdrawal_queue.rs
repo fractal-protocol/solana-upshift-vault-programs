@@ -66,14 +66,10 @@ pub struct WithdrawalQueue {
     /// Canonical bump of this PDA. The vault accepts the canonical address only,
     /// so this must come from Anchor's `bump` at init, never a caller.
     pub bump: u8,
-    /// Unix time of the latest `release_vault`; starts the admin-cancel delay and
-    /// survives a re-attach. `0`, never released, blocks admin cancel: the one
-    /// carve whose zero is not legacy behaviour, fine as no queue predates it.
-    pub released_at: i64,
     /// Reserved. Carve new fields **out of** this array so `LEN` stays 369. A
     /// field carved later reads zero on every queue that already exists, so zero
-    /// must mean "legacy behaviour" for it; `released_at` is the one exception.
-    pub padding: [u64; 19],
+    /// must mean "legacy behaviour" for it, as it does for every field above.
+    pub padding: [u64; 20],
 }
 
 pub const WITHDRAWAL_QUEUE_DISCRIMINATOR: [u8; 8] = [54, 56, 158, 88, 232, 203, 241, 163];

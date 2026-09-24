@@ -13,7 +13,6 @@ pub const RELEASE_VAULT_DISCRIMINATOR: [u8; 8] = [162, 80, 81, 254, 102, 228, 13
 /// Accounts.
 #[derive(Debug)]
 pub struct ReleaseVault {
-    /// Written for `released_at` only.
     pub queue: solana_pubkey::Pubkey,
     /// Written by the vault inside the CPI, never by this program.
     pub vault_state: solana_pubkey::Pubkey,
@@ -40,7 +39,9 @@ impl ReleaseVault {
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
         let mut accounts = Vec::with_capacity(7 + remaining_accounts.len());
-        accounts.push(solana_instruction::AccountMeta::new(self.queue, false));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.queue, false,
+        ));
         accounts.push(solana_instruction::AccountMeta::new(
             self.vault_state,
             false,
@@ -103,7 +104,7 @@ impl Default for ReleaseVaultInstructionData {
 ///
 /// ### Accounts:
 ///
-///   0. `[writable]` queue
+///   0. `[]` queue
 ///   1. `[writable]` vault_state
 ///   2. `[]` deposit_mint
 ///   3. `[signer]` admin
@@ -126,7 +127,6 @@ impl ReleaseVaultBuilder {
     pub fn new() -> Self {
         Self::default()
     }
-    /// Written for `released_at` only.
     #[inline(always)]
     pub fn queue(&mut self, queue: solana_pubkey::Pubkey) -> &mut Self {
         self.queue = Some(queue);
@@ -199,7 +199,6 @@ impl ReleaseVaultBuilder {
 
 /// `release_vault` CPI accounts.
 pub struct ReleaseVaultCpiAccounts<'a, 'b> {
-    /// Written for `released_at` only.
     pub queue: &'b solana_account_info::AccountInfo<'a>,
     /// Written by the vault inside the CPI, never by this program.
     pub vault_state: &'b solana_account_info::AccountInfo<'a>,
@@ -219,7 +218,7 @@ pub struct ReleaseVaultCpiAccounts<'a, 'b> {
 pub struct ReleaseVaultCpi<'a, 'b> {
     /// The program to invoke.
     pub __program: &'b solana_account_info::AccountInfo<'a>,
-    /// Written for `released_at` only.
+
     pub queue: &'b solana_account_info::AccountInfo<'a>,
     /// Written by the vault inside the CPI, never by this program.
     pub vault_state: &'b solana_account_info::AccountInfo<'a>,
@@ -275,7 +274,10 @@ impl<'a, 'b> ReleaseVaultCpi<'a, 'b> {
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
         let mut accounts = Vec::with_capacity(7 + remaining_accounts.len());
-        accounts.push(solana_instruction::AccountMeta::new(*self.queue.key, false));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.queue.key,
+            false,
+        ));
         accounts.push(solana_instruction::AccountMeta::new(
             *self.vault_state.key,
             false,
@@ -339,7 +341,7 @@ impl<'a, 'b> ReleaseVaultCpi<'a, 'b> {
 ///
 /// ### Accounts:
 ///
-///   0. `[writable]` queue
+///   0. `[]` queue
 ///   1. `[writable]` vault_state
 ///   2. `[]` deposit_mint
 ///   3. `[signer]` admin
@@ -366,7 +368,6 @@ impl<'a, 'b> ReleaseVaultCpiBuilder<'a, 'b> {
         });
         Self { instruction }
     }
-    /// Written for `released_at` only.
     #[inline(always)]
     pub fn queue(&mut self, queue: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.queue = Some(queue);
