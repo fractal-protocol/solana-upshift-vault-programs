@@ -53,7 +53,7 @@ fn admin_cancel_is_refused_while_the_queue_is_attached() {
         .admin_cancel_withdrawal(&user, 1, 1, ata)
         .expect_err("attached, even with the request mature");
     assert_queue_err(&err, ErrorCode::QueueStillAttached);
-    assert_anchor_framework_err(&err, 6015);
+    assert_anchor_framework_err(&err, 6014);
     assert_eq!(counters(&ctx), (1, half));
     assert!(ctx.svm.get_account(&ctx.request_pda(&user, 1)).is_some());
 }
