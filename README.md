@@ -237,9 +237,10 @@ and `StaleRequestSequence`, 6011, otherwise).
 
 `release_vault` returns the vault to instant redemption: the queue co-signs the
 vault's `detach_withdrawal_queue` by CPI as its PDA, the only place that
-signature is ever produced, and the admin signs too. Its one precondition is
-liquidity: the vault's reserve must cover every pending request at today's
-price (`ReleaseUnderfunded`, 6014). Pending requests survive the release and
+signature is ever produced, and the admin signs too. It checks no liquidity:
+once the gate is off nothing could hold assets back for the pending set, so a
+queued holder exits like anyone else, by finalizing or by cancelling and
+redeeming, and whether to release is the admin's call. Pending requests survive the release and
 finalize or cancel afterwards, since neither depends on the gate, while the
 gate stops new ones; the queue account persists, and `attach_withdrawal_queue`
 re-enables it with its sequence intact. Admin cancel, expedite and the batch

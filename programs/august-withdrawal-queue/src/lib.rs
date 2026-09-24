@@ -133,8 +133,8 @@ pub mod august_withdrawal_queue {
     }
 
     /// Admin returns the vault to instant redemption: the queue co-signs the
-    /// vault's `detach_withdrawal_queue` by CPI. Refused unless the vault's
-    /// reserve covers every pending request at today's price. Pending requests
+    /// vault's `detach_withdrawal_queue` by CPI. It checks no liquidity: nothing
+    /// could hold assets back for the pending set once the gate is off. Pending requests
     /// survive and finalize or cancel afterwards; the vault's gate stops new
     /// ones. The queue account persists, so the vault can be attached again.
     pub fn release_vault(ctx: Context<ReleaseVault>) -> Result<()> {

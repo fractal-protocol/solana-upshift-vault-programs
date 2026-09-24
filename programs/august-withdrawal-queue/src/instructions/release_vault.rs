@@ -22,31 +22,17 @@ use august_vault::cpi::accounts::DetachWithdrawalQueue;
 use august_vault::program::AugustVault;
 use august_vault::state::vault::VaultState;
 
-/// One precondition of the queue's own: the vault's reserve must cover every
-/// pending request at today's price, so a release never lets instant redeemers
-/// take assets the queued holders were owed. An empty pending set owes nothing
-/// and is not priced: the vault refuses to price shares when it holds no assets,
-/// and that must not pin a queue with nothing left to cancel. Everything else,
-/// that a queue is attached and that it is this one, the vault checks inside
-/// the CPI and its errors propagate.
+/// No precondition of the queue's own: nothing here could hold liquidity back
+/// for the pending set once the gate is off, so whether to release is the
+/// admin's judgement. Pending requests still finalize or cancel afterwards.
+/// Everything else, that a queue is attached and that it is this one, the vault
+/// checks inside the CPI and its errors propagate.
 pub fn handler(ctx: Context<ReleaseVault>) -> Result<()> {
     require_vault_admin(
         &ctx.accounts.queue,
         &ctx.accounts.vault_state,
         &ctx.accounts.admin,
     )?;
-    let vault = &ctx.accounts.vault_state;
-    let pending_shares = ctx.accounts.queue.pending_shares;
-    let owed = if pending_shares == 0 {
-        0
-    } else {
-        vault.assets_for_redeem(
-            ctx.accounts.share_mint.supply,
-            vault.total_assets()?,
-            pending_shares,
-        )?
-    };
-    require!(owed <= vault.local_aum, ErrorCode::ReleaseUnderfunded);
 
     let seeds = ctx.accounts.queue.signer_seeds();
     august_vault::cpi::detach_withdrawal_queue(CpiContext::new_with_signer(
@@ -66,7 +52,6 @@ pub fn handler(ctx: Context<ReleaseVault>) -> Result<()> {
         queue: queue.key(),
         pending_requests: queue.pending_requests,
         pending_shares: queue.pending_shares,
-        assets_owed: owed,
     });
     Ok(())
 }
@@ -81,7 +66,6 @@ pub struct ReleaseVault<'info> {
         bump = queue.bump,
         has_one = vault_state @ ErrorCode::VaultMismatch,
         has_one = deposit_mint,
-        has_one = share_mint,
     )]
     pub queue: Box<Account<'info, WithdrawalQueue>>,
 
@@ -90,9 +74,6 @@ pub struct ReleaseVault<'info> {
     pub vault_state: Box<Account<'info, VaultState>>,
 
     pub deposit_mint: Box<InterfaceAccount<'info, Mint>>,
-
-    /// Read for its supply, which prices the pending set.
-    pub share_mint: Box<InterfaceAccount<'info, Mint>>,
 
     pub admin: Signer<'info>,
 

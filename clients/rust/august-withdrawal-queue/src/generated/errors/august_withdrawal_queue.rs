@@ -54,9 +54,6 @@ pub enum AugustWithdrawalQueueError {
     /// 6013 - Signer is neither the request's owner nor its finalizer
     #[error("Signer is neither the request's owner nor its finalizer")]
     FinalizerNotAllowed = 0x177D,
-    /// 6014 - The vault's reserve does not cover the pending requests at today's price
-    #[error("The vault's reserve does not cover the pending requests at today's price")]
-    ReleaseUnderfunded = 0x177E,
 }
 
 impl From<AugustWithdrawalQueueError> for solana_program_error::ProgramError {

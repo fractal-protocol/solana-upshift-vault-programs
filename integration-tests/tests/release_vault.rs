@@ -8,9 +8,8 @@
 
 //! `release_vault` returns the vault to instant redemption through the real
 //! `invoke_signed` path: the queue PDA co-signs the vault's
-//! `detach_withdrawal_queue`. Its one precondition is that the reserve covers
-//! every pending request; those requests then finalize or cancel in the
-//! released state, and the vault can be attached again.
+//! `detach_withdrawal_queue`. It checks no liquidity; pending requests then
+//! finalize or cancel in the released state, and the vault can be attached again.
 
 use august_vault::errors::ErrorCode as VaultError;
 use august_vault::instructions::detach_withdrawal_queue::WithdrawalQueueDetached;
@@ -62,7 +61,6 @@ fn assert_released(
     let e = &released[0];
     assert_eq!((e.vault, e.queue), (ctx.vault_state, queue));
     assert_eq!((e.pending_requests, e.pending_shares), pending);
-    assert_eq!(e.assets_owed, ctx.quote_redeem(pending.1).0);
 }
 
 // ---- the transition ----
@@ -134,44 +132,13 @@ fn release_works_while_paused() {
     assert_released(&meta, &ctx, (0, 0));
 }
 
-// ---- the liquidity precondition ----
+// ---- no liquidity precondition ----
 
-/// The reserve must cover the pending set at today's price, exactly: covered
-/// to the token passes, one token short is refused with nothing changed, and an
-/// operator deposit makes it pass again.
+/// Nothing is priced, so not even a vault holding no assets, whose shares the
+/// vault refuses to price, keeps a release from going through with a request
+/// pending; the request can still be cancelled afterwards.
 #[test]
-fn release_is_refused_while_the_reserve_cannot_cover_the_pending_set() {
-    let mut ctx = attached_vault_with_holder();
-    let shares = ctx.token_account_amount(&ctx.user_share_ata);
-    ctx.request_withdrawal(1, shares / 2).expect("request");
-    let (owed, _) = ctx.quote_redeem(shares / 2);
-    let reserve = ctx.token_account_amount(&ctx.vault_token_pda);
-    assert!(owed < reserve);
-
-    ctx.operator_withdraw(reserve - owed + 1).expect("deploy");
-    assert_eq!(ctx.vault_state_data().local_aum, owed - 1);
-    let err = ctx.release_vault().expect_err("one token short");
-    assert_queue_err(&err, ErrorCode::ReleaseUnderfunded);
-    assert_anchor_framework_err(&err, 6014);
-    assert_eq!(
-        ctx.vault_state_data().withdrawal_queue(),
-        Some(ctx.withdrawal_queue_pda()),
-        "still attached"
-    );
-    assert!(ctx.redeem(1).is_err(), "still gated");
-
-    ctx.operator_deposit(1).expect("return one token");
-    assert_eq!(ctx.vault_state_data().local_aum, owed);
-    let meta = ctx.release_vault().expect("covered to the token");
-    assert_released(&meta, &ctx, (1, shares / 2));
-}
-
-/// A vault that reports no assets while shares are outstanding cannot price a
-/// share, and `assets_for_redeem` says so. With requests pending that refusal
-/// is the vault's, and it propagates; with none pending there is nothing to
-/// price, and the queue must not stay pinned to a vault it cannot pay from.
-#[test]
-fn an_empty_queue_releases_even_when_the_share_price_is_undefined() {
+fn a_vault_with_no_assets_releases_with_a_request_pending() {
     let mut ctx = attached_vault_with_holder();
     let shares = ctx.token_account_amount(&ctx.user_share_ata);
     ctx.request_withdrawal(1, shares / 2).expect("request");
@@ -179,24 +146,33 @@ fn an_empty_queue_releases_even_when_the_share_price_is_undefined() {
     vault.local_aum = 0;
     vault.deployed_aum = 0;
     ctx.force_overwrite_vault_state(vault);
-    assert!(ctx.share_mint_supply() > 0);
 
-    let err = ctx
-        .release_vault()
-        .expect_err("a pending request cannot be priced");
-    assert_anchor_err(&err, VaultError::SharePriceUndefined);
-
-    ctx.cancel_withdrawal(1, 1)
-        .expect("the owner reclaims the shares");
-    let meta = ctx
-        .release_vault()
-        .expect("nothing pending, nothing to price");
+    let meta = ctx.release_vault().expect("released with nothing held");
     assert_eq!(ctx.vault_state_data().withdrawal_queue(), None);
     let released = events_of::<VaultReleased>(&meta);
-    assert_eq!(
-        (released[0].pending_requests, released[0].assets_owed),
-        (0, 0)
-    );
+    assert_eq!(released[0].pending_requests, 1);
+    ctx.cancel_withdrawal(1, 1)
+        .expect("the owner reclaims the shares");
+}
+
+/// Release checks no liquidity: with most of the reserve deployed it still goes
+/// through, and the pending request survives it, payable once liquidity is back
+/// or cancellable now.
+#[test]
+fn a_release_does_not_depend_on_the_reserve() {
+    let mut ctx = attached_vault_with_holder();
+    let shares = ctx.token_account_amount(&ctx.user_share_ata);
+    ctx.request_withdrawal(1, shares / 2).expect("request");
+    let (owed, _) = ctx.quote_redeem(shares / 2);
+    let reserve = ctx.token_account_amount(&ctx.vault_token_pda);
+    ctx.operator_withdraw(reserve - owed / 2).expect("deploy");
+
+    let meta = ctx
+        .release_vault()
+        .expect("released with the reserve short");
+    assert_released(&meta, &ctx, (1, shares / 2));
+    ctx.cancel_withdrawal(1, 1)
+        .expect("the request survives and can be cancelled");
 }
 
 // ---- who, and against what ----
@@ -247,7 +223,7 @@ fn substituted_accounts_are_refused() {
         &august_vault::ID,
     )
     .0;
-    let (deposit_mint, share_mint) = (ctx.deposit_mint, ctx.share_mint);
+    let share_mint = ctx.share_mint;
 
     let mut accounts = ctx.release_vault_accounts(&admin.pubkey());
     accounts.vault_state = vault_b;
@@ -255,13 +231,6 @@ fn substituted_accounts_are_refused() {
         .send_release_vault(&admin, accounts)
         .expect_err("another vault");
     assert_queue_err(&err, ErrorCode::VaultMismatch);
-
-    let mut accounts = ctx.release_vault_accounts(&admin.pubkey());
-    accounts.share_mint = deposit_mint;
-    let err = ctx
-        .send_release_vault(&admin, accounts)
-        .expect_err("share mint substituted");
-    assert_anchor_framework_err(&err, 2001);
 
     let mut accounts = ctx.release_vault_accounts(&admin.pubkey());
     accounts.deposit_mint = share_mint;

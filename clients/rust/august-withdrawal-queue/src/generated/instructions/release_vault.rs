@@ -18,8 +18,6 @@ pub struct ReleaseVault {
     pub vault_state: solana_pubkey::Pubkey,
 
     pub deposit_mint: solana_pubkey::Pubkey,
-    /// Read for its supply, which prices the pending set.
-    pub share_mint: solana_pubkey::Pubkey,
 
     pub admin: solana_pubkey::Pubkey,
 
@@ -36,7 +34,7 @@ impl ReleaseVault {
         &self,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
-        let mut accounts = Vec::with_capacity(6 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(5 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.queue, false,
         ));
@@ -46,10 +44,6 @@ impl ReleaseVault {
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.deposit_mint,
-            false,
-        ));
-        accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.share_mint,
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
@@ -101,15 +95,13 @@ impl Default for ReleaseVaultInstructionData {
 ///   0. `[]` queue
 ///   1. `[writable]` vault_state
 ///   2. `[]` deposit_mint
-///   3. `[]` share_mint
-///   4. `[signer]` admin
-///   5. `[optional]` vault_program (default to `up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt`)
+///   3. `[signer]` admin
+///   4. `[optional]` vault_program (default to `up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt`)
 #[derive(Clone, Debug, Default)]
 pub struct ReleaseVaultBuilder {
     queue: Option<solana_pubkey::Pubkey>,
     vault_state: Option<solana_pubkey::Pubkey>,
     deposit_mint: Option<solana_pubkey::Pubkey>,
-    share_mint: Option<solana_pubkey::Pubkey>,
     admin: Option<solana_pubkey::Pubkey>,
     vault_program: Option<solana_pubkey::Pubkey>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
@@ -133,12 +125,6 @@ impl ReleaseVaultBuilder {
     #[inline(always)]
     pub fn deposit_mint(&mut self, deposit_mint: solana_pubkey::Pubkey) -> &mut Self {
         self.deposit_mint = Some(deposit_mint);
-        self
-    }
-    /// Read for its supply, which prices the pending set.
-    #[inline(always)]
-    pub fn share_mint(&mut self, share_mint: solana_pubkey::Pubkey) -> &mut Self {
-        self.share_mint = Some(share_mint);
         self
     }
     #[inline(always)]
@@ -173,7 +159,6 @@ impl ReleaseVaultBuilder {
             queue: self.queue.expect("queue is not set"),
             vault_state: self.vault_state.expect("vault_state is not set"),
             deposit_mint: self.deposit_mint.expect("deposit_mint is not set"),
-            share_mint: self.share_mint.expect("share_mint is not set"),
             admin: self.admin.expect("admin is not set"),
             vault_program: self.vault_program.unwrap_or(solana_pubkey::pubkey!(
                 "up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt"
@@ -191,8 +176,6 @@ pub struct ReleaseVaultCpiAccounts<'a, 'b> {
     pub vault_state: &'b solana_account_info::AccountInfo<'a>,
 
     pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
-    /// Read for its supply, which prices the pending set.
-    pub share_mint: &'b solana_account_info::AccountInfo<'a>,
 
     pub admin: &'b solana_account_info::AccountInfo<'a>,
 
@@ -209,8 +192,6 @@ pub struct ReleaseVaultCpi<'a, 'b> {
     pub vault_state: &'b solana_account_info::AccountInfo<'a>,
 
     pub deposit_mint: &'b solana_account_info::AccountInfo<'a>,
-    /// Read for its supply, which prices the pending set.
-    pub share_mint: &'b solana_account_info::AccountInfo<'a>,
 
     pub admin: &'b solana_account_info::AccountInfo<'a>,
 
@@ -227,7 +208,6 @@ impl<'a, 'b> ReleaseVaultCpi<'a, 'b> {
             queue: accounts.queue,
             vault_state: accounts.vault_state,
             deposit_mint: accounts.deposit_mint,
-            share_mint: accounts.share_mint,
             admin: accounts.admin,
             vault_program: accounts.vault_program,
         }
@@ -255,7 +235,7 @@ impl<'a, 'b> ReleaseVaultCpi<'a, 'b> {
         signers_seeds: &[&[&[u8]]],
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
-        let mut accounts = Vec::with_capacity(6 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(5 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.queue.key,
             false,
@@ -266,10 +246,6 @@ impl<'a, 'b> ReleaseVaultCpi<'a, 'b> {
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.deposit_mint.key,
-            false,
-        ));
-        accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.share_mint.key,
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
@@ -294,12 +270,11 @@ impl<'a, 'b> ReleaseVaultCpi<'a, 'b> {
             accounts,
             data,
         };
-        let mut account_infos = Vec::with_capacity(7 + remaining_accounts.len());
+        let mut account_infos = Vec::with_capacity(6 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
         account_infos.push(self.queue.clone());
         account_infos.push(self.vault_state.clone());
         account_infos.push(self.deposit_mint.clone());
-        account_infos.push(self.share_mint.clone());
         account_infos.push(self.admin.clone());
         account_infos.push(self.vault_program.clone());
         remaining_accounts
@@ -321,9 +296,8 @@ impl<'a, 'b> ReleaseVaultCpi<'a, 'b> {
 ///   0. `[]` queue
 ///   1. `[writable]` vault_state
 ///   2. `[]` deposit_mint
-///   3. `[]` share_mint
-///   4. `[signer]` admin
-///   5. `[]` vault_program
+///   3. `[signer]` admin
+///   4. `[]` vault_program
 #[derive(Clone, Debug)]
 pub struct ReleaseVaultCpiBuilder<'a, 'b> {
     instruction: Box<ReleaseVaultCpiBuilderInstruction<'a, 'b>>,
@@ -336,7 +310,6 @@ impl<'a, 'b> ReleaseVaultCpiBuilder<'a, 'b> {
             queue: None,
             vault_state: None,
             deposit_mint: None,
-            share_mint: None,
             admin: None,
             vault_program: None,
             __remaining_accounts: Vec::new(),
@@ -363,15 +336,6 @@ impl<'a, 'b> ReleaseVaultCpiBuilder<'a, 'b> {
         deposit_mint: &'b solana_account_info::AccountInfo<'a>,
     ) -> &mut Self {
         self.instruction.deposit_mint = Some(deposit_mint);
-        self
-    }
-    /// Read for its supply, which prices the pending set.
-    #[inline(always)]
-    pub fn share_mint(
-        &mut self,
-        share_mint: &'b solana_account_info::AccountInfo<'a>,
-    ) -> &mut Self {
-        self.instruction.share_mint = Some(share_mint);
         self
     }
     #[inline(always)]
@@ -436,8 +400,6 @@ impl<'a, 'b> ReleaseVaultCpiBuilder<'a, 'b> {
                 .deposit_mint
                 .expect("deposit_mint is not set"),
 
-            share_mint: self.instruction.share_mint.expect("share_mint is not set"),
-
             admin: self.instruction.admin.expect("admin is not set"),
 
             vault_program: self
@@ -458,7 +420,6 @@ struct ReleaseVaultCpiBuilderInstruction<'a, 'b> {
     queue: Option<&'b solana_account_info::AccountInfo<'a>>,
     vault_state: Option<&'b solana_account_info::AccountInfo<'a>>,
     deposit_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
-    share_mint: Option<&'b solana_account_info::AccountInfo<'a>>,
     admin: Option<&'b solana_account_info::AccountInfo<'a>>,
     vault_program: Option<&'b solana_account_info::AccountInfo<'a>>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.

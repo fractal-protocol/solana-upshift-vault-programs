@@ -146,15 +146,13 @@ impl WithdrawalCancelled {
     }
 }
 
-/// The vault was returned to instant redemption with this much still pending,
-/// all of it payable from the reserve at that moment.
+/// The vault was returned to instant redemption with this much still pending.
 #[event]
 pub struct VaultReleased {
     pub vault: Pubkey,
     pub queue: Pubkey,
     pub pending_requests: u64,
     pub pending_shares: u64,
-    pub assets_owed: u64,
 }
 
 impl QueueConfigUpdated {

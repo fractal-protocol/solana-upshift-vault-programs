@@ -1778,7 +1778,6 @@ impl VaultCtx {
             queue: self.withdrawal_queue_pda(),
             vault_state: self.vault_state,
             deposit_mint: self.deposit_mint,
-            share_mint: self.share_mint,
             admin: *admin,
             vault_program: august_vault::ID,
         }
