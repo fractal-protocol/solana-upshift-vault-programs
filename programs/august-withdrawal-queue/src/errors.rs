@@ -54,6 +54,10 @@ pub enum ErrorCode {
     RequestAlreadyEligible,
     #[msg("The share mint is freezable or carries an unsupported extension")]
     UnsupportedShareMint,
+    #[msg("The share escrow holds nothing beyond the pending requests")]
+    NothingToSweep,
+    #[msg("A sweep's destination may not be an account the queue or the vault owns")]
+    InvalidSweepDestination,
 }
 
 /// Compile-time pin of the ABI above, generated from one list so completeness
@@ -105,7 +109,11 @@ pin_error_abi! {
     FinalizerNotAllowed => 13,
     NotVaultAdminOrOperator => 14,
     RequestAlreadyEligible => 15,
-    UnsupportedShareMint => 16,
+    EarlyFinalizeRestricted => 16,
+    FeeAccountIsEscrow => 17,
+    UnsupportedShareMint => 18,
+    NothingToSweep => 19,
+    InvalidSweepDestination => 20,
 }
 
 #[cfg(test)]

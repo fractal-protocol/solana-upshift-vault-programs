@@ -62,7 +62,13 @@ pub enum AugustWithdrawalQueueError {
     RequestAlreadyEligible = 0x177F,
     /// 6016 - The share mint is freezable or carries an unsupported extension
     #[error("The share mint is freezable or carries an unsupported extension")]
-    UnsupportedShareMint = 0x1780,
+    UnsupportedShareMint = 0x1782,
+    /// 6019 - The share escrow holds nothing beyond the pending requests
+    #[error("The share escrow holds nothing beyond the pending requests")]
+    NothingToSweep = 0x1783,
+    /// 6020 - A sweep's destination may not be an account the queue or the vault owns
+    #[error("A sweep's destination may not be an account the queue or the vault owns")]
+    InvalidSweepDestination = 0x1784,
 }
 
 impl From<AugustWithdrawalQueueError> for solana_program_error::ProgramError {

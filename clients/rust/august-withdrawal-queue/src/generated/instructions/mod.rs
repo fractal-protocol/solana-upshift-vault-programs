@@ -13,6 +13,7 @@ pub(crate) mod r#release_vault;
 pub(crate) mod r#request_withdrawal;
 pub(crate) mod r#set_cooldown;
 pub(crate) mod r#set_fulfillment_window;
+pub(crate) mod r#sweep_escrow_shares;
 
 pub use self::r#cancel_withdrawal::*;
 pub use self::r#expedite_request::*;
@@ -22,3 +23,4 @@ pub use self::r#release_vault::*;
 pub use self::r#request_withdrawal::*;
 pub use self::r#set_cooldown::*;
 pub use self::r#set_fulfillment_window::*;
+pub use self::r#sweep_escrow_shares::*;

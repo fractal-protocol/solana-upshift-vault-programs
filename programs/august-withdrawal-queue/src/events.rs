@@ -191,6 +191,16 @@ pub struct VaultReleased {
     pub pending_shares: u64,
 }
 
+/// Shares no request owned were moved out of the escrow to `destination`.
+#[event]
+pub struct EscrowSwept {
+    pub vault: Pubkey,
+    pub queue: Pubkey,
+    pub shares: u64,
+    pub destination: Pubkey,
+    pub by: Pubkey,
+}
+
 impl QueueConfigUpdated {
     pub fn snapshot(queue: &WithdrawalQueue, key: Pubkey) -> Self {
         Self {
