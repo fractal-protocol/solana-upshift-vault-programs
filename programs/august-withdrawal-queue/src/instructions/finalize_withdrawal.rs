@@ -44,13 +44,13 @@ pub fn handler(ctx: Context<FinalizeWithdrawal>, expected_sequence: u64) -> Resu
     let now = Clock::get()?.unix_timestamp;
     require!(request.is_eligible(now), ErrorCode::CooldownNotElapsed);
     require!(!request.is_expired(now), ErrorCode::RequestExpired);
-    require_valid_recipient(recipient, queue)?;
+    require_valid_recipient(&ctx.accounts.recipient_token_account, &ctx.accounts.queue)?;
     // The vault binds the fee account only by `fee_recipient`'s authority. Were
     // that ever set to this PDA, the escrow would pass as the fee account, and
     // the fee would land in the balance delta and go to the recipient.
     require_keys_neq!(
-        *side.fee_recipient_account.key,
-        escrow_assets.key(),
+        ctx.accounts.fee_recipient_account.key(),
+        ctx.accounts.escrow_assets.key(),
         ErrorCode::FeeAccountIsEscrow
     );
 

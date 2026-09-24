@@ -52,14 +52,8 @@ pub enum ErrorCode {
     NotVaultAdminOrOperator,
     #[msg("The request is already eligible; there is nothing to expedite")]
     RequestAlreadyEligible,
-    #[msg("A batch needs at least one request")]
-    EmptyBatch,
-    #[msg("The trailing accounts do not match the expected sequences")]
-    BatchLengthMismatch,
-    #[msg("Batch requests must be in strictly ascending key order")]
-    RequestsNotSorted,
-    #[msg("More requests than the batch bound allows")]
-    BatchTooLarge,
+    #[msg("Before its scheduled eligibility, an expedited request is finalized only by its owner or named finalizer")]
+    EarlyFinalizeRestricted,
     #[msg("The fee account is the queue's asset escrow")]
     FeeAccountIsEscrow,
     #[msg("The share mint is freezable or carries an unsupported extension")]
@@ -115,12 +109,9 @@ pin_error_abi! {
     FinalizerNotAllowed => 13,
     NotVaultAdminOrOperator => 14,
     RequestAlreadyEligible => 15,
-    EmptyBatch => 16,
-    BatchLengthMismatch => 17,
-    RequestsNotSorted => 18,
-    BatchTooLarge => 19,
-    FeeAccountIsEscrow => 20,
-    UnsupportedShareMint => 21,
+    EarlyFinalizeRestricted => 16,
+    FeeAccountIsEscrow => 17,
+    UnsupportedShareMint => 18,
 }
 
 #[cfg(test)]

@@ -7,7 +7,7 @@ This workspace builds two programs:
 | Crate | Artifact | Status |
 |---|---|---|
 | `programs/august-vault` | `august_vault.so` | Live on mainnet and devnet. Everything below describes this program. |
-| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | `initialize_queue`, two config setters, `request_withdrawal`, `finalize_withdrawal`, `cancel_withdrawal`, `release_vault`, `expedite_request(s)` and `finalize_withdrawals` over the `WithdrawalQueue` / `WithdrawalRequest` state accounts: the queue's full instruction set. **Not deployed anywhere.** |
+| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | `initialize_queue`, two config setters, `request_withdrawal`, `finalize_withdrawal`, `cancel_withdrawal`, `release_vault` and `expedite_request` over the `WithdrawalQueue` / `WithdrawalRequest` state accounts: the queue's full instruction set. **Not deployed anywhere.** |
 
 The queue will let a vault route redemptions through a request-and-cooldown flow
 instead of paying out instantly. The vault side of that is already in place: a
@@ -203,7 +203,7 @@ The queue program's admin side exists in source: `initialize_queue` creates the
 queue PDA and its two escrow token accounts, for a classic SPL mint
 or a Token-2022 mint carrying at most the two metadata extensions
 (`UnsupportedDepositMint`, 6006, otherwise). The vault's share mint must pass the
-same extension rule and have no freeze authority (`UnsupportedShareMint`, 6021),
+same extension rule and have no freeze authority (`UnsupportedShareMint`, 6018),
 so the share escrow that makes cancel always work can never be frozen.
 `set_cooldown` (at most 30 days) and `set_fulfillment_window` configure it. The
 window is in seconds: zero disables expiry, otherwise 86,400 (one day) to
@@ -231,7 +231,7 @@ finalized, never by whom. The queue redeems the escrowed shares by CPI into
 leave the request pending and untouched. The payout is the asset escrow's
 balance delta, forwarded to the request's recipient, at the shares' value at
 that moment; the request then closes with its rent to the owner. The fee
-account may not be the asset escrow (`FeeAccountIsEscrow`, 6020), or a
+account may not be the asset escrow (`FeeAccountIsEscrow`, 6017), or a
 misconfigured fee recipient would let the fee ride the delta to the recipient.
 
 `cancel_withdrawal(expected_sequence)` returns a pending request's shares to any
@@ -256,20 +256,13 @@ The rest are for operations. `expedite_request` lets the admin or operator
 (`NotVaultAdminOrOperator`, 6014) move one not-yet-eligible request's
 `eligible_at` to now (`RequestAlreadyEligible`, 6015, otherwise);
 `scheduled_eligible_at` and `expires_at` never move, so the owner's window only
-ever widens. `expedite_requests` and `finalize_withdrawals` are the batch
-forms: the requests come as trailing accounts, one per request for expedite
-and three (request, owner, recipient) for finalize, in strictly ascending key
-order, with a parallel list of expected sequences (`EmptyBatch` 6016,
-`BatchLengthMismatch` 6017, `RequestsNotSorted` 6018, `BatchTooLarge` 6019).
-A batch is all or nothing, and each request is announced in the log before it
-is touched, so a failure names it. The bounds are 20 expedites and 5 finalizes
-per instruction (`MAX_EXPEDITE_BATCH`, `MAX_FINALIZE_BATCH`), and it is heap
-that sets them, not the packet or compute: the program's 32 KB bump allocator
-frees nothing within an instruction and ignores any larger heap frame a
-transaction requests, and the sixth finalize runs it out. Both bounds fit a
-legacy transaction (22 expedites and 6 finalizes would); a batch transaction
-needs a 1.4M CU limit. Measured: 15k CU per expedite in a batch, 78k per
-finalize (390k for 5).
+ever widens. There are no batch instructions: a keeper settles several
+requests by putting several `finalize_withdrawal` instructions in one
+transaction, which is just as atomic, gives each instruction its own heap, and
+names a failure by its instruction index. Five requests from five holders, the
+worst case for accounts, fit a legacy transaction (measured when this was
+written: 1,213 of 1,232 bytes, 449k CU, about 90k per finalize); several `expedite_request` calls
+combine the same way.
 
 Every queue event is delivered by self-CPI (Anchor's `emit_cpi!`): it is an
 inner instruction of the queue program whose data is the event tag
