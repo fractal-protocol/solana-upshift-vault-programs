@@ -143,6 +143,17 @@ impl WithdrawalRequest {
         }
     }
 
+    /// Who may finalize before `scheduled_eligible_at`, which only an expedite
+    /// makes possible: the owner, or the finalizer the owner named. An expedite
+    /// gives the owner an early option, never anyone else an early settlement,
+    /// so no one else can pick a moment the owner did not agree to.
+    pub fn may_finalize_early(&self, caller: &Pubkey) -> bool {
+        if *caller == self.owner {
+            return true;
+        }
+        self.allowed_finalizer() == Some(*caller)
+    }
+
     /// Whether finalization may begin at `now`. Reads the movable `eligible_at`,
     /// which `expedite_request` may have brought forward.
     pub fn is_eligible(&self, now: i64) -> bool {

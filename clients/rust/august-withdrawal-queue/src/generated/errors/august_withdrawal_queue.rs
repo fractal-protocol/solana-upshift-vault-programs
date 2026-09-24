@@ -72,6 +72,9 @@ pub enum AugustWithdrawalQueueError {
     /// 6019 - More requests than the batch bound allows
     #[error("More requests than the batch bound allows")]
     BatchTooLarge = 0x1783,
+    /// 6020 - Before its scheduled eligibility, an expedited request is finalized only by its owner or named finalizer
+    #[error("Before its scheduled eligibility, an expedited request is finalized only by its owner or named finalizer")]
+    EarlyFinalizeRestricted = 0x1784,
 }
 
 impl From<AugustWithdrawalQueueError> for solana_program_error::ProgramError {

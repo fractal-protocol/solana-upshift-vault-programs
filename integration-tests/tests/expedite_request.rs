@@ -463,3 +463,95 @@ fn the_bound_fits_a_legacy_transaction() {
         "the bound must fit a legacy transaction"
     );
 }
+
+// ---- early settlement stays the owner's choice ----
+
+/// The independent review's P1: an operator who can mark the price down must not
+/// be able to expedite a holder and settle them in the same breath. Before the
+/// original eligibility only the owner may finalize an open request; the
+/// operator, and any keeper, is refused with nothing moved.
+#[test]
+fn an_expedited_request_is_settled_early_only_by_its_owner() {
+    let mut ctx = attached_vault_with_holder();
+    let user = ctx.user.pubkey();
+    let shares = ctx.token_account_amount(&ctx.user_share_ata);
+    ctx.request_withdrawal(1, shares / 4).expect("request");
+    let operator = ctx.operator.insecure_clone();
+    ctx.expedite_request_as(&operator, &user, 1, 1)
+        .expect("operator expedites");
+    let before = request_bytes(&ctx, &ctx.request_pda(&user, 1));
+
+    let err = ctx
+        .finalize_withdrawal_as(&operator, &user, 1, 1)
+        .expect_err("the operator may not settle it early");
+    assert_queue_err(&err, ErrorCode::EarlyFinalizeRestricted);
+    assert_anchor_framework_err(&err, 6020);
+    let keeper = ctx.new_funded_keypair(1_000_000_000);
+    let err = ctx
+        .finalize_withdrawal_as(&keeper, &user, 1, 1)
+        .expect_err("nor a keeper");
+    assert_queue_err(&err, ErrorCode::EarlyFinalizeRestricted);
+    assert_eq!(request_bytes(&ctx, &ctx.request_pda(&user, 1)), before);
+
+    ctx.finalize_withdrawal(1, 1)
+        .expect("the owner takes the early exit");
+}
+
+/// The finalizer the owner named acts for the owner, early included.
+#[test]
+fn a_named_finalizer_may_settle_early() {
+    let mut ctx = attached_vault_with_holder();
+    let user = ctx.user.insecure_clone();
+    let shares = ctx.token_account_amount(&ctx.user_share_ata);
+    let (share_ata, deposit_ata) = (ctx.user_share_ata, ctx.user_deposit_ata);
+    let ops = ctx.new_funded_keypair(1_000_000_000);
+    ctx.request_withdrawal_as(&user, share_ata, deposit_ata, 1, shares / 4, ops.pubkey())
+        .expect("request naming a finalizer");
+    ctx.expedite_request(&user.pubkey(), 1, 1)
+        .expect("expedite");
+
+    ctx.finalize_withdrawal_as(&ops, &user.pubkey(), 1, 1)
+        .expect("the named finalizer settles early");
+}
+
+/// From the original eligibility on, an expedited request is like any other:
+/// the default open finalizer lets a keeper settle it.
+#[test]
+fn from_its_original_eligibility_anyone_may_finalize_again() {
+    let mut ctx = attached_vault_with_holder();
+    let user = ctx.user.pubkey();
+    let shares = ctx.token_account_amount(&ctx.user_share_ata);
+    ctx.request_withdrawal(1, shares / 4).expect("request");
+    ctx.expedite_request(&user, 1, 1).expect("expedite");
+    let scheduled = ctx.request_state_data(&user, 1).scheduled_eligible_at;
+    let keeper = ctx.new_funded_keypair(1_000_000_000);
+    ctx.warp_forward_seconds(scheduled - ctx.now() - 1);
+    let err = ctx
+        .finalize_withdrawal_as(&keeper, &user, 1, 1)
+        .expect_err("one second before the original eligibility");
+    assert_queue_err(&err, ErrorCode::EarlyFinalizeRestricted);
+
+    ctx.warp_forward_seconds(1);
+    ctx.finalize_withdrawal_as(&keeper, &user, 1, 1)
+        .expect("at the original eligibility");
+}
+
+/// The batch form shares the check: a keeper's batch containing an expedited
+/// request is refused whole, and names the request.
+#[test]
+fn a_keepers_batch_cannot_settle_an_expedited_request_early() {
+    let mut ctx = attached_vault_with_holder();
+    let user = ctx.user.pubkey();
+    let shares = ctx.token_account_amount(&ctx.user_share_ata);
+    ctx.request_withdrawal(1, shares / 4).expect("request");
+    ctx.expedite_request(&user, 1, 1).expect("expedite");
+    let keeper = ctx.new_funded_keypair(1_000_000_000);
+    let group = ctx.request_group(&user, 1);
+
+    let err = ctx
+        .finalize_withdrawals_as(&keeper, &[group], &[1])
+        .expect_err("early, through the batch");
+    assert_queue_err(&err, ErrorCode::EarlyFinalizeRestricted);
+    assert_blamed(&err, &group.request);
+    assert_eq!(ctx.queue_state_data().pending_requests, 1);
+}

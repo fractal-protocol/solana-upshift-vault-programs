@@ -371,6 +371,29 @@ fn a_zero_filled_request_is_the_most_permissive_state() {
     assert!(!request.is_expired(i64::MAX));
 }
 
+/// Before scheduled eligibility only the owner and a named finalizer may
+/// finalize; an open request (zero finalizer) admits no one else early.
+#[test]
+fn only_the_owner_side_may_finalize_early() {
+    let open = WithdrawalRequest {
+        owner: pk(1),
+        ..Default::default()
+    };
+    assert!(open.may_finalize_early(&pk(1)));
+    assert!(
+        !open.may_finalize_early(&pk(9)),
+        "open means anyone later, not early"
+    );
+    let named = WithdrawalRequest {
+        owner: pk(1),
+        finalizer: pk(2),
+        ..Default::default()
+    };
+    assert!(named.may_finalize_early(&pk(1)));
+    assert!(named.may_finalize_early(&pk(2)));
+    assert!(!named.may_finalize_early(&pk(9)));
+}
+
 #[test]
 fn eligibility_and_expiry_boundaries() {
     let request = WithdrawalRequest {

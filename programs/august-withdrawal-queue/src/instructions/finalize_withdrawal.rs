@@ -173,6 +173,12 @@ pub(crate) fn finalize_one<'info>(
         ErrorCode::FinalizerNotAllowed
     );
     require!(request.is_eligible(now), ErrorCode::CooldownNotElapsed);
+    if now < request.scheduled_eligible_at {
+        require!(
+            request.may_finalize_early(&finalizer),
+            ErrorCode::EarlyFinalizeRestricted
+        );
+    }
     require!(!request.is_expired(now), ErrorCode::RequestExpired);
     require_valid_recipient(recipient, queue)?;
 

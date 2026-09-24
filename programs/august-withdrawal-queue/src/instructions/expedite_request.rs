@@ -10,7 +10,10 @@
 //! now. Only ever widens the owner's window: `scheduled_eligible_at` and
 //! `expires_at` are never touched, so it cannot revive a lapsed request or
 //! shorten a deadline. Discretionary early-exit authority with no aggregate
-//! cap, made auditable by the event rather than prevented.
+//! cap, made auditable by the event rather than prevented. It grants the owner
+//! an option, not a settlement: until `scheduled_eligible_at`, finalize accepts
+//! only the owner or their named finalizer, so the operator cannot mark the
+//! price down, expedite and settle a holder in one transaction.
 
 use crate::auth::require_vault_admin_or_operator;
 use crate::batch;

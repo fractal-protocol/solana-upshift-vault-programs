@@ -60,6 +60,8 @@ pub enum ErrorCode {
     RequestsNotSorted,
     #[msg("More requests than the batch bound allows")]
     BatchTooLarge,
+    #[msg("Before its scheduled eligibility, an expedited request is finalized only by its owner or named finalizer")]
+    EarlyFinalizeRestricted,
 }
 
 /// Compile-time pin of the ABI above, generated from one list so completeness
@@ -115,6 +117,7 @@ pin_error_abi! {
     BatchLengthMismatch => 17,
     RequestsNotSorted => 18,
     BatchTooLarge => 19,
+    EarlyFinalizeRestricted => 20,
 }
 
 #[cfg(test)]

@@ -146,7 +146,9 @@ pub mod august_withdrawal_queue {
     /// Admin or operator makes one not-yet-eligible request finalizable now:
     /// `eligible_at` moves to the current time; `scheduled_eligible_at` and
     /// `expires_at` do not, so the window only ever widens. An eligible or
-    /// expired request is refused.
+    /// expired request is refused. Until `scheduled_eligible_at` only the owner
+    /// or their named finalizer may then finalize it: an option for the owner,
+    /// not an early settlement anyone else can trigger.
     ///
     /// ### Parameters
     /// - `expected_sequence` - The request's stamp, so a delayed call cannot land
