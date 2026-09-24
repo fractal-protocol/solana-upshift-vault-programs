@@ -44,6 +44,10 @@ pub enum ErrorCode {
     RequestExpired,
     #[msg("expected_sequence does not match the request; it may have been recreated")]
     StaleRequestSequence,
+    #[msg("The request's cooldown has not elapsed")]
+    CooldownNotElapsed,
+    #[msg("Signer is neither the request's owner nor its finalizer")]
+    FinalizerNotAllowed,
 }
 
 /// Compile-time pin of the ABI above, generated from one list so completeness
@@ -91,6 +95,8 @@ pin_error_abi! {
     NotRequestOwner => 9,
     RequestExpired => 10,
     StaleRequestSequence => 11,
+    CooldownNotElapsed => 12,
+    FinalizerNotAllowed => 13,
 }
 
 #[cfg(test)]

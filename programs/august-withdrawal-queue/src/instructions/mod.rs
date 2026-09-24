@@ -6,6 +6,7 @@
 // As of 10 March 2036 (the "Change Date"), use of this software will be
 // governed by version 2.0 of the Apache License.
 
+pub mod finalize_withdrawal;
 pub mod initialize_queue;
 pub mod queue_admin;
 pub mod request_withdrawal;

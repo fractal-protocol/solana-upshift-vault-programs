@@ -70,6 +70,45 @@ impl WithdrawalRequested {
     }
 }
 
+/// A request was paid and closed. `assets` is what left the escrow for the
+/// recipient: the vault's net payout, never a balance that already sat there.
+#[event]
+pub struct WithdrawalFinalized {
+    pub vault: Pubkey,
+    pub queue: Pubkey,
+    pub request: Pubkey,
+    pub request_id: u64,
+    pub owner: Pubkey,
+    pub sequence: u64,
+    pub recipient: Pubkey,
+    pub finalizer: Pubkey,
+    pub shares: u64,
+    pub assets: u64,
+}
+
+impl WithdrawalFinalized {
+    pub fn snapshot(
+        request: &WithdrawalRequest,
+        vault: Pubkey,
+        key: Pubkey,
+        finalizer: Pubkey,
+        assets: u64,
+    ) -> Self {
+        Self {
+            vault,
+            queue: request.queue,
+            request: key,
+            request_id: request.request_id,
+            owner: request.owner,
+            sequence: request.sequence,
+            recipient: request.recipient_token_account,
+            finalizer,
+            shares: request.shares,
+            assets,
+        }
+    }
+}
+
 impl QueueConfigUpdated {
     pub fn snapshot(queue: &WithdrawalQueue, key: Pubkey) -> Self {
         Self {

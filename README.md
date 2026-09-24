@@ -7,7 +7,7 @@ This workspace builds two programs:
 | Crate | Artifact | Status |
 |---|---|---|
 | `programs/august-vault` | `august_vault.so` | Live on mainnet and devnet. Everything below describes this program. |
-| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | `initialize_queue`, two config setters and `request_withdrawal` over the `WithdrawalQueue` / `WithdrawalRequest` state accounts. Finalization, cancellation and `release_vault` are not implemented. **Not deployed anywhere, and must not be until `release_vault` lands.** |
+| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | `initialize_queue`, two config setters, `request_withdrawal` and `finalize_withdrawal` over the `WithdrawalQueue` / `WithdrawalRequest` state accounts. Cancellation and `release_vault` are not implemented. **Not deployed anywhere, and must not be until `release_vault` lands.** |
 
 The queue will let a vault route redemptions through a request-and-cooldown flow
 instead of paying out instantly. The vault side of that is already in place: a
@@ -213,8 +213,20 @@ window in force at that moment. It requires the vault's gate to point at the
 queue, a nonzero amount (`ZeroShares`, 6007), and a recipient that holds the deposit mint
 and belongs to neither the queue nor the vault (`InvalidRecipient`, 6008).
 A request's recipient and finalizer are fixed once it is made; to change
-them the owner cancels and requests again. Finalization, cancellation and
-`release_vault` are not implemented yet.
+them the owner cancels and requests again.
+
+`finalize_withdrawal(expected_sequence)` pays a request once its cooldown has
+run (`CooldownNotElapsed`, 6012, before then) and while its window is open
+(`RequestExpired` after). Anyone the request's `finalizer` permits may call it,
+and the owner always can
+(`FinalizerNotAllowed`, 6013, otherwise): the caller picks the moment, never the
+amount or the destination. The queue redeems the escrowed shares by CPI into
+`redeem` as the vault's queue authority, so `VaultPaused` and
+`NotEnoughLiquidity` surface as the vault's own codes and
+leave the request pending and untouched. The payout is the asset escrow's
+balance delta, forwarded to the request's recipient, at the shares' value at
+that moment; the request then closes with its rent to the owner. Cancellation
+and `release_vault` are not implemented yet.
 
 **Do not deploy the queue program, or attach a queue, on any cluster yet.** Once
 `initialize_queue` is deployable the queue PDA can be created, so attaching
