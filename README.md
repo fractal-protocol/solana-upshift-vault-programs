@@ -7,7 +7,7 @@ This workspace builds two programs:
 | Crate | Artifact | Status |
 |---|---|---|
 | `programs/august-vault` | `august_vault.so` | Live on mainnet and devnet. Everything below describes this program. |
-| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | `initialize_queue`, two config setters, `request_withdrawal`, `finalize_withdrawal`, `cancel_withdrawal`, `release_vault` and `expedite_request` over the `WithdrawalQueue` / `WithdrawalRequest` state accounts: the queue's full instruction set. **Not deployed anywhere.** |
+| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | `initialize_queue`, two config setters, `request_withdrawal`, `finalize_withdrawal`, `cancel_withdrawal`, `release_vault`, `expedite_request` and `sweep_escrow_shares` over the `WithdrawalQueue` / `WithdrawalRequest` state accounts: the queue's full instruction set. **Not deployed anywhere.** |
 
 The queue will let a vault route redemptions through a request-and-cooldown flow
 instead of paying out instantly. The vault side of that is already in place: a
@@ -260,6 +260,15 @@ names a failure by its instruction index. Five requests from five holders, the
 worst case for accounts, fit a legacy transaction (measured when this was
 written: 1,213 of 1,232 bytes, 449k CU, about 90k per finalize); several `expedite_request` calls
 combine the same way.
+
+`sweep_escrow_shares` lets the admin move whatever the share escrow holds beyond
+the pending requests' shares to a share account they name (`NothingToSweep`,
+6017, when there is nothing; `InvalidSweepDestination`, 6018, for an account the
+queue or the vault owns). Anyone can send shares to the escrow and nothing else moves them
+out, so shares sent there by mistake would otherwise be lost to their sender,
+and a single stray share would keep `close_vault`, which needs a zero supply,
+from ever running. Moving rather than burning them lets the admin return them to
+whoever sent them. Pending requests are never touched.
 
 Every queue event is delivered by self-CPI (Anchor's `emit_cpi!`): it is an
 inner instruction of the queue program whose data is the event tag

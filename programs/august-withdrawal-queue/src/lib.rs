@@ -37,6 +37,7 @@ use instructions::initialize_queue::*;
 use instructions::queue_admin::*;
 use instructions::release_vault::*;
 use instructions::request_withdrawal::*;
+use instructions::sweep_escrow_shares::*;
 
 use anchor_lang::prelude::*;
 
@@ -140,6 +141,15 @@ pub mod august_withdrawal_queue {
     /// ones. The queue account persists, so the vault can be attached again.
     pub fn release_vault(ctx: Context<ReleaseVault>) -> Result<()> {
         return instructions::release_vault::handler(ctx);
+    }
+
+    /// Admin moves whatever the share escrow holds beyond the pending requests'
+    /// shares to `destination`, so shares sent to the escrow by mistake can be
+    /// returned to whoever sent them. Nothing else moves them out, so they would
+    /// otherwise be stuck there and block `close_vault` forever. Pending
+    /// requests are never touched.
+    pub fn sweep_escrow_shares(ctx: Context<SweepEscrowShares>) -> Result<()> {
+        return instructions::sweep_escrow_shares::handler(ctx);
     }
 
     /// Admin or operator makes one not-yet-eligible request finalizable now:
