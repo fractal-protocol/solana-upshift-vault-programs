@@ -60,15 +60,12 @@ pub enum AugustWithdrawalQueueError {
     /// 6015 - The request is already eligible; there is nothing to expedite
     #[error("The request is already eligible; there is nothing to expedite")]
     RequestAlreadyEligible = 0x177F,
-    /// 6016 - Before its scheduled eligibility, an expedited request is finalized only by its owner or named finalizer
-    #[error("Before its scheduled eligibility, an expedited request is finalized only by its owner or named finalizer")]
-    EarlyFinalizeRestricted = 0x1780,
-    /// 6017 - The fee account is the queue's asset escrow
+    /// 6016 - The fee account is the queue's asset escrow
     #[error("The fee account is the queue's asset escrow")]
-    FeeAccountIsEscrow = 0x1781,
-    /// 6018 - The share mint is freezable or carries an unsupported extension
+    FeeAccountIsEscrow = 0x1780,
+    /// 6017 - The share mint is freezable or carries an unsupported extension
     #[error("The share mint is freezable or carries an unsupported extension")]
-    UnsupportedShareMint = 0x1782,
+    UnsupportedShareMint = 0x1781,
 }
 
 impl From<AugustWithdrawalQueueError> for solana_program_error::ProgramError {
