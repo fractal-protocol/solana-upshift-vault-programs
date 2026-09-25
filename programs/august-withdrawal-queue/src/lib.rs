@@ -80,8 +80,7 @@ pub mod august_withdrawal_queue {
     }
 
     /// Admin sets how long after scheduled eligibility a new request may still
-    /// be finalized, in seconds: zero disables expiry, otherwise 86,400 (one
-    /// day) to 7,776,000 (90 days).
+    /// be finalized: zero disables expiry, otherwise at most 90 days.
     pub fn set_fulfillment_window(ctx: Context<QueueAdmin>, seconds: u64) -> Result<()> {
         return instructions::set_fulfillment_window::handler(ctx, seconds);
     }
@@ -136,9 +135,9 @@ pub mod august_withdrawal_queue {
 
     /// Admin returns the vault to instant redemption: the queue co-signs the
     /// vault's `detach_withdrawal_queue` by CPI. It checks no liquidity: nothing
-    /// could hold assets back for the pending set once the gate is off. Pending requests survive and
-    /// finalize or cancel afterwards; the vault's gate stops new ones. The
-    /// queue account persists, so the vault can be attached again.
+    /// could hold assets back for the pending set once the gate is off. Pending requests
+    /// survive and finalize or cancel afterwards; the vault's gate stops new
+    /// ones. The queue account persists, so the vault can be attached again.
     pub fn release_vault(ctx: Context<ReleaseVault>) -> Result<()> {
         return instructions::release_vault::handler(ctx);
     }

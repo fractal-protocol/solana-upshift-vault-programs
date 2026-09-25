@@ -49,8 +49,8 @@ pub struct WithdrawalQueue {
     /// per request at creation, so a change applies to new requests only.
     pub cooldown_seconds: u64,
     /// How long after scheduled eligibility a request may still be finalized,
-    /// `0` (never expires) or `MIN_FULFILLMENT_WINDOW_SECONDS ..=
-    /// MAX_FULFILLMENT_WINDOW_SECONDS`. Stamped per request at creation.
+    /// `0` (never expires) or `1 ..= MAX_FULFILLMENT_WINDOW_SECONDS`. Stamped per
+    /// request at creation.
     pub fulfillment_window_seconds: u64,
     /// Queue-wide counter, incremented before it is stamped on a request, so the
     /// first stamp is 1 and a zero stamp marks a request that was never opened.

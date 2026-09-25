@@ -273,23 +273,6 @@ fn cooldown_and_window_are_bounded_inclusively() {
         queue.fulfillment_window_seconds,
         MAX_FULFILLMENT_WINDOW_SECONDS
     );
-
-    queue
-        .set_fulfillment_window(MIN_FULFILLMENT_WINDOW_SECONDS)
-        .expect("the minimum itself is allowed");
-    for seconds in [1, 7, MIN_FULFILLMENT_WINDOW_SECONDS - 1] {
-        let err = queue
-            .set_fulfillment_window(seconds)
-            .expect_err("a non-zero window under a day is refused");
-        assert_eq!(
-            code_of(err),
-            expected(ErrorCode::FulfillmentWindowOutOfBounds)
-        );
-    }
-    assert_eq!(
-        queue.fulfillment_window_seconds,
-        MIN_FULFILLMENT_WINDOW_SECONDS
-    );
 }
 
 #[test]

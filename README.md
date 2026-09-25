@@ -205,10 +205,9 @@ or a Token-2022 mint carrying at most the two metadata extensions
 (`UnsupportedDepositMint`, 6006, otherwise). The vault's share mint must pass the
 same extension rule and have no freeze authority (`UnsupportedShareMint`, 6016),
 so the share escrow that makes cancel always work can never be frozen.
-`set_cooldown` (at most 30 days) and `set_fulfillment_window` configure it. The
-window is in seconds: zero disables expiry, otherwise 86,400 (one day) to
-7,776,000 (90 days), else `FulfillmentWindowOutOfBounds` (6004). Attaching it
-on the vault is what makes it live.
+`set_cooldown` (at most 30 days) and `set_fulfillment_window` (zero disables
+expiry, else at most 90 days) configure it. Attaching it on the vault is what
+makes it live.
 
 Holders use `request_withdrawal(request_id, shares, finalizer)`:
 their shares move to the queue's escrow and a request account is created at

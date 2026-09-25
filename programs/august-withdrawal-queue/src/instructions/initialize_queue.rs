@@ -19,8 +19,9 @@ use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 use august_vault::state::vault::VaultState;
 
-/// Both mints must pass their policies, and the cooldown its bound. Everything else about a new queue is fixed: escrows are this PDA's
-/// ATAs, and it starts with no expiry window.
+/// Both mints must pass their policies, and the cooldown its bound. Everything
+/// else about a new queue is fixed: escrows are this PDA's ATAs, and it starts
+/// with no expiry window.
 pub fn handler(ctx: Context<InitializeQueue>, cooldown_seconds: u64) -> Result<()> {
     require_supported_deposit_mint(&ctx.accounts.deposit_mint)?;
     require_supported_share_mint(&ctx.accounts.share_mint)?;
