@@ -60,9 +60,6 @@ pub enum AugustWithdrawalQueueError {
     /// 6015 - The request is already eligible; there is nothing to expedite
     #[error("The request is already eligible; there is nothing to expedite")]
     RequestAlreadyEligible = 0x177F,
-    /// 6016 - Before its scheduled eligibility, an expedited request is finalized only by its owner or named finalizer
-    #[error("Before its scheduled eligibility, an expedited request is finalized only by its owner or named finalizer")]
-    EarlyFinalizeRestricted = 0x1780,
 }
 
 impl From<AugustWithdrawalQueueError> for solana_program_error::ProgramError {

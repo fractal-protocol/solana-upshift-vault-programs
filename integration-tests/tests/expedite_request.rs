@@ -166,14 +166,13 @@ fn every_other_case_is_refused_and_changes_nothing() {
     assert_anchor_framework_err(&err, 2001);
 }
 
-// ---- early settlement stays the owner's choice ----
+// ---- an expedite changes when, never who ----
 
-/// The independent review's P1: an operator who can mark the price down must not
-/// be able to expedite a holder and settle them in the same breath. Before the
-/// original eligibility only the owner may finalize an open request; the
-/// operator, and any keeper, is refused with nothing moved.
+/// The finalizer rule is the same before and after an expedite. On an open
+/// request that rule admits anyone, so a keeper settles it the moment the
+/// operator expedites, well before the original eligibility.
 #[test]
-fn an_expedited_request_is_settled_early_only_by_its_owner() {
+fn an_expedited_open_request_is_finalizable_by_anyone_at_once() {
     let mut ctx = attached_vault_with_holder();
     let user = ctx.user.pubkey();
     let shares = ctx.token_account_amount(&ctx.user_share_ata);
@@ -181,82 +180,81 @@ fn an_expedited_request_is_settled_early_only_by_its_owner() {
     let operator = ctx.operator.insecure_clone();
     ctx.expedite_request_as(&operator, &user, 1, 1)
         .expect("operator expedites");
-    let before = request_bytes(&ctx, &ctx.request_pda(&user, 1));
+    let scheduled = ctx.request_state_data(&user, 1).scheduled_eligible_at;
+    assert!(
+        ctx.now() < scheduled,
+        "still before the original eligibility"
+    );
 
-    let err = ctx
-        .finalize_withdrawal_as(&operator, &user, 1, 1)
-        .expect_err("the operator may not settle it early");
-    assert_queue_err(&err, ErrorCode::EarlyFinalizeRestricted);
-    assert_anchor_framework_err(&err, 6016);
     let keeper = ctx.new_funded_keypair(1_000_000_000);
-    let err = ctx
-        .finalize_withdrawal_as(&keeper, &user, 1, 1)
-        .expect_err("nor a keeper");
-    assert_queue_err(&err, ErrorCode::EarlyFinalizeRestricted);
-    assert_eq!(request_bytes(&ctx, &ctx.request_pda(&user, 1)), before);
-
-    ctx.finalize_withdrawal(1, 1)
-        .expect("the owner takes the early exit");
+    ctx.finalize_withdrawal_as(&keeper, &user, 1, 1)
+        .expect("a keeper settles it before the original eligibility");
 }
 
-/// The review's P1 exactly as an attacker would send it: expedite and finalize
-/// in one operator transaction. The finalize is refused, and the expedite
-/// rolls back with it.
+/// On a request naming a finalizer the rule is that key or the owner, and an
+/// expedite does not widen it: a stranger is refused after the expedite with
+/// the same error as before it, and the named finalizer succeeds.
 #[test]
-fn an_operator_cannot_expedite_and_settle_in_one_transaction() {
-    let mut ctx = attached_vault_with_holder();
-    let user = ctx.user.pubkey();
-    let shares = ctx.token_account_amount(&ctx.user_share_ata);
-    ctx.request_withdrawal(1, shares / 4).expect("request");
-    let operator = ctx.operator.insecure_clone();
-    let before = request_bytes(&ctx, &ctx.request_pda(&user, 1));
-    let ixs = [
-        ctx.expedite_request_ix(&operator.pubkey(), &user, 1, 1),
-        ctx.finalize_withdrawal_ix(&operator.pubkey(), &user, 1, 1),
-    ];
-
-    let err = ctx
-        .send_instructions(&operator, &ixs)
-        .expect_err("expedite then settle, atomically");
-    assert_queue_err(&err, ErrorCode::EarlyFinalizeRestricted);
-    assert_eq!(request_bytes(&ctx, &ctx.request_pda(&user, 1)), before);
-}
-
-/// The finalizer the owner named acts for the owner, early included.
-#[test]
-fn a_named_finalizer_may_settle_early() {
+fn an_expedite_does_not_change_who_may_finalize_a_named_request() {
     let mut ctx = attached_vault_with_holder();
     let user = ctx.user.insecure_clone();
+    let owner = user.pubkey();
     let shares = ctx.token_account_amount(&ctx.user_share_ata);
     let (share_ata, deposit_ata) = (ctx.user_share_ata, ctx.user_deposit_ata);
     let ops = ctx.new_funded_keypair(1_000_000_000);
     ctx.request_withdrawal_as(&user, share_ata, deposit_ata, 1, shares / 4, ops.pubkey())
         .expect("request naming a finalizer");
-    ctx.expedite_request(&user.pubkey(), 1, 1)
-        .expect("expedite");
+    let stranger = ctx.new_funded_keypair(1_000_000_000);
+    let err = ctx
+        .finalize_withdrawal_as(&stranger, &owner, 1, 1)
+        .expect_err("a stranger before the expedite");
+    assert_queue_err(&err, ErrorCode::FinalizerNotAllowed);
 
-    ctx.finalize_withdrawal_as(&ops, &user.pubkey(), 1, 1)
+    ctx.expedite_request(&owner, 1, 1).expect("expedite");
+    let before = request_bytes(&ctx, &ctx.request_pda(&owner, 1));
+    let err = ctx
+        .finalize_withdrawal_as(&stranger, &owner, 1, 1)
+        .expect_err("a stranger after the expedite");
+    assert_queue_err(&err, ErrorCode::FinalizerNotAllowed);
+    assert_eq!(request_bytes(&ctx, &ctx.request_pda(&owner, 1)), before);
+
+    ctx.finalize_withdrawal_as(&ops, &owner, 1, 1)
         .expect("the named finalizer settles early");
 }
 
-/// From the original eligibility on, an expedited request is like any other:
-/// the default open finalizer lets a keeper settle it.
+/// Expedite and finalize in one operator transaction. On an open request the
+/// finalizer rule admits the operator like anyone else, so it succeeds: the
+/// price paid is the vault's, bounded by its cap on `operator_update_aum`.
+/// On a request naming a finalizer the finalize is refused and the expedite
+/// rolls back with it, exactly as it would without the expedite.
 #[test]
-fn from_its_original_eligibility_anyone_may_finalize_again() {
+fn expedite_and_finalize_in_one_transaction_follow_the_finalizer_rule() {
     let mut ctx = attached_vault_with_holder();
-    let user = ctx.user.pubkey();
+    let user = ctx.user.insecure_clone();
+    let owner = user.pubkey();
     let shares = ctx.token_account_amount(&ctx.user_share_ata);
-    ctx.request_withdrawal(1, shares / 4).expect("request");
-    ctx.expedite_request(&user, 1, 1).expect("expedite");
-    let scheduled = ctx.request_state_data(&user, 1).scheduled_eligible_at;
-    let keeper = ctx.new_funded_keypair(1_000_000_000);
-    ctx.warp_forward_seconds(scheduled - ctx.now() - 1);
-    let err = ctx
-        .finalize_withdrawal_as(&keeper, &user, 1, 1)
-        .expect_err("one second before the original eligibility");
-    assert_queue_err(&err, ErrorCode::EarlyFinalizeRestricted);
+    let operator = ctx.operator.insecure_clone();
 
-    ctx.warp_forward_seconds(1);
-    ctx.finalize_withdrawal_as(&keeper, &user, 1, 1)
-        .expect("at the original eligibility");
+    ctx.request_withdrawal(1, shares / 4).expect("open request");
+    let ixs = [
+        ctx.expedite_request_ix(&operator.pubkey(), &owner, 1, 1),
+        ctx.finalize_withdrawal_ix(&operator.pubkey(), &owner, 1, 1),
+    ];
+    ctx.send_instructions(&operator, &ixs)
+        .expect("expedite then settle an open request, atomically");
+
+    let (share_ata, deposit_ata) = (ctx.user_share_ata, ctx.user_deposit_ata);
+    let ops = ctx.new_funded_keypair(1_000_000_000);
+    ctx.request_withdrawal_as(&user, share_ata, deposit_ata, 2, shares / 4, ops.pubkey())
+        .expect("request naming a finalizer");
+    let before = request_bytes(&ctx, &ctx.request_pda(&owner, 2));
+    let ixs = [
+        ctx.expedite_request_ix(&operator.pubkey(), &owner, 2, 2),
+        ctx.finalize_withdrawal_ix(&operator.pubkey(), &owner, 2, 2),
+    ];
+    let err = ctx
+        .send_instructions(&operator, &ixs)
+        .expect_err("the operator is not the named finalizer");
+    assert_queue_err(&err, ErrorCode::FinalizerNotAllowed);
+    assert_eq!(request_bytes(&ctx, &ctx.request_pda(&owner, 2)), before);
 }

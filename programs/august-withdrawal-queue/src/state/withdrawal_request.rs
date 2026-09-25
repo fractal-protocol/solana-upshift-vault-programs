@@ -132,7 +132,9 @@ impl WithdrawalRequest {
     }
 
     /// Design decision 14. The owner may always finalize; anyone else must be
-    /// the key the request names, if it names one. A restriction, never a grant.
+    /// the key the request names, if it names one. A restriction, never a grant,
+    /// and the same before and after an expedite: an expedite changes when a
+    /// request may be finalized, never by whom.
     pub fn may_finalize(&self, caller: &Pubkey) -> bool {
         if *caller == self.owner {
             return true;
@@ -141,17 +143,6 @@ impl WithdrawalRequest {
             None => true,
             Some(finalizer) => finalizer == *caller,
         }
-    }
-
-    /// Who may finalize before `scheduled_eligible_at`, which only an expedite
-    /// makes possible: the owner, or the finalizer the owner named. An expedite
-    /// gives the owner an early option, never anyone else an early settlement,
-    /// so no one else can pick a moment the owner did not agree to.
-    pub fn may_finalize_early(&self, caller: &Pubkey) -> bool {
-        if *caller == self.owner {
-            return true;
-        }
-        self.allowed_finalizer() == Some(*caller)
     }
 
     /// Whether finalization may begin at `now`. Reads the movable `eligible_at`,

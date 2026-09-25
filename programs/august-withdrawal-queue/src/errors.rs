@@ -52,8 +52,6 @@ pub enum ErrorCode {
     NotVaultAdminOrOperator,
     #[msg("The request is already eligible; there is nothing to expedite")]
     RequestAlreadyEligible,
-    #[msg("Before its scheduled eligibility, an expedited request is finalized only by its owner or named finalizer")]
-    EarlyFinalizeRestricted,
 }
 
 /// Compile-time pin of the ABI above, generated from one list so completeness
@@ -105,7 +103,6 @@ pin_error_abi! {
     FinalizerNotAllowed => 13,
     NotVaultAdminOrOperator => 14,
     RequestAlreadyEligible => 15,
-    EarlyFinalizeRestricted => 16,
 }
 
 #[cfg(test)]

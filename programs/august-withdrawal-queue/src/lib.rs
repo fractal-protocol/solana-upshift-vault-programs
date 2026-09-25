@@ -107,10 +107,9 @@ pub mod august_withdrawal_queue {
     /// queue redeems the escrowed shares by CPI into the vault as its PDA,
     /// forwards the net payout to the request's recipient, and closes the
     /// request with its rent to the owner. Anyone the request's `finalizer`
-    /// permits may call it, the owner always; before `scheduled_eligible_at`,
-    /// reachable only after an expedite, only the owner or a named finalizer.
-    /// The vault's `VaultPaused` and `NotEnoughLiquidity` propagate unchanged
-    /// and leave the request pending.
+    /// permits may call it, the owner always, and an expedite does not change
+    /// who. The vault's `VaultPaused` and `NotEnoughLiquidity` propagate
+    /// unchanged and leave the request pending.
     ///
     /// ### Parameters
     /// - `expected_sequence` - The request's stamp, so a delayed call cannot land
@@ -146,9 +145,8 @@ pub mod august_withdrawal_queue {
     /// Admin or operator makes one not-yet-eligible request finalizable now:
     /// `eligible_at` moves to the current time; `scheduled_eligible_at` and
     /// `expires_at` do not, so the window only ever widens. An eligible or
-    /// expired request is refused. Until `scheduled_eligible_at` only the owner
-    /// or their named finalizer may then finalize it: an option for the owner,
-    /// not an early settlement anyone else can trigger.
+    /// expired request is refused. Who may finalize is unchanged: the same
+    /// callers as before, from the earlier time.
     ///
     /// ### Parameters
     /// - `expected_sequence` - The request's stamp, so a delayed call cannot land

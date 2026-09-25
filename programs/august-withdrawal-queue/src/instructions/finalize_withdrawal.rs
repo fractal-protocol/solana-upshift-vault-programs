@@ -43,12 +43,6 @@ pub fn handler(ctx: Context<FinalizeWithdrawal>, expected_sequence: u64) -> Resu
     );
     let now = Clock::get()?.unix_timestamp;
     require!(request.is_eligible(now), ErrorCode::CooldownNotElapsed);
-    if now < request.scheduled_eligible_at {
-        require!(
-            request.may_finalize_early(&ctx.accounts.finalizer.key()),
-            ErrorCode::EarlyFinalizeRestricted
-        );
-    }
     require!(!request.is_expired(now), ErrorCode::RequestExpired);
     require_valid_recipient(&ctx.accounts.recipient_token_account, &ctx.accounts.queue)?;
 

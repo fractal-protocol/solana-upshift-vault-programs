@@ -220,10 +220,8 @@ run (`CooldownNotElapsed`, 6012, before then) and while its window is open
 (`RequestExpired` after). Anyone the request's `finalizer` permits may call it,
 and the owner always can
 (`FinalizerNotAllowed`, 6013, otherwise): the caller picks the moment, never the
-amount or the destination. Before a request's original eligibility, which only
-an expedite makes reachable, only the owner or their named finalizer may call
-it (`EarlyFinalizeRestricted`, 6016): an expedite is the owner's option, never
-an early settlement someone else can trigger. The queue redeems the escrowed shares by CPI into
+amount or the destination, and an expedite changes when a request may be
+finalized, never by whom. The queue redeems the escrowed shares by CPI into
 `redeem` as the vault's queue authority, so `VaultPaused` and
 `NotEnoughLiquidity` surface as the vault's own codes and
 leave the request pending and untouched. The payout is the asset escrow's
