@@ -48,6 +48,10 @@ pub enum ErrorCode {
     CooldownNotElapsed,
     #[msg("Signer is neither the request's owner nor its finalizer")]
     FinalizerNotAllowed,
+    #[msg("Signer is neither the vault's admin nor its operator")]
+    NotVaultAdminOrOperator,
+    #[msg("The request is already eligible; there is nothing to expedite")]
+    RequestAlreadyEligible,
 }
 
 /// Compile-time pin of the ABI above, generated from one list so completeness
@@ -97,6 +101,8 @@ pin_error_abi! {
     StaleRequestSequence => 11,
     CooldownNotElapsed => 12,
     FinalizerNotAllowed => 13,
+    NotVaultAdminOrOperator => 14,
+    RequestAlreadyEligible => 15,
 }
 
 #[cfg(test)]

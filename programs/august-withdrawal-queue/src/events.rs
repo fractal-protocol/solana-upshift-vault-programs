@@ -109,8 +109,8 @@ impl WithdrawalFinalized {
     }
 }
 
-/// A request was cancelled and its shares returned. `by` is the signer, the
-/// owner today and the admin once `admin_cancel_withdrawal` exists.
+/// A request was cancelled and its shares returned. `by` is the signer, always
+/// the owner.
 #[event]
 pub struct WithdrawalCancelled {
     pub vault: Pubkey,
@@ -142,6 +142,42 @@ impl WithdrawalCancelled {
             by,
             shares: request.shares,
             destination,
+        }
+    }
+}
+
+/// The admin or operator moved a request's eligibility to now (decision 15).
+#[event]
+pub struct WithdrawalExpedited {
+    pub vault: Pubkey,
+    pub queue: Pubkey,
+    pub request: Pubkey,
+    pub request_id: u64,
+    pub owner: Pubkey,
+    pub sequence: u64,
+    pub by: Pubkey,
+    pub previous_eligible_at: i64,
+    pub new_eligible_at: i64,
+}
+
+impl WithdrawalExpedited {
+    pub fn snapshot(
+        request: &WithdrawalRequest,
+        vault: Pubkey,
+        key: Pubkey,
+        by: Pubkey,
+        previous_eligible_at: i64,
+    ) -> Self {
+        Self {
+            vault,
+            queue: request.queue,
+            request: key,
+            request_id: request.request_id,
+            owner: request.owner,
+            sequence: request.sequence,
+            by,
+            previous_eligible_at,
+            new_eligible_at: request.eligible_at,
         }
     }
 }

@@ -2,7 +2,8 @@
 //! every instruction the pilot tests need.
 
 use anchor_lang::{
-    AccountDeserialize, AnchorDeserialize, Discriminator, InstructionData, ToAccountMetas,
+    AccountDeserialize, AnchorDeserialize, AnchorSerialize, Discriminator, InstructionData,
+    ToAccountMetas,
 };
 use august_vault::{
     accounts as ix_accounts,
@@ -148,6 +149,8 @@ impl VaultCtx {
     }
 
     fn fresh_inner(token_program: TokenProgramKind, extensions: &[MintExtension]) -> Self {
+        // The production 10 KB log cap stays: a test that read past it would
+        // pass here and fail on a cluster.
         let mut svm = LiteSVM::new();
         let mut clock: solana_sdk::clock::Clock = svm.get_sysvar();
         clock.unix_timestamp = HARNESS_EPOCH;
@@ -1293,6 +1296,8 @@ impl VaultCtx {
             token_program,
             associated_token_program: spl_associated_token_account::ID,
             system_program: solana_sdk::system_program::ID,
+            event_authority: event_authority_pda(),
+            program: august_withdrawal_queue::ID,
         }
         .to_account_metas(None);
         let ix = Instruction {
@@ -1360,6 +1365,8 @@ impl VaultCtx {
             queue,
             vault_state,
             admin: admin.pubkey(),
+            event_authority: event_authority_pda(),
+            program: august_withdrawal_queue::ID,
         }
         .to_account_metas(None);
         let ix = Instruction {
@@ -1518,6 +1525,8 @@ impl VaultCtx {
             request: self.request_pda(owner, request_id),
             token_program: self.token_program.id(),
             system_program: solana_sdk::system_program::ID,
+            event_authority: event_authority_pda(),
+            program: august_withdrawal_queue::ID,
         }
     }
 
@@ -1594,6 +1603,8 @@ impl VaultCtx {
             recipient_token_account: request.recipient_token_account,
             vault_program: august_vault::ID,
             token_program: self.token_program.id(),
+            event_authority: event_authority_pda(),
+            program: august_withdrawal_queue::ID,
         }
     }
 
@@ -1611,6 +1622,33 @@ impl VaultCtx {
             data: q_ix::FinalizeWithdrawal { expected_sequence }.data(),
         };
         send_tx(&mut self.svm, finalizer, &[ix], &[finalizer])
+    }
+
+    /// The genuine `finalize_withdrawal` instruction for `request_owner`'s
+    /// request, for tests that put several in one transaction.
+    pub fn finalize_withdrawal_ix(
+        &self,
+        finalizer: &Pubkey,
+        request_owner: &Pubkey,
+        request_id: u64,
+        expected_sequence: u64,
+    ) -> Instruction {
+        Instruction {
+            program_id: august_withdrawal_queue::ID,
+            accounts: self
+                .finalize_withdrawal_accounts(finalizer, request_owner, request_id)
+                .to_account_metas(None),
+            data: q_ix::FinalizeWithdrawal { expected_sequence }.data(),
+        }
+    }
+
+    /// Sends `ixs` as one transaction, signed and paid by `signer`.
+    pub fn send_instructions(
+        &mut self,
+        signer: &Keypair,
+        ixs: &[Instruction],
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        send_tx(&mut self.svm, signer, ixs, &[signer])
     }
 
     /// What the vault would pay for `shares` right now, by its own math:
@@ -1736,6 +1774,8 @@ impl VaultCtx {
             share_mint: self.share_mint,
             destination_share_account: destination,
             token_program: self.token_program.id(),
+            event_authority: event_authority_pda(),
+            program: august_withdrawal_queue::ID,
         }
     }
 
@@ -1780,6 +1820,8 @@ impl VaultCtx {
             deposit_mint: self.deposit_mint,
             admin: *admin,
             vault_program: august_vault::ID,
+            event_authority: event_authority_pda(),
+            program: august_withdrawal_queue::ID,
         }
     }
 
@@ -1835,6 +1877,133 @@ impl VaultCtx {
                 &token_program,
             ),
         }
+    }
+
+    /// Plants a request of `other`'s queue at its own PDA: owned by the queue
+    /// program, its fields consistent, `shares` escrowed nowhere. For tests
+    /// that hand another queue's request to this queue's instructions, which
+    /// must refuse it before anything else is checked.
+    pub fn install_foreign_request(
+        &mut self,
+        other: &OtherVault,
+        owner: &Pubkey,
+        request_id: u64,
+        shares: u64,
+        recipient: Pubkey,
+    ) -> Pubkey {
+        let (address, bump) = Pubkey::find_program_address(
+            &[
+                WITHDRAWAL_REQUEST_SEED,
+                other.queue.as_ref(),
+                owner.as_ref(),
+                &request_id.to_le_bytes(),
+            ],
+            &august_withdrawal_queue::ID,
+        );
+        let now = self.now();
+        let request = WithdrawalRequest {
+            queue: other.queue,
+            owner: *owner,
+            recipient_token_account: recipient,
+            finalizer: Pubkey::default(),
+            shares,
+            request_id,
+            sequence: 1,
+            requested_at: now,
+            scheduled_eligible_at: now + 3600,
+            eligible_at: now + 3600,
+            expires_at: now + 30 * 24 * 3600,
+            bump,
+            padding: [0; 9],
+        };
+        let mut data = WithdrawalRequest::DISCRIMINATOR.to_vec();
+        request.serialize(&mut data).expect("serialize request");
+        self.svm
+            .set_account(
+                address,
+                SolanaAccount {
+                    lamports: Rent::default().minimum_balance(data.len()),
+                    data,
+                    owner: august_withdrawal_queue::ID,
+                    executable: false,
+                    rent_epoch: 0,
+                },
+            )
+            .expect("plant request");
+        address
+    }
+
+    // ---- expedite ----
+
+    /// `expedite_request` as the admin on `request_owner`'s request.
+    pub fn expedite_request(
+        &mut self,
+        request_owner: &Pubkey,
+        request_id: u64,
+        expected_sequence: u64,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let admin = self.admin.insecure_clone();
+        self.expedite_request_as(&admin, request_owner, request_id, expected_sequence)
+    }
+
+    pub fn expedite_request_as(
+        &mut self,
+        authority: &Keypair,
+        request_owner: &Pubkey,
+        request_id: u64,
+        expected_sequence: u64,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let accounts =
+            self.expedite_request_accounts(&authority.pubkey(), request_owner, request_id);
+        self.send_expedite_request(authority, accounts, expected_sequence)
+    }
+
+    pub fn expedite_request_accounts(
+        &self,
+        authority: &Pubkey,
+        request_owner: &Pubkey,
+        request_id: u64,
+    ) -> q_accounts::ExpediteRequest {
+        q_accounts::ExpediteRequest {
+            queue: self.withdrawal_queue_pda(),
+            vault_state: self.vault_state,
+            authority: *authority,
+            request: self.request_pda(request_owner, request_id),
+            event_authority: event_authority_pda(),
+            program: august_withdrawal_queue::ID,
+        }
+    }
+
+    /// The genuine `expedite_request` instruction, signed by `authority`, for
+    /// tests that put it in one transaction with other instructions.
+    pub fn expedite_request_ix(
+        &self,
+        authority: &Pubkey,
+        request_owner: &Pubkey,
+        request_id: u64,
+        expected_sequence: u64,
+    ) -> Instruction {
+        Instruction {
+            program_id: august_withdrawal_queue::ID,
+            accounts: self
+                .expedite_request_accounts(authority, request_owner, request_id)
+                .to_account_metas(None),
+            data: q_ix::ExpediteRequest { expected_sequence }.data(),
+        }
+    }
+
+    pub fn send_expedite_request(
+        &mut self,
+        authority: &Keypair,
+        accounts: q_accounts::ExpediteRequest,
+        expected_sequence: u64,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_withdrawal_queue::ID,
+            accounts: accounts.to_account_metas(None),
+            data: q_ix::ExpediteRequest { expected_sequence }.data(),
+        };
+        send_tx(&mut self.svm, authority, &[ix], &[authority])
     }
 
     /// Create and fund a throwaway keypair (for impostor-signer tests).
@@ -2396,7 +2565,11 @@ impl QueueCoSigner<'_> {
     }
 }
 
-/// An independent vault participant created by [`VaultCtx::new_depositor`].
+/// The queue program's event authority: the PDA that signs its event self-CPIs.
+pub fn event_authority_pda() -> Pubkey {
+    Pubkey::find_program_address(&[b"__event_authority"], &august_withdrawal_queue::ID).0
+}
+
 /// A second vault and its queue, as [`VaultCtx::new_vault_with_queue`] built
 /// them.
 pub struct OtherVault {
@@ -2409,6 +2582,7 @@ pub struct OtherVault {
     pub escrow_assets: Pubkey,
 }
 
+/// An independent vault participant created by [`VaultCtx::new_depositor`].
 pub struct Depositor {
     pub keypair: Keypair,
     pub deposit_ata: Pubkey,
@@ -2603,20 +2777,36 @@ pub fn expected_withdrawal_fee(assets: u64, fee_rate: u32) -> u64 {
 }
 
 /// Every event of type `E` the transaction emitted, decoded from its
-/// `Program data:` logs, in order.
+/// Every `E` the transaction emitted, in order. The vault logs its events as
+/// `Program data:` lines; the queue sends its own as self-CPI instructions
+/// (design decision 17), which the log cap cannot cut. Both sources are read.
 pub fn events_of<E: AnchorDeserialize + Discriminator>(
     meta: &litesvm::types::TransactionMetadata,
 ) -> Vec<E> {
     use base64::Engine;
     let disc = E::DISCRIMINATOR;
-    meta.logs
+    let logged = meta
+        .logs
         .iter()
         .filter_map(|line| line.strip_prefix("Program data: "))
         .map(|b64| {
             base64::engine::general_purpose::STANDARD
                 .decode(b64)
                 .expect("Program data line is base64")
+        });
+    let sent = meta
+        .inner_instructions
+        .iter()
+        .flatten()
+        .filter_map(|inner| {
+            inner
+                .instruction
+                .data
+                .strip_prefix(anchor_lang::event::EVENT_IX_TAG_LE)
         })
+        .map(<[u8]>::to_vec);
+    logged
+        .chain(sent)
         .filter(|bytes| bytes.starts_with(disc))
         .map(|bytes| E::try_from_slice(&bytes[disc.len()..]).expect("event body decodes"))
         .collect()

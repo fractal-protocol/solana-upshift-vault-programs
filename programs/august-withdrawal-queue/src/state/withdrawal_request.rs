@@ -132,7 +132,9 @@ impl WithdrawalRequest {
     }
 
     /// Design decision 14. The owner may always finalize; anyone else must be
-    /// the key the request names, if it names one. A restriction, never a grant.
+    /// the key the request names, if it names one. A restriction, never a grant,
+    /// and the same before and after an expedite: an expedite changes when a
+    /// request may be finalized, never by whom.
     pub fn may_finalize(&self, caller: &Pubkey) -> bool {
         if *caller == self.owner {
             return true;

@@ -31,6 +31,7 @@ pub mod recipient;
 pub mod state;
 
 use instructions::cancel_withdrawal::*;
+use instructions::expedite_request::*;
 use instructions::finalize_withdrawal::*;
 use instructions::initialize_queue::*;
 use instructions::queue_admin::*;
@@ -106,9 +107,9 @@ pub mod august_withdrawal_queue {
     /// queue redeems the escrowed shares by CPI into the vault as its PDA,
     /// forwards the net payout to the request's recipient, and closes the
     /// request with its rent to the owner. Anyone the request's `finalizer`
-    /// permits may call it, the owner always.
-    /// The vault's `VaultPaused` and `NotEnoughLiquidity` propagate unchanged
-    /// and leave the request pending.
+    /// permits may call it, the owner always, and an expedite does not change
+    /// who. The vault's `VaultPaused` and `NotEnoughLiquidity` propagate
+    /// unchanged and leave the request pending.
     ///
     /// ### Parameters
     /// - `expected_sequence` - The request's stamp, so a delayed call cannot land
@@ -139,5 +140,18 @@ pub mod august_withdrawal_queue {
     /// ones. The queue account persists, so the vault can be attached again.
     pub fn release_vault(ctx: Context<ReleaseVault>) -> Result<()> {
         return instructions::release_vault::handler(ctx);
+    }
+
+    /// Admin or operator makes one not-yet-eligible request finalizable now:
+    /// `eligible_at` moves to the current time; `scheduled_eligible_at` and
+    /// `expires_at` do not, so the window only ever widens. An eligible or
+    /// expired request is refused. Who may finalize is unchanged: the same
+    /// callers as before, from the earlier time.
+    ///
+    /// ### Parameters
+    /// - `expected_sequence` - The request's stamp, so a delayed call cannot land
+    ///   on a recreated request with the same id
+    pub fn expedite_request(ctx: Context<ExpediteRequest>, expected_sequence: u64) -> Result<()> {
+        return instructions::expedite_request::handler(ctx, expected_sequence);
     }
 }

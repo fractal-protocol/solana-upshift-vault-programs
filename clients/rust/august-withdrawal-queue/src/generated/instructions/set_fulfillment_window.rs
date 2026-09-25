@@ -18,6 +18,10 @@ pub struct SetFulfillmentWindow {
     pub vault_state: solana_pubkey::Pubkey,
 
     pub admin: solana_pubkey::Pubkey,
+
+    pub event_authority: solana_pubkey::Pubkey,
+
+    pub program: solana_pubkey::Pubkey,
 }
 
 impl SetFulfillmentWindow {
@@ -34,7 +38,7 @@ impl SetFulfillmentWindow {
         args: SetFulfillmentWindowInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
-        let mut accounts = Vec::with_capacity(3 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(5 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(self.queue, false));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.vault_state,
@@ -42,6 +46,14 @@ impl SetFulfillmentWindow {
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.admin, true,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.event_authority,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.program,
+            false,
         ));
         accounts.extend_from_slice(remaining_accounts);
         let mut data = SetFulfillmentWindowInstructionData::new()
@@ -101,11 +113,15 @@ impl SetFulfillmentWindowInstructionArgs {
 ///   0. `[writable]` queue
 ///   1. `[]` vault_state
 ///   2. `[signer]` admin
+///   3. `[]` event_authority
+///   4. `[]` program
 #[derive(Clone, Debug, Default)]
 pub struct SetFulfillmentWindowBuilder {
     queue: Option<solana_pubkey::Pubkey>,
     vault_state: Option<solana_pubkey::Pubkey>,
     admin: Option<solana_pubkey::Pubkey>,
+    event_authority: Option<solana_pubkey::Pubkey>,
+    program: Option<solana_pubkey::Pubkey>,
     seconds: Option<u64>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
@@ -127,6 +143,16 @@ impl SetFulfillmentWindowBuilder {
     #[inline(always)]
     pub fn admin(&mut self, admin: solana_pubkey::Pubkey) -> &mut Self {
         self.admin = Some(admin);
+        self
+    }
+    #[inline(always)]
+    pub fn event_authority(&mut self, event_authority: solana_pubkey::Pubkey) -> &mut Self {
+        self.event_authority = Some(event_authority);
+        self
+    }
+    #[inline(always)]
+    pub fn program(&mut self, program: solana_pubkey::Pubkey) -> &mut Self {
+        self.program = Some(program);
         self
     }
     #[inline(always)]
@@ -155,6 +181,8 @@ impl SetFulfillmentWindowBuilder {
             queue: self.queue.expect("queue is not set"),
             vault_state: self.vault_state.expect("vault_state is not set"),
             admin: self.admin.expect("admin is not set"),
+            event_authority: self.event_authority.expect("event_authority is not set"),
+            program: self.program.expect("program is not set"),
         };
         let args = SetFulfillmentWindowInstructionArgs {
             seconds: self.seconds.clone().expect("seconds is not set"),
@@ -171,6 +199,10 @@ pub struct SetFulfillmentWindowCpiAccounts<'a, 'b> {
     pub vault_state: &'b solana_account_info::AccountInfo<'a>,
 
     pub admin: &'b solana_account_info::AccountInfo<'a>,
+
+    pub event_authority: &'b solana_account_info::AccountInfo<'a>,
+
+    pub program: &'b solana_account_info::AccountInfo<'a>,
 }
 
 /// `set_fulfillment_window` CPI instruction.
@@ -183,6 +215,10 @@ pub struct SetFulfillmentWindowCpi<'a, 'b> {
     pub vault_state: &'b solana_account_info::AccountInfo<'a>,
 
     pub admin: &'b solana_account_info::AccountInfo<'a>,
+
+    pub event_authority: &'b solana_account_info::AccountInfo<'a>,
+
+    pub program: &'b solana_account_info::AccountInfo<'a>,
     /// The arguments for the instruction.
     pub __args: SetFulfillmentWindowInstructionArgs,
 }
@@ -198,6 +234,8 @@ impl<'a, 'b> SetFulfillmentWindowCpi<'a, 'b> {
             queue: accounts.queue,
             vault_state: accounts.vault_state,
             admin: accounts.admin,
+            event_authority: accounts.event_authority,
+            program: accounts.program,
             __args: args,
         }
     }
@@ -224,7 +262,7 @@ impl<'a, 'b> SetFulfillmentWindowCpi<'a, 'b> {
         signers_seeds: &[&[&[u8]]],
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
-        let mut accounts = Vec::with_capacity(3 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(5 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(*self.queue.key, false));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.vault_state.key,
@@ -233,6 +271,14 @@ impl<'a, 'b> SetFulfillmentWindowCpi<'a, 'b> {
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.admin.key,
             true,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.event_authority.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.program.key,
+            false,
         ));
         remaining_accounts.iter().for_each(|remaining_account| {
             accounts.push(solana_instruction::AccountMeta {
@@ -252,11 +298,13 @@ impl<'a, 'b> SetFulfillmentWindowCpi<'a, 'b> {
             accounts,
             data,
         };
-        let mut account_infos = Vec::with_capacity(4 + remaining_accounts.len());
+        let mut account_infos = Vec::with_capacity(6 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
         account_infos.push(self.queue.clone());
         account_infos.push(self.vault_state.clone());
         account_infos.push(self.admin.clone());
+        account_infos.push(self.event_authority.clone());
+        account_infos.push(self.program.clone());
         remaining_accounts
             .iter()
             .for_each(|remaining_account| account_infos.push(remaining_account.0.clone()));
@@ -276,6 +324,8 @@ impl<'a, 'b> SetFulfillmentWindowCpi<'a, 'b> {
 ///   0. `[writable]` queue
 ///   1. `[]` vault_state
 ///   2. `[signer]` admin
+///   3. `[]` event_authority
+///   4. `[]` program
 #[derive(Clone, Debug)]
 pub struct SetFulfillmentWindowCpiBuilder<'a, 'b> {
     instruction: Box<SetFulfillmentWindowCpiBuilderInstruction<'a, 'b>>,
@@ -288,6 +338,8 @@ impl<'a, 'b> SetFulfillmentWindowCpiBuilder<'a, 'b> {
             queue: None,
             vault_state: None,
             admin: None,
+            event_authority: None,
+            program: None,
             seconds: None,
             __remaining_accounts: Vec::new(),
         });
@@ -309,6 +361,19 @@ impl<'a, 'b> SetFulfillmentWindowCpiBuilder<'a, 'b> {
     #[inline(always)]
     pub fn admin(&mut self, admin: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.admin = Some(admin);
+        self
+    }
+    #[inline(always)]
+    pub fn event_authority(
+        &mut self,
+        event_authority: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.event_authority = Some(event_authority);
+        self
+    }
+    #[inline(always)]
+    pub fn program(&mut self, program: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
+        self.instruction.program = Some(program);
         self
     }
     #[inline(always)]
@@ -368,6 +433,13 @@ impl<'a, 'b> SetFulfillmentWindowCpiBuilder<'a, 'b> {
                 .expect("vault_state is not set"),
 
             admin: self.instruction.admin.expect("admin is not set"),
+
+            event_authority: self
+                .instruction
+                .event_authority
+                .expect("event_authority is not set"),
+
+            program: self.instruction.program.expect("program is not set"),
             __args: args,
         };
         instruction.invoke_signed_with_remaining_accounts(
@@ -383,6 +455,8 @@ struct SetFulfillmentWindowCpiBuilderInstruction<'a, 'b> {
     queue: Option<&'b solana_account_info::AccountInfo<'a>>,
     vault_state: Option<&'b solana_account_info::AccountInfo<'a>>,
     admin: Option<&'b solana_account_info::AccountInfo<'a>>,
+    event_authority: Option<&'b solana_account_info::AccountInfo<'a>>,
+    program: Option<&'b solana_account_info::AccountInfo<'a>>,
     seconds: Option<u64>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,

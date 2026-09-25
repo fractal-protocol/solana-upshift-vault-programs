@@ -67,7 +67,7 @@ pub fn handler(
         ctx.accounts.share_mint.decimals,
     )?;
 
-    emit!(WithdrawalRequested::snapshot(
+    emit_cpi!(WithdrawalRequested::snapshot(
         &ctx.accounts.request,
         ctx.accounts.queue.vault_state,
         request_key,
@@ -76,6 +76,7 @@ pub fn handler(
 }
 
 /// Every deserialized account is boxed; see `InitializeQueue` for why.
+#[event_cpi]
 #[derive(Accounts)]
 #[instruction(request_id: u64)]
 pub struct RequestWithdrawal<'info> {

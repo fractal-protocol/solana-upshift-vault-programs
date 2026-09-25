@@ -671,3 +671,163 @@ fn a_request_cannot_be_finalized_through_another_vaults_queue() {
     assert_anchor_framework_err(&err, 2001);
     assert!(ctx.svm.get_account(&ctx.request_pda(&user, 1)).is_some());
 }
+
+// ---- several requests in one transaction ----
+
+/// Holders with a mature request each, ready for one keeper transaction.
+fn holders_with_mature_requests(n: usize) -> (VaultCtx, Vec<Pubkey>) {
+    let mut ctx = VaultCtx::fresh();
+    let mut owners = Vec::new();
+    for _ in 0..n {
+        let d = ctx.new_depositor(DEPOSIT_AMOUNT);
+        ctx.deposit_as(&d, DEPOSIT_AMOUNT).expect("deposit");
+        owners.push(d);
+    }
+    ctx.open_queue(DAY);
+    for d in &owners {
+        let shares = ctx.token_account_amount(&d.share_ata) / 2;
+        ctx.request_withdrawal_as(
+            &d.keypair,
+            d.share_ata,
+            d.deposit_ata,
+            1,
+            shares,
+            Pubkey::default(),
+        )
+        .expect("request");
+    }
+    ctx.warp_forward_seconds(DAY as i64);
+    let keys = owners.iter().map(|d| d.keypair.pubkey()).collect();
+    (ctx, keys)
+}
+
+/// The failing instruction's index, from the transaction-level error.
+fn failed_instruction(err: &FailedTransactionMetadata) -> u8 {
+    match err.err {
+        solana_sdk::transaction::TransactionError::InstructionError(index, _) => index,
+        ref other => panic!("expected an instruction error, got {other:?}"),
+    }
+}
+
+/// There is no batch instruction: a keeper puts several `finalize_withdrawal`
+/// instructions in one transaction instead. Five requests from five holders,
+/// the worst case for accounts, fit a legacy transaction and the compute
+/// ceiling, each instruction with its own heap, and each request settles on its
+/// own: its event, its payout and its rent back to its owner.
+#[test]
+fn a_keeper_finalizes_five_requests_in_one_transaction() {
+    let (mut ctx, owners) = holders_with_mature_requests(5);
+    let keeper = keeper(&mut ctx);
+    let mut ixs = vec![
+        solana_sdk::compute_budget::ComputeBudgetInstruction::set_compute_unit_limit(1_400_000),
+    ];
+    let mut before = Vec::new();
+    for owner in &owners {
+        let seq = ctx.request_state_data(owner, 1).sequence;
+        ixs.push(ctx.finalize_withdrawal_ix(&keeper.pubkey(), owner, 1, seq));
+        let rent = ctx
+            .svm
+            .get_account(&ctx.request_pda(owner, 1))
+            .expect("request")
+            .lamports;
+        before.push((ctx.svm.get_balance(owner).expect("owner"), rent));
+    }
+    // The blockhash is fixed-width, so a default one measures the size exactly.
+    let tx = solana_sdk::transaction::Transaction::new_signed_with_payer(
+        &ixs,
+        Some(&keeper.pubkey()),
+        &[&keeper],
+        solana_sdk::hash::Hash::default(),
+    );
+    let size = 1 + 64 * tx.signatures.len() + tx.message_data().len();
+    assert!(size <= 1232, "{size} bytes");
+
+    let meta = ctx
+        .send_instructions(&keeper, &ixs)
+        .expect("five finalizes in one transaction");
+    eprintln!(
+        "5 x finalize_withdrawal: {} CU, {size} bytes",
+        meta.compute_units_consumed
+    );
+    assert!(meta.compute_units_consumed < 1_400_000);
+    let events = events_of::<WithdrawalFinalized>(&meta);
+    assert_eq!(events.len(), 5);
+    for ((owner, event), (lamports, rent)) in owners.iter().zip(&events).zip(&before) {
+        assert_eq!(event.request, ctx.request_pda(owner, 1), "in order");
+        assert!(event.assets > 0);
+        assert!(ctx.svm.get_account(&ctx.request_pda(owner, 1)).is_none());
+        assert_eq!(
+            ctx.svm.get_balance(owner).expect("owner"),
+            lamports + rent,
+            "rent back to its own owner"
+        );
+    }
+    assert_eq!(ctx.queue_state_data().pending_requests, 0);
+}
+
+/// The transaction is atomic: one refused finalize reverts the ones before it,
+/// and the runtime names the instruction that failed.
+#[test]
+fn one_refused_finalize_reverts_the_whole_transaction() {
+    let (mut ctx, owners) = holders_with_mature_requests(3);
+    let keeper = keeper(&mut ctx);
+    let mut ixs = Vec::new();
+    for (i, owner) in owners.iter().enumerate() {
+        let seq = ctx.request_state_data(owner, 1).sequence;
+        let seq = if i == 2 { seq + 1 } else { seq };
+        ixs.push(ctx.finalize_withdrawal_ix(&keeper.pubkey(), owner, 1, seq));
+    }
+    let paid_before: Vec<u64> = owners
+        .iter()
+        .map(|o| ctx.token_account_amount(&ctx.request_state_data(o, 1).recipient_token_account))
+        .collect();
+
+    let err = ctx
+        .send_instructions(&keeper, &ixs)
+        .expect_err("the third has a stale sequence");
+    assert_queue_err(&err, ErrorCode::StaleRequestSequence);
+    assert_eq!(failed_instruction(&err), 2);
+    assert_eq!(ctx.queue_state_data().pending_requests, 3, "none paid");
+    for (owner, paid) in owners.iter().zip(paid_before) {
+        let recipient = ctx.request_state_data(owner, 1).recipient_token_account;
+        assert_eq!(ctx.token_account_amount(&recipient), paid);
+    }
+}
+
+/// A refusal from inside the vault's redeem rolls back too: the first request
+/// is paid by the vault and the second runs out of liquidity, and the first
+/// payout, its burn and its closed account all come back.
+#[test]
+fn a_shortfall_part_way_through_reverts_the_payouts_before_it() {
+    let (mut ctx, owners) = holders_with_mature_requests(2);
+    let keeper = keeper(&mut ctx);
+    let shares = ctx.request_state_data(&owners[0], 1).shares;
+    let (gross, _) = ctx.quote_redeem(shares);
+    let local = ctx.vault_state_data().local_aum;
+    ctx.operator_withdraw(local - gross * 3 / 2)
+        .expect("leave room for one payout and a half");
+    let first_recipient = ctx
+        .request_state_data(&owners[0], 1)
+        .recipient_token_account;
+    let paid_before = ctx.token_account_amount(&first_recipient);
+    let supply_before = ctx.share_mint_supply();
+    let ixs: Vec<_> = owners
+        .iter()
+        .map(|o| {
+            let seq = ctx.request_state_data(o, 1).sequence;
+            ctx.finalize_withdrawal_ix(&keeper.pubkey(), o, 1, seq)
+        })
+        .collect();
+
+    let err = ctx
+        .send_instructions(&keeper, &ixs)
+        .expect_err("the second runs out of liquidity");
+    assert_anchor_err(&err, VaultError::NotEnoughLiquidity);
+    assert_eq!(failed_instruction(&err), 1);
+    assert_eq!(ctx.token_account_amount(&first_recipient), paid_before);
+    assert_eq!(ctx.share_mint_supply(), supply_before, "the burn is undone");
+    for owner in &owners {
+        assert!(ctx.svm.get_account(&ctx.request_pda(owner, 1)).is_some());
+    }
+    assert_eq!(ctx.queue_state_data().pending_requests, 2);
+}

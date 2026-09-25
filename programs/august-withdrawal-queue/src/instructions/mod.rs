@@ -7,6 +7,7 @@
 // governed by version 2.0 of the Apache License.
 
 pub mod cancel_withdrawal;
+pub mod expedite_request;
 pub mod finalize_withdrawal;
 pub mod initialize_queue;
 pub mod queue_admin;

@@ -42,6 +42,10 @@ pub struct InitializeQueue {
     pub associated_token_program: solana_pubkey::Pubkey,
 
     pub system_program: solana_pubkey::Pubkey,
+
+    pub event_authority: solana_pubkey::Pubkey,
+
+    pub program: solana_pubkey::Pubkey,
 }
 
 impl InitializeQueue {
@@ -58,7 +62,7 @@ impl InitializeQueue {
         args: InitializeQueueInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
-        let mut accounts = Vec::with_capacity(11 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(13 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.vault_state,
             false,
@@ -94,6 +98,14 @@ impl InitializeQueue {
         ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.system_program,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.event_authority,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.program,
             false,
         ));
         accounts.extend_from_slice(remaining_accounts);
@@ -160,6 +172,8 @@ impl InitializeQueueInstructionArgs {
 ///   8. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
 ///   9. `[optional]` associated_token_program (default to `ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL`)
 ///   10. `[optional]` system_program (default to `11111111111111111111111111111111`)
+///   11. `[]` event_authority
+///   12. `[]` program
 #[derive(Clone, Debug, Default)]
 pub struct InitializeQueueBuilder {
     vault_state: Option<solana_pubkey::Pubkey>,
@@ -173,6 +187,8 @@ pub struct InitializeQueueBuilder {
     token_program: Option<solana_pubkey::Pubkey>,
     associated_token_program: Option<solana_pubkey::Pubkey>,
     system_program: Option<solana_pubkey::Pubkey>,
+    event_authority: Option<solana_pubkey::Pubkey>,
+    program: Option<solana_pubkey::Pubkey>,
     cooldown_seconds: Option<u64>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
@@ -255,6 +271,16 @@ impl InitializeQueueBuilder {
         self
     }
     #[inline(always)]
+    pub fn event_authority(&mut self, event_authority: solana_pubkey::Pubkey) -> &mut Self {
+        self.event_authority = Some(event_authority);
+        self
+    }
+    #[inline(always)]
+    pub fn program(&mut self, program: solana_pubkey::Pubkey) -> &mut Self {
+        self.program = Some(program);
+        self
+    }
+    #[inline(always)]
     pub fn cooldown_seconds(&mut self, cooldown_seconds: u64) -> &mut Self {
         self.cooldown_seconds = Some(cooldown_seconds);
         self
@@ -294,6 +320,8 @@ impl InitializeQueueBuilder {
             system_program: self
                 .system_program
                 .unwrap_or(solana_pubkey::pubkey!("11111111111111111111111111111111")),
+            event_authority: self.event_authority.expect("event_authority is not set"),
+            program: self.program.expect("program is not set"),
         };
         let args = InitializeQueueInstructionArgs {
             cooldown_seconds: self
@@ -337,6 +365,10 @@ pub struct InitializeQueueCpiAccounts<'a, 'b> {
     pub associated_token_program: &'b solana_account_info::AccountInfo<'a>,
 
     pub system_program: &'b solana_account_info::AccountInfo<'a>,
+
+    pub event_authority: &'b solana_account_info::AccountInfo<'a>,
+
+    pub program: &'b solana_account_info::AccountInfo<'a>,
 }
 
 /// `initialize_queue` CPI instruction.
@@ -372,6 +404,10 @@ pub struct InitializeQueueCpi<'a, 'b> {
     pub associated_token_program: &'b solana_account_info::AccountInfo<'a>,
 
     pub system_program: &'b solana_account_info::AccountInfo<'a>,
+
+    pub event_authority: &'b solana_account_info::AccountInfo<'a>,
+
+    pub program: &'b solana_account_info::AccountInfo<'a>,
     /// The arguments for the instruction.
     pub __args: InitializeQueueInstructionArgs,
 }
@@ -395,6 +431,8 @@ impl<'a, 'b> InitializeQueueCpi<'a, 'b> {
             token_program: accounts.token_program,
             associated_token_program: accounts.associated_token_program,
             system_program: accounts.system_program,
+            event_authority: accounts.event_authority,
+            program: accounts.program,
             __args: args,
         }
     }
@@ -421,7 +459,7 @@ impl<'a, 'b> InitializeQueueCpi<'a, 'b> {
         signers_seeds: &[&[&[u8]]],
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
-        let mut accounts = Vec::with_capacity(11 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(13 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.vault_state.key,
             false,
@@ -460,6 +498,14 @@ impl<'a, 'b> InitializeQueueCpi<'a, 'b> {
             *self.system_program.key,
             false,
         ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.event_authority.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.program.key,
+            false,
+        ));
         remaining_accounts.iter().for_each(|remaining_account| {
             accounts.push(solana_instruction::AccountMeta {
                 pubkey: *remaining_account.0.key,
@@ -476,7 +522,7 @@ impl<'a, 'b> InitializeQueueCpi<'a, 'b> {
             accounts,
             data,
         };
-        let mut account_infos = Vec::with_capacity(12 + remaining_accounts.len());
+        let mut account_infos = Vec::with_capacity(14 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
         account_infos.push(self.vault_state.clone());
         account_infos.push(self.admin.clone());
@@ -489,6 +535,8 @@ impl<'a, 'b> InitializeQueueCpi<'a, 'b> {
         account_infos.push(self.token_program.clone());
         account_infos.push(self.associated_token_program.clone());
         account_infos.push(self.system_program.clone());
+        account_infos.push(self.event_authority.clone());
+        account_infos.push(self.program.clone());
         remaining_accounts
             .iter()
             .for_each(|remaining_account| account_infos.push(remaining_account.0.clone()));
@@ -516,6 +564,8 @@ impl<'a, 'b> InitializeQueueCpi<'a, 'b> {
 ///   8. `[]` token_program
 ///   9. `[]` associated_token_program
 ///   10. `[]` system_program
+///   11. `[]` event_authority
+///   12. `[]` program
 #[derive(Clone, Debug)]
 pub struct InitializeQueueCpiBuilder<'a, 'b> {
     instruction: Box<InitializeQueueCpiBuilderInstruction<'a, 'b>>,
@@ -536,6 +586,8 @@ impl<'a, 'b> InitializeQueueCpiBuilder<'a, 'b> {
             token_program: None,
             associated_token_program: None,
             system_program: None,
+            event_authority: None,
+            program: None,
             cooldown_seconds: None,
             __remaining_accounts: Vec::new(),
         });
@@ -633,6 +685,19 @@ impl<'a, 'b> InitializeQueueCpiBuilder<'a, 'b> {
         self
     }
     #[inline(always)]
+    pub fn event_authority(
+        &mut self,
+        event_authority: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.event_authority = Some(event_authority);
+        self
+    }
+    #[inline(always)]
+    pub fn program(&mut self, program: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
+        self.instruction.program = Some(program);
+        self
+    }
+    #[inline(always)]
     pub fn cooldown_seconds(&mut self, cooldown_seconds: u64) -> &mut Self {
         self.instruction.cooldown_seconds = Some(cooldown_seconds);
         self
@@ -723,6 +788,13 @@ impl<'a, 'b> InitializeQueueCpiBuilder<'a, 'b> {
                 .instruction
                 .system_program
                 .expect("system_program is not set"),
+
+            event_authority: self
+                .instruction
+                .event_authority
+                .expect("event_authority is not set"),
+
+            program: self.instruction.program.expect("program is not set"),
             __args: args,
         };
         instruction.invoke_signed_with_remaining_accounts(
@@ -746,6 +818,8 @@ struct InitializeQueueCpiBuilderInstruction<'a, 'b> {
     token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
     associated_token_program: Option<&'b solana_account_info::AccountInfo<'a>>,
     system_program: Option<&'b solana_account_info::AccountInfo<'a>>,
+    event_authority: Option<&'b solana_account_info::AccountInfo<'a>>,
+    program: Option<&'b solana_account_info::AccountInfo<'a>>,
     cooldown_seconds: Option<u64>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,

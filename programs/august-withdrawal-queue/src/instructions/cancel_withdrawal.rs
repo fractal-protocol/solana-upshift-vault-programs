@@ -48,7 +48,7 @@ pub fn handler(ctx: Context<CancelWithdrawal>, expected_sequence: u64) -> Result
         ctx.accounts.share_mint.decimals,
     )?;
 
-    emit!(WithdrawalCancelled::snapshot(
+    emit_cpi!(WithdrawalCancelled::snapshot(
         &ctx.accounts.request,
         ctx.accounts.queue.vault_state,
         ctx.accounts.request.key(),
@@ -66,6 +66,7 @@ pub fn handler(ctx: Context<CancelWithdrawal>, expected_sequence: u64) -> Result
 /// own action. It must already exist. The SDK prepends the idempotent ATA
 /// create to the same transaction, so the owner pays for it exactly when it is
 /// missing.
+#[event_cpi]
 #[derive(Accounts)]
 pub struct CancelWithdrawal<'info> {
     #[account(

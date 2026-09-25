@@ -54,6 +54,12 @@ pub enum AugustWithdrawalQueueError {
     /// 6013 - Signer is neither the request's owner nor its finalizer
     #[error("Signer is neither the request's owner nor its finalizer")]
     FinalizerNotAllowed = 0x177D,
+    /// 6014 - Signer is neither the vault's admin nor its operator
+    #[error("Signer is neither the vault's admin nor its operator")]
+    NotVaultAdminOrOperator = 0x177E,
+    /// 6015 - The request is already eligible; there is nothing to expedite
+    #[error("The request is already eligible; there is nothing to expedite")]
+    RequestAlreadyEligible = 0x177F,
 }
 
 impl From<AugustWithdrawalQueueError> for solana_program_error::ProgramError {

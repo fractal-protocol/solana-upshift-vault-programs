@@ -95,7 +95,7 @@ pub fn handler(ctx: Context<FinalizeWithdrawal>, expected_sequence: u64) -> Resu
         ctx.accounts.deposit_mint.decimals,
     )?;
 
-    emit!(WithdrawalFinalized::snapshot(
+    emit_cpi!(WithdrawalFinalized::snapshot(
         &ctx.accounts.request,
         ctx.accounts.queue.vault_state,
         ctx.accounts.request.key(),
@@ -113,6 +113,7 @@ pub fn handler(ctx: Context<FinalizeWithdrawal>, expected_sequence: u64) -> Resu
 /// fee account by `fee_recipient`'s authority. Nothing is left to the caller.
 /// Everything the vault's `Redeem` declares writable, both mints included, must
 /// arrive writable here, since a CPI cannot widen an account's privileges.
+#[event_cpi]
 #[derive(Accounts)]
 pub struct FinalizeWithdrawal<'info> {
     #[account(

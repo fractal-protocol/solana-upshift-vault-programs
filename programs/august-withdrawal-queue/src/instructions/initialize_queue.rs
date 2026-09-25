@@ -37,7 +37,7 @@ pub fn handler(ctx: Context<InitializeQueue>, cooldown_seconds: u64) -> Result<(
         cooldown_seconds,
     )?;
 
-    emit!(QueueInitialized {
+    emit_cpi!(QueueInitialized {
         vault: queue.vault_state,
         queue: queue_key,
         deposit_mint: queue.deposit_mint,
@@ -62,6 +62,7 @@ pub fn handler(ctx: Context<InitializeQueue>, cooldown_seconds: u64) -> Result<(
 /// frame, and an overflow there does not fail loudly: it silently corrupts the
 /// neighbouring `AccountInfo`s, which surfaced as the deposit mint's owner
 /// reading as the System Program inside the handler.
+#[event_cpi]
 #[derive(Accounts)]
 pub struct InitializeQueue<'info> {
     /// `Account` pins the vault program as owner, so this is a genuine vault.

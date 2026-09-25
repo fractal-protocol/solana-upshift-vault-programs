@@ -6,6 +6,7 @@
 //!
 
 pub(crate) mod r#cancel_withdrawal;
+pub(crate) mod r#expedite_request;
 pub(crate) mod r#finalize_withdrawal;
 pub(crate) mod r#initialize_queue;
 pub(crate) mod r#release_vault;
@@ -14,6 +15,7 @@ pub(crate) mod r#set_cooldown;
 pub(crate) mod r#set_fulfillment_window;
 
 pub use self::r#cancel_withdrawal::*;
+pub use self::r#expedite_request::*;
 pub use self::r#finalize_withdrawal::*;
 pub use self::r#initialize_queue::*;
 pub use self::r#release_vault::*;
