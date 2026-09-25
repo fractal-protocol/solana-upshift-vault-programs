@@ -109,11 +109,10 @@ pin_error_abi! {
     FinalizerNotAllowed => 13,
     NotVaultAdminOrOperator => 14,
     RequestAlreadyEligible => 15,
-    EarlyFinalizeRestricted => 16,
-    FeeAccountIsEscrow => 17,
-    UnsupportedShareMint => 18,
-    NothingToSweep => 19,
-    InvalidSweepDestination => 20,
+    FeeAccountIsEscrow => 16,
+    UnsupportedShareMint => 17,
+    NothingToSweep => 18,
+    InvalidSweepDestination => 19,
 }
 
 #[cfg(test)]

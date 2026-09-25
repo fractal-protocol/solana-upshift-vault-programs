@@ -263,7 +263,7 @@ combine the same way.
 
 `sweep_escrow_shares` lets the admin move whatever the share escrow holds beyond
 the pending requests' shares to a share account they name (`NothingToSweep`,
-6023, when there is nothing; `InvalidSweepDestination`, 6020, for an account the
+6018, when there is nothing; `InvalidSweepDestination`, 6019, for an account the
 queue or the vault owns). Anyone can send shares to the escrow and nothing else moves them
 out, so shares sent there by mistake would otherwise be lost to their sender,
 and a single stray share would keep `close_vault`, which needs a zero supply,
