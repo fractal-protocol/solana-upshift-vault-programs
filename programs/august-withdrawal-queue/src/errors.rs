@@ -52,8 +52,6 @@ pub enum ErrorCode {
     NotVaultAdminOrOperator,
     #[msg("The request is already eligible; there is nothing to expedite")]
     RequestAlreadyEligible,
-    #[msg("The fee account is the queue's asset escrow")]
-    FeeAccountIsEscrow,
     #[msg("The share mint is freezable or carries an unsupported extension")]
     UnsupportedShareMint,
 }
@@ -107,8 +105,7 @@ pin_error_abi! {
     FinalizerNotAllowed => 13,
     NotVaultAdminOrOperator => 14,
     RequestAlreadyEligible => 15,
-    FeeAccountIsEscrow => 16,
-    UnsupportedShareMint => 17,
+    UnsupportedShareMint => 16,
 }
 
 #[cfg(test)]

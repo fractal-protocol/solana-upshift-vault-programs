@@ -203,7 +203,7 @@ The queue program's admin side exists in source: `initialize_queue` creates the
 queue PDA and its two escrow token accounts, for a classic SPL mint
 or a Token-2022 mint carrying at most the two metadata extensions
 (`UnsupportedDepositMint`, 6006, otherwise). The vault's share mint must pass the
-same extension rule and have no freeze authority (`UnsupportedShareMint`, 6017),
+same extension rule and have no freeze authority (`UnsupportedShareMint`, 6016),
 so the share escrow that makes cancel always work can never be frozen.
 `set_cooldown` (at most 30 days) and `set_fulfillment_window` configure it. The
 window is in seconds: zero disables expiry, otherwise 86,400 (one day) to
@@ -230,9 +230,7 @@ finalized, never by whom. The queue redeems the escrowed shares by CPI into
 `NotEnoughLiquidity` surface as the vault's own codes and
 leave the request pending and untouched. The payout is the asset escrow's
 balance delta, forwarded to the request's recipient, at the shares' value at
-that moment; the request then closes with its rent to the owner. The fee
-account may not be the asset escrow (`FeeAccountIsEscrow`, 6016), or a
-misconfigured fee recipient would let the fee ride the delta to the recipient.
+that moment; the request then closes with its rent to the owner.
 
 `cancel_withdrawal(expected_sequence)` returns a pending request's shares to any
 share account whose authority is the owner and closes the request with its rent

@@ -177,7 +177,7 @@ fn a_freezable_share_mint_is_refused() {
         .initialize_queue(DAY)
         .expect_err("a freezable share mint");
     assert_queue_err(&err, ErrorCode::UnsupportedShareMint);
-    assert_anchor_framework_err(&err, 6017);
+    assert_anchor_framework_err(&err, 6016);
 }
 
 /// Frozen-by-default accounts alter no transfer, yet they would create frozen
