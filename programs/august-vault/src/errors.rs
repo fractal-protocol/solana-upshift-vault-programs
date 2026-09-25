@@ -72,8 +72,8 @@ pub enum ErrorCode {
     WithdrawalQueueRequired,
     #[msg("Queue must be this vault's initialized, queue-program-owned withdrawal-queue PDA")]
     InvalidWithdrawalQueueAuthority,
-    // Named for what the vault checks, a signature, not for the drain rule it
-    // stands in for: the queue reports an undrained queue itself, from
+    // Named for what the vault checks, a signature, not for the release rule it
+    // stands in for: the queue reports a refused release itself, from
     // `release_vault`, before it ever reaches the vault. Do not name a specific
     // queue instruction in the message: error strings ship in the bytecode and
     // can be corrected only by a program upgrade.

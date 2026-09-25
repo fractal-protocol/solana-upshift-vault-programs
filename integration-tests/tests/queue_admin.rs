@@ -159,6 +159,26 @@ fn a_metadata_pointer_mint_is_supported() {
         .expect("a mint carrying only MetadataPointer passes the allow-list");
 }
 
+/// `cancel_withdrawal` works in every state only because `escrow_shares`
+/// cannot be frozen. The vault never gives its share mint a freeze authority;
+/// one planted here stands in for a vault that someday did.
+#[test]
+fn a_freezable_share_mint_is_refused() {
+    let mut ctx = VaultCtx::fresh();
+    let mut account = ctx.svm.get_account(&ctx.share_mint).expect("share mint");
+    let mut mint = spl_token::state::Mint::unpack(&account.data).expect("mint");
+    mint.freeze_authority = Some(Pubkey::new_unique()).into();
+    spl_token::state::Mint::pack(mint, &mut account.data).expect("pack");
+    let share_mint = ctx.share_mint;
+    ctx.svm.set_account(share_mint, account).expect("plant");
+
+    let err = ctx
+        .initialize_queue(DAY)
+        .expect_err("a freezable share mint");
+    assert_queue_err(&err, ErrorCode::UnsupportedShareMint);
+    assert_anchor_framework_err(&err, 6016);
+}
+
 /// Frozen-by-default accounts alter no transfer, yet they would create frozen
 /// escrows and fail every finalization until a freeze authority acted. The
 /// allow-list refuses it without having to know that.

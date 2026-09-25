@@ -22,8 +22,8 @@ pub enum AugustWithdrawalQueueError {
     /// 6003 - Cooldown exceeds the 30-day maximum
     #[error("Cooldown exceeds the 30-day maximum")]
     CooldownOutOfBounds = 0x1773,
-    /// 6004 - Fulfillment window exceeds the 90-day maximum
-    #[error("Fulfillment window exceeds the 90-day maximum")]
+    /// 6004 - Fulfillment window must be zero or between one and 90 days
+    #[error("Fulfillment window must be zero or between one and 90 days")]
     FulfillmentWindowOutOfBounds = 0x1774,
     /// 6005 - The vault's withdrawal_queue_authority does not point at this queue
     #[error("The vault's withdrawal_queue_authority does not point at this queue")]
@@ -60,6 +60,9 @@ pub enum AugustWithdrawalQueueError {
     /// 6015 - The request is already eligible; there is nothing to expedite
     #[error("The request is already eligible; there is nothing to expedite")]
     RequestAlreadyEligible = 0x177F,
+    /// 6016 - The share mint is freezable or carries an unsupported extension
+    #[error("The share mint is freezable or carries an unsupported extension")]
+    UnsupportedShareMint = 0x1780,
 }
 
 impl From<AugustWithdrawalQueueError> for solana_program_error::ProgramError {

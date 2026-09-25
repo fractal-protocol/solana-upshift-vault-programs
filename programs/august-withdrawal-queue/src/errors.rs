@@ -26,7 +26,7 @@ pub enum ErrorCode {
     VaultMismatch,
     #[msg("Cooldown exceeds the 30-day maximum")]
     CooldownOutOfBounds,
-    #[msg("Fulfillment window exceeds the 90-day maximum")]
+    #[msg("Fulfillment window must be zero or between one and 90 days")]
     FulfillmentWindowOutOfBounds,
     #[msg("The vault's withdrawal_queue_authority does not point at this queue")]
     QueueNotActiveOnVault,
@@ -52,6 +52,8 @@ pub enum ErrorCode {
     NotVaultAdminOrOperator,
     #[msg("The request is already eligible; there is nothing to expedite")]
     RequestAlreadyEligible,
+    #[msg("The share mint is freezable or carries an unsupported extension")]
+    UnsupportedShareMint,
 }
 
 /// Compile-time pin of the ABI above, generated from one list so completeness
@@ -103,6 +105,7 @@ pin_error_abi! {
     FinalizerNotAllowed => 13,
     NotVaultAdminOrOperator => 14,
     RequestAlreadyEligible => 15,
+    UnsupportedShareMint => 16,
 }
 
 #[cfg(test)]

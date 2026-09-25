@@ -136,7 +136,8 @@ fn release_works_while_paused() {
 
 /// Nothing is priced, so not even a vault holding no assets, whose shares the
 /// vault refuses to price, keeps a release from going through with a request
-/// pending; the request can still be cancelled afterwards.
+/// pending; the request can still be cancelled afterwards, so `close_vault` is
+/// not pinned behind it.
 #[test]
 fn a_vault_with_no_assets_releases_with_a_request_pending() {
     let mut ctx = attached_vault_with_holder();
@@ -146,6 +147,7 @@ fn a_vault_with_no_assets_releases_with_a_request_pending() {
     vault.local_aum = 0;
     vault.deployed_aum = 0;
     ctx.force_overwrite_vault_state(vault);
+    assert!(ctx.share_mint_supply() > 0);
 
     let meta = ctx.release_vault().expect("released with nothing held");
     assert_eq!(ctx.vault_state_data().withdrawal_queue(), None);

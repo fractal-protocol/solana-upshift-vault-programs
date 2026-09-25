@@ -202,9 +202,12 @@ Attach emits `WithdrawalQueueAttached { vault, queue }` and detach emits
 The queue program's admin side exists in source: `initialize_queue` creates the
 queue PDA and its two escrow token accounts, for a classic SPL mint
 or a Token-2022 mint carrying at most the two metadata extensions
-(`UnsupportedDepositMint`, 6006, otherwise); `set_cooldown` (at most 30 days)
-and `set_fulfillment_window` (zero disables expiry, else at most 90 days)
-configure it. Attaching it on the vault is what makes it live.
+(`UnsupportedDepositMint`, 6006, otherwise). The vault's share mint must pass the
+same extension rule and have no freeze authority (`UnsupportedShareMint`, 6016),
+so the share escrow that makes cancel always work can never be frozen.
+`set_cooldown` (at most 30 days) and `set_fulfillment_window` (zero disables
+expiry, else at most 90 days) configure it. Attaching it on the vault is what
+makes it live.
 
 Holders use `request_withdrawal(request_id, shares, finalizer)`:
 their shares move to the queue's escrow and a request account is created at
