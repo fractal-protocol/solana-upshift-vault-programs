@@ -126,7 +126,7 @@ fn nothing_to_sweep_is_refused() {
         .sweep_escrow_shares(destination)
         .expect_err("an empty escrow");
     assert_queue_err(&err, ErrorCode::NothingToSweep);
-    assert_anchor_framework_err(&err, 6018);
+    assert_anchor_framework_err(&err, 6017);
 
     ctx.request_withdrawal(1, quarter).expect("request");
     let err = ctx
@@ -148,7 +148,7 @@ fn the_destination_must_be_a_share_account_neither_program_owns() {
         .sweep_escrow_shares(escrow)
         .expect_err("the escrow itself");
     assert_queue_err(&err, ErrorCode::InvalidSweepDestination);
-    assert_anchor_framework_err(&err, 6019);
+    assert_anchor_framework_err(&err, 6018);
 
     let (queue, share_mint) = (ctx.withdrawal_queue_pda(), ctx.share_mint);
     let queue_owned = ctx.create_token_account_for(&queue, &share_mint);
