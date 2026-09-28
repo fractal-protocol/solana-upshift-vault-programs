@@ -40,7 +40,7 @@ use instructions::request_withdrawal::*;
 
 use anchor_lang::prelude::*;
 
-declare_id!("NmJ9CGaiPJSfAGSdhNeVDkMPGi7ZQMABYYwWUC4GHyf");
+declare_id!("upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW");
 
 // On-chain security contact + source provenance, queryable from the deployed
 // program. Gated out of CPI/library builds via `no-entrypoint`, so it ships only
