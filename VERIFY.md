@@ -8,8 +8,8 @@ in CI. Two programs are pinned today: `august_vault`, live on mainnet and devnet
 and `august_withdrawal_queue`, which is built and pinned but not yet deployed
 anywhere.
 
-> **Verification is point-in-time.** The program is **upgradeable** — the upgrade
-> authority can replace the bytecode. A matching hash proves the deployed code
+> **Verification is point-in-time.** Both programs are **upgradeable** — the
+> upgrade authority can replace the bytecode. A matching hash proves the deployed code
 > **at the moment you fetch it**, not forever; re-fetch the live on-chain hash
 > whenever you need fresh assurance.
 
@@ -68,53 +68,53 @@ program cannot be added without a row.
 ## Compare against the on-chain program
 
 ```bash
+# solana-verify needs a full RPC URL; `-u mainnet-beta` fails with AccountNotFound.
 solana-verify get-program-hash -u https://api.mainnet-beta.solana.com \
-  up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt
+  up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt   # august_vault
+solana-verify get-program-hash -u https://api.mainnet-beta.solana.com \
+  upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW   # august_withdrawal_queue
 ```
 
 ## Current on-chain status
 
-The mainnet program `up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt` **is** running a
-reproducibly-built binary. Its on-chain executable hash is
+Checked 27 Sep 2026.
 
-```
-fca11d73ae5ba0635ee76964945c52ddcf78a167eb4c60317ae63df4a4e7cc1d   (505,216 B)
-```
+| Program | Mainnet | Executable hash | Release |
+|---|---|---|---|
+| `august_vault` | `up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt` | `cb1352a5dc4ab9513c10c1083534837bb4c666ed8ad9c3919f02f752bff52df9` (605,160 B) | [`v0.1.1`](https://github.com/fractal-protocol/solana-upshift-vault-programs/releases/tag/v0.1.1), deployed 6 Aug 2026 |
+| `august_withdrawal_queue` | `upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW` | not deployed | — |
 
-i.e. the program as it stood prior to the `ProgramConfig` gate and the
-share-price offset retune. That is what `get-program-hash` returns today.
+The vault's hash is OtterSec-verified
+([status](https://verify.osec.io/status/up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt)).
+The `up12…` program on devnet runs the same `cb1352a5…` build.
 
-**`verified-hashes.txt` does not contain it.** That file holds one record per
-program, each describing the *current source tree*, because the
-`reproducible-build` CI job rebuilds from source and asserts every line matches —
-so an older record would fail the build by construction. While an upgrade is in
-flight the two therefore disagree on purpose:
-
-| Hash | Where it is recorded | What it describes |
-|---|---|---|
-| `fca11d73…` (505,216 B) | the block above, in this file | what is deployed on mainnet right now |
-| `cb1352a5…` (605,160 B) | `verified-hashes.txt` | this source tree — matches on-chain only after [the upgrade runbook](docs/UPGRADE.md) has been executed |
-
-So verifying the **deployed** program means comparing `get-program-hash` against
-the block above, not against `verified-hashes.txt`. Verifying **this source
-tree** is what the CI job does. After the upgrade ships, replace the block above
-with the newly deployed hash so the two agree again.
+**`verified-hashes.txt` describes this source tree, not the deployed programs.**
+The `reproducible-build` CI job rebuilds from source and asserts every row, so an
+older record cannot live there. The rows now carry the vault with the withdrawal
+queue gate and operator subaccounts, and the queue program itself; neither is on
+chain until the [release runbook](docs/UPGRADE.md) runs. Until then, check the
+deployed vault against the table above, and this tree against
+`verified-hashes.txt`. After each deployment, update the table so the two agree
+again.
 
 ## On-chain verification
 
-Verification is registered through the OtterSec verified-programs flow: the
-program's upgrade authority (a Fordefi MPC key) uploads an on-chain verification
-PDA, then an OtterSec remote job confirms the on-chain hash matches this source.
+Verification is registered through the OtterSec verified-programs flow, once per
+program: the program's upgrade authority (the same Fordefi MPC key for both)
+uploads an on-chain verification PDA, then an OtterSec remote job confirms the
+on-chain hash matches this source.
 **Creating the PDA alone is not sufficient** — the remote job must complete
 successfully before Solana Explorer, SolanaFM, and Solscan display the program
 as verified.
 
 ## Notes
 
-- The `reproducible-build` CI job (`.github/workflows/ci.yml`) rebuilds
-  `august_vault` in the pinned image and fails unless the executable hash, raw
+- The `reproducible-build` CI job (`.github/workflows/ci.yml`) rebuilds every
+  program in the pinned image and fails unless the executable hash, raw
   SHA-256, and size all match `verified-hashes.txt`; an intentional bytecode
-  change must update that file in the same PR.
+  change must update that file in the same PR. The release workflow
+  (`.github/workflows/release.yml`) rebuilds each row on its own runner, asserts
+  the same three columns, and attests and publishes every `.so` in one release.
 - **Line numbers are part of the bytecode; doc comments are not.** Anchor's
   `require!` / `err!` macros capture `file!()` and `line!()` at each error site,
   so the source path and the line number of every check are compiled into
@@ -137,6 +137,8 @@ as verified.
   *is* in the bytecode besides line numbers: `#[msg("…")]` error strings,
   instruction and account names, and `security_txt!`. Editing an error message is
   a real bytecode change and requires re-recording `verified-hashes.txt`.
-- `security_txt!` is embedded in the program (`programs/august-vault/src/lib.rs`),
+- `security_txt!` is embedded in both programs (`programs/*/src/lib.rs`),
   exposing the security contact and source repository in the deployed bytecode.
-- Devnet program: `C8B1EpsSGVWK2vMrk3aDT3kL7RCE77otokUh4EC35kK7`.
+- Devnet: `up12…` is the current devnet vault. `C8B1EpsSGVWK2vMrk3aDT3kL7RCE77otokUh4EC35kK7`
+  is an older, non-reproducible devnet deployment, kept only because
+  `Anchor.toml` still names it.

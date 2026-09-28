@@ -1,70 +1,120 @@
-# Verified Upgrade Runbook (P4)
+# Release Runbook
 
-How to upgrade the deployed `august_vault` program to a **reproducibly-built,
-attested** binary and register it as **verified** on-chain (OtterSec →
-explorers).
+How to ship a release of this repository's two programs: build and attest both,
+upgrade `august_vault`, deploy `august_withdrawal_queue` for the first time,
+register both as **verified** (OtterSec → explorers), and turn the queue on per
+vault.
 
-The live mainnet program is **already** running a reproducible build
-(`fca11d73…`, the release recorded in `verified-hashes.txt` before this one — see
-[VERIFY.md](../VERIFY.md)). This runbook therefore moves it from one verified
-build to the next: the `ProgramConfig` gate on vault creation, the share-price
-offset retune, and the two slippage-bounded instructions `deposit_checked` and
-`redeem_checked`.
+The release this runbook targets moves the vault from `v0.1.1` (`cb1352a5…`, live
+since 6 Aug 2026) to a build that adds the withdrawal-queue gate and operator
+subaccounts, and brings the queue program up at its fixed id. The `v0.1.1`
+ceremony is recorded under [Previous releases](#previous-releases).
 
 > **This changes live mainnet bytecode over real user funds.** Do not deviate
-> from this runbook. **Three** transactions must be signed by the program's
-> **Fordefi MPC upgrade authority** — the `Upgrade` in Step 2, the verify-PDA
-> upload in Step 3, and `initialize_config` in Step 4 — so book three approval
-> ceremonies. Everything else is unprivileged prep. Verification is
-> **point-in-time** (the program stays upgradeable).
+> from this runbook. **Three** transactions must be signed by the **Fordefi MPC
+> upgrade authority**: the vault `Upgrade` (Step 4) and one verify-PDA upload per
+> program (Step 5). Book three approval ceremonies, plus one per vault in Step 6
+> if the vault admin is a Fordefi key too. Everything else is unprivileged prep.
+> Verification is **point-in-time** (both programs stay upgradeable).
 
 ## Key facts
 
-| | Mainnet | Devnet |
+| | `august_vault` | `august_withdrawal_queue` |
 | --- | --- | --- |
-| Program ID | `up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt` | `C8B1EpsSGVWK2vMrk3aDT3kL7RCE77otokUh4EC35kK7` |
-| Upgrade authority | `B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM` (Fordefi MPC) | `APuzErEVGAbvhyj2hbmo6vp7pacNHRVXbu43UhcAne2i` |
-| ProgramData account size (at writing) | 507,781 B | verify with `solana account <programData>` |
+| Program ID (mainnet and devnet) | `up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt` | `upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW` |
+| Mainnet upgrade authority | `B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM` (Fordefi MPC) | same, after Step 3's handoff |
+| Devnet upgrade authority | `APuzErEVGAbvhyj2hbmo6vp7pacNHRVXbu43UhcAne2i` (team-held keypair) | same |
+| Deployed now | `cb1352a5…`, `Data Length` 605,160 B on both clusters (27 Sep 2026) | not deployed on any cluster |
+| Library name | `august_vault` | `august_withdrawal_queue` |
 
-- **Expected reproducible hash** (mainnet build, committed source): the
-  `exec_sha256` / `raw_sha256` / `size` in [`verified-hashes.txt`](../verified-hashes.txt)
-  (currently `cb1352a5…`, 605,160 B), built with `solana-verify` 0.5.1 in
-  `solanafoundation/solana-verifiable-build@sha256:695f890e…` (Solana 2.3.0).
-- **ProgramData must be extended first:** the new `.so` (605,160 B) is larger
-  than the current allocation, so `solana program extend` is required or the
-  upgrade fails. Deficit = `605,160 + 45 (loader header) − 507,781 = 97,424` bytes
-  (re-derive if the sizes change).
-- **Bootstrap the program config after upgrading:** vault creation is gated on a
-  `ProgramConfig` authority that does not exist yet. Until `initialize_config` is
-  run — by the upgrade authority, so a Fordefi-signed transaction on mainnet —
-  `initialize` fails closed and no new vault can be created. Existing vaults are
-  unaffected. See [Step 4](#step-4--bootstrap-the-program-config).
+- **Expected hashes:** the `exec_sha256` / `raw_sha256` / `size` rows in
+  [`verified-hashes.txt`](../verified-hashes.txt), built with `solana-verify`
+  0.5.1 in `solanafoundation/solana-verifiable-build@sha256:695f890e…`
+  (Solana 2.3.0). The release asserts both.
+- **The vault binary hardcodes the queue's id** (`WITHDRAWAL_QUEUE_PROGRAM_ID`
+  in `programs/august-vault/src/state/vault.rs`), and `attach_withdrawal_queue`
+  accepts only a queue PDA owned by that program. So the queue must exist at
+  `upQhC7…` under the Fordefi authority **before** the vault upgrade. That is why
+  Step 3 comes before Step 4.
+- **Vault ProgramData must be extended first.** The new vault `.so` is larger
+  than the current allocation. With `Data Length` from `solana program show`,
+  `additional_bytes = <new .so size> − <Data Length>`; for the current pins,
+  687,352 − 605,160 = 82,192. Re-derive when the pin changes.
+- **Devnet runs the same ids**, so the released mainnet artifacts deploy to
+  devnet unchanged and the rehearsal (Step 2) exercises the exact bytes. The
+  older `C8B1Eps…` devnet program is not part of this release.
+
+## Program keypair custody
+
+A program keypair is needed once per cluster, to create the program account at
+its address. After that it has no authority over the program; the upgrade
+authority does. **Before a program is first deployed on a cluster, though, whoever
+holds its keypair can claim that address under an upgrade authority of their
+choosing.** For the queue on mainnet that is the live risk until Step 3 is done:
+the upgraded vault trusts whatever program sits at `upQhC7…`.
+
+| Key | Address | Used for | Custody |
+| --- | --- | --- | --- |
+| Vault program keypair | `up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt` | Creating `up12…` on a new cluster. Mainnet and devnet are done | Ops laptop, `~/.config/solana/programs/august_vault-keypair-mainnet-up12byto.json` (mode 600). **Owner and offline backup: TBD** |
+| Queue program keypair | `upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW` | First deployment on devnet (Step 2) and mainnet (Step 3) | Ops laptop, `~/.config/solana/programs/august_withdrawal_queue-keypair-mainnet-upQhC7mg.json` (mode 600). Generated 28 Sep 2026, replacing an earlier id whose keypair was lost before any deployment. **Owner and offline backup: TBD** |
+| Upgrade authority (mainnet) | `B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM` | Upgrades, verify PDAs, `ProgramConfig` | Fordefi MPC |
+| Upgrade authority (devnet) | `APuzErEVGAbvhyj2hbmo6vp7pacNHRVXbu43UhcAne2i` | Devnet upgrades and deploys | Team-held keypair |
+
+Rules for both program keypairs:
+
+- Keep them outside any build directory: `cargo clean` or `anchor clean` deletes
+  `target/` and every key in it. Never commit them, and keep at least two
+  offline copies. Losing the queue keypair before Step 3 means a new id, a vault
+  rebuild and a re-pin.
+- Check the key before every use: `solana-keygen pubkey <file>` must print the
+  address in the table.
+- **`target/deploy/*-keypair.json` in this repository is not either key.**
+  `anchor build` writes a random keypair there when none exists, and CI does the
+  same for localnet. Never run `anchor deploy` or `anchor keys sync` against
+  mainnet or devnet: both use that file and would deploy to, or rewrite
+  `declare_id!` with, a throwaway address.
 
 ## Prerequisites
 
-- `solana-verify` 0.5.1 + Docker (for the reproducible build).
-- Solana CLI.
-- **`anchor build` run once in the checkout**, and `pnpm install`. Step 4's
-  script encodes its instruction from `target/idl/august_vault.json`, which
-  `solana-verify build` does *not* emit — without it both Step 4 commands abort.
-  The IDL is only used locally to encode the instruction; the bytecode being
-  deployed still comes from the verifiable build.
-- A **funded ops fee-payer** keypair (a few SOL) — pays for `extend` /
-  `write-buffer`. This is NOT the upgrade authority.
-- Fordefi access to the upgrade authority key, able to sign a
-  `BPFLoaderUpgradeable::Upgrade` instruction and two arbitrary transactions
-  (the verify-PDA upload in Step 3 and `initialize_config` in Step 4).
-- **Step 4's cost is paid by the ops fee-payer**, not the Fordefi key. Pass
-  `--payer <ops-keypair.json>`: `initialize_config` takes `payer` as a `Signer`
-  separate from `upgrade_authority`, so the ops key covers the `ProgramConfig`
-  rent (169 bytes, 0.00207 SOL) plus the fee and signs locally, leaving only the
-  authority's signature for Fordefi. The script verifies the payer's balance
-  before writing the file and refuses if it is short — otherwise the approvals
-  get collected and the submission then fails for insufficient lamports. If you
-  omit `--payer` the Fordefi key pays instead and must itself hold SOL; the same
-  balance check applies.
+- `solana-verify` 0.5.1 + Docker (to reproduce the build).
+- Solana CLI **2.x**, the version `ci.yml` pins as `SOLANA_VERSION`. Agave 3.x
+  and later break the permissionless `extend` in Step 4 (see the note there), and
+  newer CLIs also refuse a bare `solana program show` with `No default signer
+  found`. Put 2.x on PATH and check before starting:
+  `sh -c "$(curl -sSfL https://release.anza.xyz/v2.1.14/install)"`, then
+  `solana --version`.
+- A **funded ops fee-payer** keypair (about 10 SOL at the current sizes). It is
+  NOT the upgrade authority. It pays the queue's ProgramData rent (2.34 SOL,
+  `solana rent 461013`) plus an equal buffer that the deploy refunds, the vault
+  `extend` (0.42 SOL), and the vault buffer (3.49 SOL, refunded to the spill
+  account by the `Upgrade`).
+- The queue program keypair, checked as above.
+- Fordefi access to the upgrade authority, able to sign a
+  `BPFLoaderUpgradeable::Upgrade` instruction and two arbitrary transactions.
+  Use a **durable nonce** for each: a recent blockhash expires in 60 to 90 s,
+  well inside a Fordefi review, and the submission then fails with `Blockhash
+  not found` after the approvals were collected. The nonce authority must be the
+  signer, since `AdvanceNonceAccount` is signed by it. The `v0.1.1` ceremony's
+  nonce account `3fp7jaxa2wqLPR5CfBeo9n1cKWfUV8JoVCwLDXJVcrTj` (authority
+  `B75DMr…`) is reusable; one per concurrent transaction is needed, so create
+  more as:
+
+  ```bash
+  solana-keygen new -o nonce.json
+  solana create-nonce-account nonce.json 0.0015 \
+    --nonce-authority B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM \
+    -u mainnet-beta -k <ops-payer.json>
+  ```
+
+  `solana-verify export-pda-tx` has no nonce option, so Step 5's transactions
+  carry a recent blockhash. Rebuild each on the nonce before submitting it to
+  Fordefi: prepend `AdvanceNonceAccount` and use the nonce value as the
+  blockhash.
+- `anchor build` run once in the checkout, and `pnpm install`, if you encode
+  Step 6's instructions with the generated clients. The deployed bytecode still
+  comes from the release artifacts.
 - The repository protections below provisioned. (The workflow fails closed
-  without the machine-enforced ones — `release` env reviewers, immutable
+  without the machine-enforced ones: `release` env reviewers, immutable
   releases, and the admin-read token; the `v*` tag ruleset is human-audited.)
 
 ## Repository protections (one-time setup)
@@ -103,21 +153,53 @@ read these settings.)
 
 ---
 
-## Step 0 — Cut an attested release
+## Step 0 — Dry-run tag
 
-Tag a commit on the default branch; `release.yml` builds it reproducibly,
-asserts `verified-hashes.txt`, attests provenance, and publishes the `.so`.
+Tag a commit on the default branch with a prerelease suffix. `release.yml` runs
+exactly as for a real release: one build job per program, each asserting its
+`verified-hashes.txt` row, then one attested **prerelease** carrying both.
 
 ```bash
+TAG=v0.2.0-rc.1
 git checkout <commit-on-default-branch>
-git tag v0.1.1 && git push origin v0.1.1     # v* tags are admin-only per the tag ruleset
-#   (v0.1.1, not v0.1.0: the first attempt never published — see the note below)
+git tag "$TAG" && git push origin "$TAG"      # v* tags are admin-only per the tag ruleset
+```
+
+Check that the prerelease has four assets (`<program>_$TAG.so` and
+`<program>_$TAG.hashes.txt` for each program) and that each `.so` matches its
+row and carries an attestation:
+
+```bash
+gh release download "$TAG" --dir "rel-$TAG"
+for pkg in august_vault august_withdrawal_queue; do
+  solana-verify get-executable-hash "rel-$TAG/${pkg}_$TAG.so"   # == exec_sha256
+  shasum -a 256 "rel-$TAG/${pkg}_$TAG.so"                       # == raw_sha256
+  gh attestation verify "rel-$TAG/${pkg}_$TAG.so" \
+    --repo fractal-protocol/solana-upshift-vault-programs
+done
+```
+
+The release is immutable, so a failed dry run needs a new suffix (`-rc.2`), not
+a re-run: a tag-triggered run always uses the workflow file as of the tagged
+commit.
+
+**Tag a commit whose `ci.yml` push run executed `Reproducible Build`.** A
+docs-only commit skips that job, and the guard refuses anything but `success`.
+Updating VERIFY.md after a deployment produces exactly such commits, so tag the
+last code commit instead: releasing one behind the tip is supported.
+
+## Step 1 — Cut the release
+
+Same as Step 0 with the final tag on the same commit:
+
+```bash
+TAG=v0.2.0
+git tag "$TAG" <same-commit> && git push origin "$TAG"
 ```
 
 Releasing a commit that is **behind** the default branch is supported (the guard
 accepts `identical|behind`), and is the right choice when the tip has since
-gained commits that do not change the program — the release then names the exact
-commit the audit and the frontend's `EXPECTED_BUILD` refer to.
+gained commits that do not change the programs.
 
 > **Do not add `--target` to `gh release create`.** If the tagged commit's
 > `.github/workflows/` differs from the default branch's — which any workflow
@@ -125,462 +207,350 @@ commit the audit and the frontend's `EXPECTED_BUILD` refer to.
 > scope. That is not a valid `permissions:` key and `GITHUB_TOKEN` can never hold
 > it, so publishing fails with `403 Resource not accessible by integration`,
 > naming a permission rather than its cause. This sank the first `v0.1.0`
-> attempt. Note the tag itself is unaffected — only the release object fails, so
-> the fix requires a NEW tag on a commit carrying the corrected workflow (a
-> tag-triggered run always uses the workflow file as of the tagged commit).
+> attempt.
 
-Download the released `august_vault_v0.1.1.so`, and confirm it matches:
-
-```bash
-solana-verify get-executable-hash august_vault_v0.1.1.so   # == verified-hashes.txt exec_sha256
-sha256sum august_vault_v0.1.1.so                            # == raw_sha256
-```
-
-Also confirm the GitHub **build attestation** exists for the asset
-(`…/attestations`). Everything below deploys THIS artifact.
+Download both `.so` files and repeat the Step 0 checks. Everything below deploys
+THESE artifacts.
 
 ---
 
-## Step 1 — Devnet dry-run (rehearse everything)
+## Step 2 — Devnet rehearsal
 
-> `declare_id!` is baked into the bytecode, so the **devnet** artifact must
-> declare the devnet program ID. Build a devnet-targeted `.so` (this hashes
-> differently from mainnet's `cb1352a5…` — expected; the dry-run validates
-> mechanics + state compatibility, not the mainnet bytes):
-
-```bash
-# On a scratch checkout of the release commit:
-sed -i 's/declare_id!("up12byto[^"]*")/declare_id!("C8B1EpsSGVWK2vMrk3aDT3kL7RCE77otokUh4EC35kK7")/' \
-  programs/august-vault/src/lib.rs
-solana-verify build --library-name august_vault \
-  --base-image solanafoundation/solana-verifiable-build@sha256:695f890e620db8c39afe5112e048599f8ee395a0cab5a2e572f30a72c6366cb4
-```
-
-Then upgrade the **devnet** program (`C8B1Eps…`). Its upgrade authority
-(`APuzEr…`) is a **regular keypair the team holds — NOT a Fordefi MPC** — so
-sign the devnet upgrade **directly with the CLI**. (This is the one place the
-dry-run differs from mainnet: on mainnet the authority is Fordefi and the buffer
-is handed off to it; on devnet the same held keypair can buffer + deploy in one
-step.)
+Both ids are the same on devnet and `declare_id!` matches, so rehearse with the
+release artifacts themselves. The devnet authority is a team-held keypair, so
+every step signs directly with the CLI.
 
 ```bash
-DEVNET_SO=target/deploy/august_vault.so   # the devnet-ID build from above
+URL=https://api.devnet.solana.com
+DEV=<devnet-authority-keypair.json>        # APuzEr…
 
-# Extend ProgramData first if the new .so is larger than the current allocation.
-solana program show C8B1EpsSGVWK2vMrk3aDT3kL7RCE77otokUh4EC35kK7 -u devnet   # inspect ProgramData len
-# solana program extend C8B1Eps… <deficit_bytes> -u devnet -k <devnet-authority.json>   # if needed
-#   NOTE: on Agave 3.x this must be signed by the program's UPGRADE AUTHORITY, not
-#   the ops payer — see the mainnet note in Step 2. On devnet the team holds that
-#   key, so it is only a question of which -k to pass.
+# Queue: first deployment, straight under the devnet authority.
+solana-keygen pubkey <queue-program-keypair.json>   # must print upQhC7…
+solana program deploy "rel-$TAG/august_withdrawal_queue_$TAG.so" \
+  --program-id <queue-program-keypair.json> \
+  --upgrade-authority "$DEV" -u "$URL" -k "$DEV"
 
-# Upgrade, signed directly by the devnet authority keypair (writes buffer + deploys):
-solana program deploy "$DEVNET_SO" \
-  --program-id C8B1EpsSGVWK2vMrk3aDT3kL7RCE77otokUh4EC35kK7 \
-  --upgrade-authority <devnet-authority-keypair.json> \
-  -u devnet
+# Vault: extend, then upgrade. On devnet the authority signs the extend itself,
+# so the Agave 3.x restriction in Step 4 does not matter here.
+solana program show up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt -u "$URL"   # Data Length
+solana program extend up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt <additional_bytes> -u "$URL" -k "$DEV"
+solana program deploy "rel-$TAG/august_vault_$TAG.so" \
+  --program-id up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt \
+  --upgrade-authority "$DEV" -u "$URL" -k "$DEV"
+
+solana-verify get-program-hash -u "$URL" upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW   # == queue row
+solana-verify get-program-hash -u "$URL" up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt   # == vault row
 ```
 
-Afterwards:
-
-- Refresh the fork-test fixtures for a devnet vault and run
-  `cargo test --manifest-path integration-tests/Cargo.toml --test mainnet_fork_compat`,
-  **or** interact with a devnet vault (deposit/redeem/operator) and confirm
-  correct behavior.
-- Confirm `solana-verify get-program-hash -u https://api.devnet.solana.com C8B1Eps…`
-  equals the devnet build's hash. (`solana-verify` rejects cluster monikers — see
-  the note in Step 2.)
-
-Only proceed to mainnet once the devnet rehearsal is clean.
+Then run Step 6 on one devnet vault and walk a request through: request,
+expedite, finalize, a second request cancelled, `release_vault`, re-attach. Also
+confirm that an existing devnet vault with no queue still deposits and redeems
+as before. Only proceed to mainnet once the rehearsal is clean.
 
 ---
 
-## Step 2 — Mainnet verified upgrade
+## Step 3 — Mainnet: deploy the queue program
+
+No Fordefi signature: the ops payer deploys, then hands the upgrade authority to
+Fordefi at once. Until the handoff lands, the ops key can replace the queue's
+bytecode; that is harmless only because no vault trusts `upQhC7…` yet (the vault
+upgrade is Step 4). So run the two commands back to back and check the result
+before going on.
+
+(Deploying straight under the Fordefi key would need Fordefi to co-sign the
+loader's `DeployWithMaxDataLen` together with the program keypair, a
+multi-signer transaction for no gain in safety over the checked handoff.)
+
+```bash
+URL=https://api.mainnet-beta.solana.com
+OPS=<ops-payer.json>
+
+# Pre-flight
+solana-keygen pubkey <queue-program-keypair.json>        # must print upQhC7…
+solana account upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW -u "$URL"
+#   must fail with AccountNotFound. If it exists, STOP. Anyone can send lamports
+#   to the address, which blocks the deploy without claiming the id; if it is
+#   instead a program, someone else deployed at this id, and the vault must not
+#   be upgraded to trust it. Either way the id needs a decision before going on.
+solana-verify get-executable-hash "rel-$TAG/august_withdrawal_queue_$TAG.so"   # == queue row
+
+# Deploy (writes a buffer, then deploys from it; the buffer's rent is refunded).
+# ProgramData is sized to this binary, so a larger fix later needs an extend;
+# add --max-len <bytes> here to buy headroom at 6,960 lamports a byte.
+solana program deploy "rel-$TAG/august_withdrawal_queue_$TAG.so" \
+  --program-id <queue-program-keypair.json> \
+  --upgrade-authority "$OPS" -u "$URL" -k "$OPS"
+
+# Hand the upgrade authority to Fordefi. The skip flag is required because
+# Fordefi cannot co-sign here; the read-back below is the check it skips.
+solana program set-upgrade-authority upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW \
+  --new-upgrade-authority B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM \
+  --skip-new-upgrade-authority-signer-check \
+  -u "$URL" -k "$OPS"
+
+# Read back. Do not continue unless both hold.
+solana program show upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW -u "$URL"
+#   Authority: B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM
+solana-verify get-program-hash -u "$URL" upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW
+#   == verified-hashes.txt exec_sha256 for august_withdrawal_queue
+```
+
+Never `solana program close` the queue. Closing a program retires its address
+for good, and the vault hardcodes this one.
+
+---
+
+## Step 4 — Mainnet: upgrade the vault (Fordefi-signed)
 
 **Pre-flight (abort on any mismatch):**
 
 ```bash
-# 1. Confirm the upgrade authority is still the expected Fordefi key.
-solana program show up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt -u mainnet-beta
+# 1. The upgrade authority is still the Fordefi key.
+solana program show up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt -u "$URL"
 #    Authority must be B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM
 
-# 2. Re-run the mainnet-fork layout guard against fresh fixtures (refresh them
-#    first per integration-tests/tests/mainnet_fork_compat.rs), and full CI green.
+# 2. Step 3 is done: upQhC7… exists under B75DMr… with the pinned hash.
 
-# 3. Confirm the release .so is the verified artifact.
-solana-verify get-executable-hash august_vault_v0.1.1.so   # == verified-hashes.txt
+# 3. The mainnet-fork layout guard passes against fresh fixtures (refresh them
+#    per integration-tests/tests/mainnet_fork_compat.rs), and CI is green.
 
-# 4. Preserve the CURRENTLY-deployed binary for byte-exact rollback. It IS
-#    reproducible from source (it is the previous verified release), so this dump
-#    is a convenience, not the only recovery route — archive it anyway.
-solana program dump up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt \
-  pre-upgrade-august_vault.so -u mainnet-beta
-solana-verify get-program-hash -u https://api.mainnet-beta.solana.com \
-  up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt
-#    NOTE: solana-verify needs the full URL. `-u mainnet-beta` fails here with
-#    "Program up12… is not deployed: AccountNotFound", which mid-ceremony reads
-#    as "the program is gone". The `solana` CLI on the line above does accept
-#    the moniker — the two tools differ.
-#    Expect fca11d73ae5ba0635ee76964945c52ddcf78a167eb4c60317ae63df4a4e7cc1d
-#    (505,216 B) — the release recorded in verified-hashes.txt before this one.
-#    If you get something else, STOP: an unrecorded upgrade has happened.
-sha256sum pre-upgrade-august_vault.so
-#    Store pre-upgrade-august_vault.so + these hashes in secure archival.
+# 4. The release .so is the verified artifact.
+solana-verify get-executable-hash "rel-$TAG/august_vault_$TAG.so"   # == vault row
+
+# 5. Preserve the deployed binary for byte-exact rollback.
+solana program dump up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt pre-upgrade-august_vault.so -u "$URL"
+solana-verify get-program-hash -u "$URL" up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt
+#    Expect cb1352a5dc4ab9513c10c1083534837bb4c666ed8ad9c3919f02f752bff52df9 (v0.1.1).
+#    Anything else means an unrecorded upgrade happened: STOP.
+sha256sum pre-upgrade-august_vault.so   # archive the file and both hashes
 ```
 
-**Prepare the buffer (unprivileged, ops fee-payer):**
+> **`solana-verify` takes a full RPC URL, not a cluster moniker.** It hands the
+> value straight to its HTTP client, so `-u mainnet-beta` fails with
+> `AccountNotFound` in `get-program-hash` (which mid-ceremony reads as "the
+> program is gone"), `builder error` in `export-pda-tx`, and `relative URL
+> without a base` in `remote submit-job`. The `solana` CLI accepts both. Omitting
+> `-u` falls back to the CLI's configured cluster, which Step 2 pointed at devnet.
+
+**Prepare the buffer (unprivileged, ops payer):**
 
 ```bash
-# Extend ProgramData to fit the larger binary.
-# Re-derive first — this value is release-specific:
-#   solana program show up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt -u m
-#   additional_bytes = <new .so size> - <Data Length from the command above>
-#
-# NOTE which size you read. `solana program show` reports `Data Length`, which is
-# the ProgramData account size MINUS the 45-byte loader header (verified live:
-# 507,736 vs the account's 507,781). So with `program show` the +45 cancels and
-# you subtract directly. Using `Data Length` in the `+ 45 - size` form instead
-# over-extends by exactly 45 bytes.
-# For the hashes in verified-hashes.txt: 605,160 + 45 - 507,781 = 97,424.
-# ⚠ THE CLI COMMAND BELOW FAILS ON AGAVE 3.x. Read this first.
-#
-#   Error: Upgrade authority B75DM… does not match <ops-payer>
-#
-# Agave 3.x sends `ExtendProgramChecked`, which requires the UPGRADE AUTHORITY to
-# sign, and `solana program extend` has no --authority flag: it signs with -k. On
-# mainnet that key is Fordefi, so the documented ops-payer command cannot work.
-#
-# The ON-CHAIN instruction is still permissionless. The plain `ExtendProgram`
-# (loader instruction 6) needs only a payer signature — verified by simulation and
-# then executed on mainnet 6 Aug 2026 (tx 4zAQ7aGaxwc576hGJJCK2yUqG9yCYEHPTgrHybL4SFRdFoiagSrqX5w1yEZXVqYrotxpUYkgYKBoW8BwFLv74hMa),
-# taking ProgramData from 507,736 to 605,160 bytes with the ops payer alone.
-#
-# So this does NOT need a fourth Fordefi signature. Two ways to do it:
-#
-#   (a) Use a Solana 2.x CLI, which sends the unchecked instruction. This is the
-#       version CI pins (SOLANA_VERSION in ci.yml), so it matches the toolchain the
-#       release was built with.
-#
-#   (b) Send loader instruction 6 directly — 8 bytes of data: u32 LE 6, then u32 LE
-#       additional_bytes. Accounts, in order: programdata (w), program (w),
-#       system program, payer (signer, w). SIMULATE FIRST and confirm the log line
-#       "Extended ProgramData account by <n> bytes" before sending.
-#
-# Either way, verify afterwards that `Data Length` equals the new .so size exactly.
-solana program extend up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt 97424 \
-  -u mainnet-beta -k <ops-payer.json>   # ← Agave 2.x only; see the note above
+# Extend ProgramData to fit the larger binary. `Data Length` from `program show`
+# already excludes the 45-byte loader header, so subtract directly:
+#   additional_bytes = <new .so size> - <Data Length>   (82,192 for the current pins)
+solana program extend up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt <additional_bytes> \
+  -u "$URL" -k "$OPS"   # ← Solana 2.x CLI only; see below
+# Afterwards `Data Length` must equal the new .so size exactly.
 
-# Upload the verified .so into a buffer.
-solana program write-buffer august_vault_v0.1.1.so -u mainnet-beta -k <ops-payer.json>
+solana program write-buffer "rel-$TAG/august_vault_$TAG.so" -u "$URL" -k "$OPS"
 #   -> Buffer: <BUFFER_ADDRESS>
-
-# Hand the buffer to the upgrade authority so Fordefi can consume it.
 solana program set-buffer-authority <BUFFER_ADDRESS> \
   --new-buffer-authority B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM \
-  -u mainnet-beta -k <ops-payer.json>
+  -u "$URL" -k "$OPS"
 ```
 
-**(Optional) pause user operations** via the admin key during the window
-(note: pause does not stop operator withdrawals).
+> **The extend fails on an Agave 3.x CLI** with `Upgrade authority B75DM… does
+> not match <ops-payer>`. Agave 3.x sends `ExtendProgramChecked`, which needs the
+> upgrade authority's signature, and `solana program extend` signs with `-k`.
+> The on-chain `ExtendProgram` (loader instruction 6) is still permissionless: it
+> needs only a payer. That was executed on mainnet on 6 Aug 2026 with the ops
+> payer alone (tx
+> `4zAQ7aGaxwc576hGJJCK2yUqG9yCYEHPTgrHybL4SFRdFoiagSrqX5w1yEZXVqYrotxpUYkgYKBoW8BwFLv74hMa`).
+> So use a Solana 2.x CLI, or send instruction 6 directly: 8 bytes of data (u32
+> LE 6, then u32 LE `additional_bytes`), accounts programdata (w), program (w),
+> system program, payer (signer, w). Simulate first and look for `Extended
+> ProgramData account by <n> bytes`.
 
-**Execute the upgrade (Fordefi-signed):** via Fordefi, submit a
-`BPFLoaderUpgradeable::Upgrade` instruction:
+**(Optional) pause user operations** via the admin key during the window (pause
+does not stop operator withdrawals).
 
-- program = `up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt`
-- buffer = `<BUFFER_ADDRESS>`
-- authority = `B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM`
-- spill = the ops fee-payer
+**Execute the upgrade (Fordefi-signed):** submit a
+`BPFLoaderUpgradeable::Upgrade` instruction with program `up12…`, buffer
+`<BUFFER_ADDRESS>`, authority `B75DMr…`, spill = the ops payer.
 
-Do **not** set the program immutable (no `--final`) — and note this is now
-load-bearing beyond keeping future upgrades possible. `initialize_config`
-authorizes against `program_data.upgrade_authority_address == Some(signer)`, and
-an immutable program stores `None`, which no signer can ever match. Making the
-program immutable therefore **permanently prevents the config from being created,
-and so permanently prevents any new vault from being created**, with no on-chain
-remedy. If immutability is ever wanted, Step 4 must happen first. Pinned by
-`immutable_program_can_never_bootstrap_config` in
+Do **not** set either program immutable (no `--final`). `initialize_config` and
+`override_config_authority` authorize against the vault's recorded upgrade
+authority, which an immutable program stores as `None`; a queue fix would need
+an upgrade too. Pinned by `immutable_program_can_never_bootstrap_config` in
 `integration-tests/tests/initialize_authorization.rs`.
 
-**Post-upgrade verification:**
+**Post-upgrade:**
 
 ```bash
-solana-verify get-program-hash -u https://api.mainnet-beta.solana.com \
-  up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt
-#   Now equals verified-hashes.txt exec_sha256 (cb1352a5…)
-#   Confirmed on 2026-08-06 after the v0.1.1 upgrade.
+solana-verify get-program-hash -u "$URL" up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt   # == vault row
 ```
 
-If you paused, **unpause first** — `deposit` and `redeem` are pause-gated, so
-the smoke test fails with `VaultPaused` while paused. Then smoke-test one vault
-with a tiny deposit + redeem and confirm the expected shares/assets.
+If you paused, **unpause first** (`deposit` and `redeem` are pause-gated), then
+smoke-test one vault with a tiny deposit and redeem. No vault is gated yet, so
+both must behave exactly as before.
 
 ---
 
-## Step 3 — Register on-chain verification (Fordefi-signed)
+## Step 5 — Register on-chain verification for both programs (Fordefi-signed)
 
-> **`-u` takes a full RPC URL here, not a cluster moniker.** `solana-verify`
-> hands the value straight to its HTTP client, so `-u mainnet-beta` fails:
-> `export-pda-tx` prints `Using connection url: mainnet-beta` and then
-> `Error: Unable to get last deployed slot: builder error`, and
-> `remote submit-job` fails with `relative URL without a base`. Only
-> `remote get-job` tolerates it, because it queries the OtterSec API and never
-> touches an RPC. Omitting `-u` is worse than either: it falls back to the CLI's
-> configured cluster, which Step 1 pointed at devnet.
+One verify-PDA transaction per program, both uploaded by the upgrade authority
+(explorers trust only that uploader). The vault's PDA already exists
+(`AUHMtzx…`), so its transaction records an `update`; the queue's is a first
+`init`. The same command covers both.
+
+Pin the **tag's** commit: an omitted `--commit-hash` resolves to the remote
+default branch's HEAD, which is wrong once `init` advances. (`v0.1.1` recorded
+the tag's parent; sound, since the program sources were identical, but pin the
+tag itself.)
 
 ```bash
-# Build the (unsigned) verify-PDA upload transaction for the authority as uploader.
-# Pin the exact release commit, library and image — an omitted --commit-hash
-# resolves to the remote default-branch HEAD, which is wrong if `init` advanced
-# after tagging.
-solana-verify export-pda-tx \
-  https://github.com/fractal-protocol/solana-upshift-vault-programs \
-  --program-id up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt \
-  --uploader B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM \
-  --commit-hash <RELEASE_COMMIT_SHA> \
-  --library-name august_vault \
-  --base-image solanafoundation/solana-verifiable-build@sha256:695f890e620db8c39afe5112e048599f8ee395a0cab5a2e572f30a72c6366cb4 \
-  -u https://api.mainnet-beta.solana.com \
-  --encoding base58
+COMMIT=$(git rev-list -n1 "$TAG")
+IMAGE=solanafoundation/solana-verifiable-build@sha256:695f890e620db8c39afe5112e048599f8ee395a0cab5a2e572f30a72c6366cb4
+
+for pair in up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt:august_vault \
+            upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW:august_withdrawal_queue; do
+  solana-verify export-pda-tx \
+    https://github.com/fractal-protocol/solana-upshift-vault-programs \
+    --program-id "${pair%%:*}" \
+    --uploader B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM \
+    --commit-hash "$COMMIT" \
+    --library-name "${pair##*:}" \
+    --base-image "$IMAGE" \
+    -u "$URL" --encoding base58
+done
 ```
 
-- Sign + submit that transaction via **Fordefi** (the uploader must be the
-  upgrade authority for explorers to trust the record). If a verify PDA already
-  exists for this (uploader, program) pair the program records an `update`
-  rather than an `init`; the same command covers both.
-- **Then submit the OtterSec remote job.** This is a required step, not a
-  confirmation of one. The PDA only records *what to build*: until the job runs,
-  the API keeps serving the previous release's result, so every explorer shows
-  the program as unverified — and after an upgrade it shows it as *failing*
-  verification, since the recorded commit now builds to the old binary.
+Sign and submit each via **Fordefi**. **Then submit the OtterSec remote job for
+each.** This is a required step: the PDA only records *what to build*, and until
+the job runs the API keeps serving the previous result, so after an upgrade the
+vault shows as *failing* verification.
 
 ```bash
-solana-verify remote submit-job --program-id up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt \
-  --uploader B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM \
-  -u https://api.mainnet-beta.solana.com
-# submit-job polls to completion on its own; get-job only re-reads a finished job.
-solana-verify remote get-job --job-id <JOB_ID>
+for id in up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW; do
+  solana-verify remote submit-job --program-id "$id" \
+    --uploader B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM -u "$URL"
+done
+# submit-job polls to completion; `remote get-job --job-id <id>` re-reads a finished job.
 ```
 
 Confirm `is_verified: true` and `on_chain_hash == executable_hash` at
-`https://verify.osec.io/status/up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt`,
-then check the badge on Solana Explorer, SolanaFM and Solscan.
-
-**v0.1.1 (2026-08-06).** PDA `AUHMtzxmdhHaRvKXi3jmYyae7zg3Ki4Hh4XFGdBvcqwb`
-updated in tx
-`3B97dPhHRPivZphWPbzPohwhbxj2f5BtqeYBuKo71fQnWUZfPBVnwTQH2gCD8C56DLMHiCCyAoNSrbYomvGNcA6w`;
-job `e5774e7e-853c-4688-8452-59a2e5497090` then verified
-`cb1352a5dc4ab9513c10c1083534837bb4c666ed8ad9c3919f02f752bff52df9`. The commit
-recorded was `6a250947`, the parent of the `v0.1.1` tag rather than the tag
-itself — the two differ only in CI config and docs (`programs/`, `Cargo.lock`
-and `Cargo.toml` are byte-identical, and `verified-hashes.txt` records the same
-hash at both), so verification is sound. Pin the **tag** next time.
+`https://verify.osec.io/status/<program-id>` for both, check the badges on Solana
+Explorer, SolanaFM and Solscan, and update the status table in
+[VERIFY.md](../VERIFY.md#current-on-chain-status).
 
 ---
 
-## Step 4 — Bootstrap the program config
+## Step 6 — Turn the queue on, one vault at a time
 
-`initialize` is gated on the `ProgramConfig` authority, and that account does not
-exist on a program that has never had it created. Until it does, **`initialize`
-fails closed and no new vault can be created** — existing vaults keep working
-normally, so this is not urgent, but the first new-vault deployment after the
-upgrade will fail without it.
+Nothing changes for a vault until its admin attaches a queue. Every instruction
+here is signed by the vault's **`admin`** (read it from the `VaultState`); if
+that key is a Fordefi wallet, each is a Fordefi ceremony, with a durable nonce.
 
-Only the program's **current upgrade authority** can create the config, verified
-on-chain against the loader's `ProgramData`. On mainnet that is the Fordefi MPC
-wallet, so this is a Fordefi-signed transaction like the upgrade itself.
+**Lockstep first.** Once a vault is attached, a holder's direct `redeem` fails
+with `WithdrawalQueueRequired` (6021). Before attaching, the frontend and SDK
+must route that vault's redemptions through `request_withdrawal`, and the
+finalize keeper must be running for it.
 
-Choose the authority deliberately: it can be the upgrade authority itself, or a
-separate operational key so routine vault creation does not need Fordefi. Two
-things to know before signing, because `initialize_config` uses Anchor `init` and
-so can **never** be re-run:
+1. **`initialize_queue(cooldown_seconds)`**, signed by the admin plus a payer
+   for rent. Creates the queue PDA `["withdrawal_queue", vault_state]` and its
+   two escrow ATAs. The cooldown is at most 30 days; start short on the first
+   vault and watch a keeper cycle. It checks the deposit and share mints against
+   the queue's extension allow-list and runs once per vault.
+2. **Optional: `set_fulfillment_window(seconds)`.** A new queue starts at `0`
+   (requests never expire); at most 90 days. Both settings apply to new requests
+   only.
+3. **`attach_withdrawal_queue`** on the vault, signed by the admin. The queue is
+   live at once. Steps 1 and 3 may share one transaction.
 
-- **If you can sign with the key you set**, rotate it with `set_config_authority`
-  (signed by the *current* config authority). Routine, no Fordefi needed unless
-  the config authority is itself the Fordefi key.
-- **If you set a key you cannot sign with** — a typo, or a key nobody holds —
-  `set_config_authority` is useless, because it requires a signature from exactly
-  that key. The remedy is `override_config_authority`, signed by the **upgrade
-  authority**, i.e. a second Fordefi ceremony. Verify the authority in the
-  read-back below before you consider Step 4 done.
+No script emits these as unsigned transactions yet (the admin UI's queue flows
+will). Until then, build them with the generated clients and export them unsigned
+for Fordefi, on a durable nonce.
 
-The authority may not be the zero key (`InvalidAuthority`, 6017) on any of the
-three instructions.
+Smoke test on the first vault: request a small withdrawal, `expedite_request` it
+(admin or operator), finalize, and check the payout; then confirm a direct
+`redeem` now fails with 6021.
 
-```bash
-# Emit an unsigned initialize_config transaction for the Fordefi authority.
-# --authority is the key that will be allowed to create vaults; omit it to use
-# the upgrade authority itself. The script prints every derived account so they
-# can be checked against the Fordefi review screen before signing.
-# --nonce-account is STRONGLY recommended here. Without it the exported
-# transaction carries an ordinary recent blockhash that expires in ~60-90s, and a
-# Fordefi review-and-approve ceremony will almost certainly outlast it — the
-# submission then fails with "Blockhash not found" AFTER the approvals were
-# collected, and the whole ceremony has to be repeated. A durable nonce does not
-# expire. Its nonce authority must be the upgrade authority, since
-# AdvanceNonceAccount is signed by the nonce authority:
-#   solana-keygen new -o nonce.json
-#   solana create-nonce-account nonce.json 0.0015 \
-#     --nonce-authority B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM \
-#     -u mainnet-beta -k <ops-payer.json>
-node deploy/bootstrap-config.mjs \
-  --program-id up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt \
-  --url https://api.mainnet-beta.solana.com \
-  --authority <VAULT_CREATION_AUTHORITY> \
-  --payer <ops-payer.json> \
-  --nonce-account <NONCE_ACCOUNT_PUBKEY> \
-  --unsigned bootstrap-config.json
+**Turning it off:** `release_vault` on the queue (admin) detaches it, and direct
+redemption reopens. Pending requests survive and can still be finalized or
+cancelled. Release only when the vault's liquidity comfortably covers what is
+still pending: nothing on-chain checks it. `attach_withdrawal_queue` re-enables
+the same queue with its state intact.
 
-# The written file records who already signed and who is still needed:
-#   "feePayer": "<ops payer>", "signedBy": ["<ops payer>"],
-#   "awaitingSignatureFrom": "<upgrade authority>"
-# Fordefi supplies that one remaining signature.
-
-# Have Fordefi sign and submit it, then re-run WITHOUT --unsigned to read back
-# and confirm the stored authority. Pass the SAME --authority: that is what arms
-# the script's comparison, and it exits non-zero on a mismatch. No --keypair is
-# needed — the read-back path never signs. (--url matters: it defaults to DEVNET,
-# so an omitted --url silently reads the wrong cluster.)
-node deploy/bootstrap-config.mjs \
-  --program-id up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt \
-  --url https://api.mainnet-beta.solana.com \
-  --authority <VAULT_CREATION_AUTHORITY>
-```
-
-If that read-back reports a mismatch, vault creation is now gated behind the
-wrong key. Existing vaults are unaffected and user funds are not at risk, but no
-new vault can be created until `override_config_authority` is run — a second
-Fordefi ceremony. Do not treat Step 4 as complete until this command exits 0.
-
-On devnet, where the team holds the upgrade authority directly, the same script
-signs and sends in one step with `--keypair <devnet-authority.json>`.
-
-Do **not** use `deploy/new-vault.mjs` for this. That script generates a fresh
-program keypair and deploys a **new** program, so it would bootstrap that
-program's config and leave the just-upgraded one still gated — while rewriting
-`declare_id!` in your working tree.
-
-Then create one vault end-to-end as the smoke test.
-
-**Downstream clients must be updated in lockstep.** This release changes
-`initialize`'s account list *and* its arguments: `program_config` and a separate
-`payer` are added, `signer` must now be the config authority, and a new
-`share_offset: u64` argument is **required**. Any consumer built against the
-previous IDL will fail. Concretely, after the upgrade:
-
-> **The admin UI must now send a share offset when creating a vault.** It is a
-> power of ten from 1,000 to 1,000,000, it is **permanent for that vault**, and it
-> sets both the share pricing and the minimum first deposit. It cannot be
-> defaulted server-side without making a permanent economic decision on the
-> operator's behalf — surface it as a deliberate choice. See the guidance in the
-> [root README](../README.md#security).
-
+**Downstream in lockstep with Step 4**, whether or not any vault is attached yet:
 
 1. Bump the `solana-upshift-vault-programs` submodule in the private
-   `solana-vaults` repo and re-run `scripts/sync-idl.sh` so `frontend/idl/`
-   carries the new IDL (its CI drift-guards the committed copy).
-2. Provision the admin UI's signer as the config authority, or rotate the
-   authority to whatever key that UI signs with — otherwise its create-vault
-   flow fails with `6016 NotProtocolAuthority` even with a fresh IDL.
-3. Rebuild any Rust consumers of `clients/rust/august-vault` (the generated
-   client in this repo is already regenerated).
+   `solana-vaults` repo and re-run `scripts/sync-idl.sh`, so `frontend/idl/`
+   carries both IDLs.
+2. Rebuild Rust consumers of `clients/rust/august-vault` and
+   `clients/rust/august-withdrawal-queue`.
+3. Operator tooling: `operator_withdraw` and `operator_deposit` gain an optional
+   subaccount account. It must be passed exactly when the vault has registered
+   subaccounts, so nothing changes until the first `register_subaccount`.
 
 ---
 
 ## Rollback
 
-The program stays upgradeable, so a bad upgrade is recoverable by another
-Fordefi-signed upgrade. Two options:
+Both programs stay upgradeable, so a bad upgrade is recoverable by another
+Fordefi-signed upgrade.
 
-- **Byte-exact rollback** to the pre-upgrade binary archived in Step 2
-  (`pre-upgrade-august_vault.so`). Verify the archived file's hash, then
-  `solana program write-buffer pre-upgrade-august_vault.so` (ops payer) →
-  `set-buffer-authority` to the Fordefi authority → Fordefi-signed `Upgrade`.
-  Confirm `get-program-hash` returns `fca11d73…`. That binary is also
-  source-reproducible from the previous release commit, so the archive is a
-  convenience rather than the only route back.
-- **Roll forward** to a rebuilt, verified hotfix release — preferred once the
-  regression is understood.
+- **Queue misbehaves:** `release_vault` on every attached vault first. That
+  restores direct redemption without touching either binary. Then roll the queue
+  forward to a fixed, verified release as in Step 4: extend if the fix is larger
+  (Solana 2.x CLI or loader instruction 6), write-buffer, set-buffer-authority,
+  Fordefi `Upgrade`.
+- **Vault misbehaves:** release every attached queue first, then roll back
+  byte-exact to `pre-upgrade-august_vault.so` from Step 4 (write-buffer →
+  set-buffer-authority → Fordefi `Upgrade`; no extend, it is smaller; confirm `get-program-hash` returns
+  `cb1352a5…`), or forward to a hotfix. Two things to know:
+  - The old binary does not read `withdrawal_queue_authority`, so a vault left
+    attached through a rollback reopens direct redemption while the queue still
+    holds escrowed shares. Those still finalize (the old `redeem` accepts the
+    queue PDA as an ordinary holder) or cancel.
+  - The old binary ignores `subaccount_count`, `deployed_principal` and the
+    `Subaccount` accounts. A later roll-forward reads them as they were left, so
+    principal moved while rolled back is not counted.
 
-**A bytecode rollback does not undo Step 4.** The `ProgramConfig` PDA is a
-separate account: rolling back the binary leaves it in place, program-owned and
-simply unused by the old code. Three consequences worth deciding on *before* you
-run Step 4:
-
-- `initialize_config` uses Anchor `init`, so it can **never** be re-run. Rolling
-  back and later rolling forward does not give you a second attempt at
-  bootstrapping — the account created in Step 4 is the one you keep, and only
-  `override_config_authority` can change who controls it.
-- The old binary's `initialize` takes neither `program_config` nor `payer`, so
-  any client already rebuilt against the new IDL (see the lockstep list in
-  Step 4) **breaks on rollback**. Roll clients back too.
-- Therefore: do not run Step 4 until you are confident you will not roll back.
-  Steps 3 and 4 are independent of each other, so this does not block
-  verification.
-
-Pause user ops while rolling back or forward. The behavioral equivalence
-established by the fork test + devnet rehearsal makes a rollback unlikely.
+Pause user operations while rolling back or forward.
 
 ## Why this is safe for the live vaults
 
-- The `VaultState` account **layout is byte-identical** to the deployed version
-  (verified), so existing accounts are read unchanged — no migration.
-- The new code is **behaviorally equivalent for existing vaults**: deposit,
-  redeem, the operator instructions and every admin instruction are unchanged, so
-  live user flows are unaffected. (The one latent functional delta is a
-  Token-2022 operator-ATA fix, which no live vault exercises.)
-- **The share-price offsets change, and the effect on the live vaults is exactly
-  zero.** `EXTRA_SHARES` / `VIRTUAL_ASSETS` go from 1 to 10^6, which alters the
-  deposit and redeem formulas. Both live vaults currently hold `total_assets`
-  exactly equal to share supply (no yield reported yet), and with equal offsets
-  the price is `(T + O)/(S + O)` — identically 1.0 for any `O` when `T == S`. Every
-  deposit and redeem amount checked against both vaults' real on-chain state
-  returns a byte-identical result before and after. Once yield is reported the two
-  formulas diverge, bounded well under 0.01% (worst case measured: −0.0077% on a
-  full-supply redeem of the smaller vault at +20% yield). No migration, no
-  rebasing, no action for holders.
+- **The `VaultState` layout is unchanged in size and in every existing field.**
+  `LEN` stays 455, enforced by a `const` assertion; the new fields
+  (`withdrawal_queue_authority`, `subaccount_count`, `deployed_principal`) are
+  carved from `padding`, which is zero on the live accounts. So they read "no
+  queue", "no subaccounts" and zero principal with no migration.
+  `integration-tests/tests/mainnet_fork_compat.rs` runs the new code against the
+  real on-chain vault accounts.
+- **User flows are unchanged until an admin acts.** `deposit` and `redeem` behave
+  as in `v0.1.1` for an unattached vault, and `operator_withdraw` pays the
+  operator's own ATA while no subaccount is registered.
+- **`deployed_principal` starts at zero** even where capital is already out:
+  `v0.1.1` did not track it. It is informational (coverage reads each
+  `Subaccount::principal`), but the first `register_subaccount` adopts it as the
+  inherited principal, so capital deployed before the upgrade is not carried
+  over.
+- **New error codes are appended** (6021 to 6029); no existing code moves. One
+  message changed: `NotOperator` said "Signer must be the admin" and now says
+  "Signer must be the operator".
+- **The queue holds nothing until attached.** It escrows shares only for
+  requests on attached vaults, redeems through the vault's own `redeem` as the
+  queue PDA, and never holds the vault's assets beyond one finalize.
 
-  The divergence is **not** uniformly in the vault's favour, so be precise about
-  it: larger offsets damp the share price toward 1.0 in both directions. Above
-  1.0, redeemers receive marginally less (favours the vault) while depositors
-  receive marginally more shares for the same assets (marginally dilutes existing
-  holders). Measured on the larger live vault at +5% yield: a 185,265,261,060-unit
-  deposit mints 4,535 more shares out of 176 billion, and the equivalent redeem
-  returns 5,000 fewer units out of 194 billion. The floor-rounding on every
-  operation still favours the vault, as before; it is the offset change itself
-  that is two-sided.
-- **Deposits are floored at pro-rata and redemptions capped at pro-rata**, the
-  two semantic changes to user-facing instructions in this release. Both exist
-  for the same reason and are symmetric: the offsets pull the price toward 1.0,
-  so below par (`total_assets < supply`, reachable after an operator reports a
-  loss) they would *under*-mint on deposit and *over*-pay on redeem. Uncorrected,
-  a deposit made after a 50% loss would have handed a material fraction of its
-  value to incumbents on arrival — worst at the smallest reachable supply and
-  shrinking rapidly as supply grows past the offsets — and the first redeemer
-  would have taken more than its share, leaving later holders short. Neither is
-  reachable in the state the live vaults are in. `shares_for_deposit` now mints
-  `max(offset_formula, pro_rata)` and `assets_for_redeem` pays
-  `min(offset_formula, pro_rata)`. Above par the offset value is the binding one
-  in both cases, so the anti-inflation and anti-burn behaviour is unchanged, and
-  at `total_assets == supply` — where both live vaults sit — all three formulas
-  agree. A vault holding no assets while shares are outstanding has no defined
-  price and now rejects **both deposits and redemptions** with
-  `SharePriceUndefined` — on redeem that replaces the previous `ZeroAmount`
-  (6001 -> 6019), so any client matching on the old code needs updating; `operator_deposit`
-  can recapitalise it without minting. Proven end to end in
-  `integration-tests/tests/loss_state_solvency.rs`.
-- **`initialize` is also a breaking change.** Vault *creation*
-  now requires the `ProgramConfig` account and a signer equal to its authority,
-  gains a separate `payer`, and takes a `share_offset` argument that is fixed for
-  the vault's life (a power of ten in the program's permitted band). The offset
-  sets both the pricing and the minimum first deposit, so it must be chosen for
-  what a base unit of the deposit mint is worth — see the note in README.
-  Existing vaults store zero there and resolve to the default, so their pricing
-  is unchanged. This affects no existing vault, but it does mean
-  (a) no vault can be created between the upgrade and Step 4, and (b) every
-  client that creates vaults must be rebuilt against the new IDL — see the
-  lockstep list in Step 4.
-- `integration-tests/tests/mainnet_fork_compat.rs` proves the new code reads +
-  operates on the **real** on-chain vault accounts.
-- This upgrade **does** address the virtual-offset-size item: the offsets go from
-  1 to 10^6, with the pro-rata floor and cap described above. It does **not**
-  address Token-2022 extension whitelisting — decide separately whether to bundle
-  that (it would change behavior and need its own review).
+---
+
+## Previous releases
+
+**`v0.1.1` (deployed 6 Aug 2026)** moved `up12…` from `fca11d73…` (505,216 B) to
+`cb1352a5dc4ab9513c10c1083534837bb4c666ed8ad9c3919f02f752bff52df9` (605,160 B):
+the `ProgramConfig` gate on vault creation, the share-price offset retune, and
+`deposit_checked` / `redeem_checked`.
+
+- ProgramData extended 507,736 → 605,160 B by the ops payer alone (tx `4zAQ7aGa…`
+  above).
+- Verify PDA `AUHMtzxmdhHaRvKXi3jmYyae7zg3Ki4Hh4XFGdBvcqwb` updated in tx
+  `3B97dPhHRPivZphWPbzPohwhbxj2f5BtqeYBuKo71fQnWUZfPBVnwTQH2gCD8C56DLMHiCCyAoNSrbYomvGNcA6w`;
+  OtterSec job `e5774e7e-853c-4688-8452-59a2e5497090` verified `cb1352a5…` at
+  commit `6a250947` (the tag's parent; `programs/`, `Cargo.lock` and `Cargo.toml`
+  are byte-identical to the tag).
+- `ProgramConfig` PDA `7D5Jjs3NgWs26TVvng31MpmD5nqciynyN8swndazc35K` bootstrapped
+  with `deploy/bootstrap-config.mjs`; its authority is the Fordefi key `B75DMr…`.
+  `initialize_config` uses Anchor `init` and can never run again, so a rollback
+  and roll-forward keeps that account; only `override_config_authority` (upgrade
+  authority) can change who controls it.
+- The first `v0.1.0` tag never published (the `--target` trap above).

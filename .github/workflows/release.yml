@@ -1,24 +1,27 @@
 name: Release & Attest
 
-# Push a version tag (e.g. `git tag v0.1.0 && git push origin v0.1.0`) to build
-# the program reproducibly, attest its provenance, and publish an immutable
-# GitHub release carrying the verified `.so`.
+# Push a version tag (e.g. `git tag v0.2.0 && git push origin v0.2.0`) to build
+# every program reproducibly, attest their provenance, and publish one immutable
+# GitHub release carrying each verified `.so`. A tag with a `-` (`v0.2.0-rc.1`)
+# publishes a prerelease: the dry-run path, with the same checks.
 #
-# On-chain deployment is deliberately NOT automated: the mainnet program's
-# upgrade authority is a Fordefi MPC key, so the verified upgrade + OtterSec
+# On-chain deployment is deliberately NOT automated: the mainnet upgrade
+# authority is a Fordefi MPC key, so upgrades, first deployments and OtterSec
 # verify-PDA registration are performed by a human per docs/UPGRADE.md. This
-# workflow's job is to produce a reproducible, attested, hash-locked artifact to
+# workflow's job is to produce reproducible, attested, hash-locked artifacts to
 # deploy.
 #
 # Trust model (mirrors the Stellar Release & Attest workflow):
 #   guard   - the tagged commit is on the default branch AND ci.yml's real
-#             build/test + reproducible-build jobs succeeded for it.
-#   build   - UNPRIVILEGED. Runs cargo/Docker (build scripts, proc-macros, the
-#             verifiable-build container), so it has contents:read only, no
-#             token, no OIDC, no persisted checkout credentials. Rebuilds with
-#             solana-verify in the pinned image and asserts verified-hashes.txt.
+#             build/test + reproducible-build jobs succeeded for it. Also reads
+#             (never executes) verified-hashes.txt to fix the program list.
+#   build   - UNPRIVILEGED, one job per program. Runs cargo/Docker (build
+#             scripts, proc-macros, the verifiable-build container), so it has
+#             contents:read only, no token, no OIDC, no persisted checkout
+#             credentials. Rebuilds with solana-verify in the pinned image and
+#             asserts verified-hashes.txt.
 #   publish - PRIVILEGED, gated by the protected `release` environment. Does NOT
-#             execute repository code — only the downloaded artifact: attest,
+#             execute repository code — only the downloaded artifacts: attest,
 #             then publish one immutable release on the protected v* tag.
 #
 # Every nested action is pinned by SHA. See VERIFY.md to reproduce a hash.
@@ -35,7 +38,6 @@ concurrency:
 env:
     SOLANA_VERIFY_VERSION: "0.5.1"
     VERIFIABLE_IMAGE: "solanafoundation/solana-verifiable-build@sha256:695f890e620db8c39afe5112e048599f8ee395a0cab5a2e572f30a72c6366cb4"
-    PACKAGE: august_vault
 
 jobs:
     guard:
@@ -44,6 +46,8 @@ jobs:
         permissions:
             contents: read
             actions: read
+        outputs:
+            programs: ${{ steps.programs.outputs.programs }}
         env:
             GH_TOKEN: ${{ github.token }}
             REPO: ${{ github.repository }}
@@ -74,14 +78,44 @@ jobs:
                     [ "$c" = "success" ] || { echo "::error::Refusing to release: ci.yml job '$job' was '$c' (need success) for $SHA."; exit 1; }
                   done
 
+            - name: Checkout the tagged commit (read only, nothing executed)
+              uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+              with:
+                  ref: ${{ github.sha }}
+                  persist-credentials: false
+
+            # The build matrix comes from verified-hashes.txt, and must name every
+            # directory under programs/ exactly once (the rule ci.yml's
+            # reproducible-build job applies), so a new program cannot ship
+            # unreleased and a duplicated row cannot hide a missing one.
+            - name: Resolve the program list
+              id: programs
+              run: |
+                  set -euo pipefail
+                  pinned=$(awk '$1 !~ /^#/ && NF { print $1 }' verified-hashes.txt | sort | tr '\n' ' ')
+                  expected=$(for d in programs/*/; do basename "$d" | tr '-' '_'; done | sort | tr '\n' ' ')
+                  if [ -z "$pinned" ] || [ "$pinned" != "$expected" ]; then
+                    echo "::error::verified-hashes.txt pins [$pinned] but programs/ holds [$expected] — every program needs exactly one row."
+                    exit 1
+                  fi
+                  echo "programs=$(jq -Rc 'split(" ") | map(select(length > 0))' <<<"$pinned")" >> "$GITHUB_OUTPUT"
+                  echo "releasing: $pinned"
+
     build:
-        name: Build (unprivileged) — reproducible + hash-locked
+        name: Build (unprivileged) — ${{ matrix.package }}
         needs: guard
         runs-on: ubuntu-latest
         permissions:
             contents: read
+        strategy:
+            # One runner per program: each build starts from a clean tree, so no
+            # program's artifact or cargo state can leak into another's hash.
+            fail-fast: false
+            matrix:
+                package: ${{ fromJSON(needs.guard.outputs.programs) }}
         env:
             TAG: ${{ github.ref_name }}
+            PACKAGE: ${{ matrix.package }}
         steps:
             - name: Checkout the tagged commit (no persisted credentials)
               uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -117,14 +151,14 @@ jobs:
             - name: Upload build artifact
               uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
               with:
-                  name: program-so
+                  name: program-${{ matrix.package }}
                   path: dist/*
                   if-no-files-found: error
                   retention-days: 7
 
     publish:
         name: Attest & publish (privileged)
-        needs: build
+        needs: [guard, build]
         runs-on: ubuntu-latest
         environment: release
         permissions:
@@ -137,6 +171,7 @@ jobs:
             REPO: ${{ github.repository }}
             SHA: ${{ github.sha }}
             TAG: ${{ github.ref_name }}
+            PROGRAMS: ${{ needs.guard.outputs.programs }}
         steps:
             # Fail CLOSED before any contents:write. GitHub auto-creates a
             # *referenced* missing environment WITHOUT protection, so the gate
@@ -170,25 +205,28 @@ jobs:
 
                   echo "verified: required-reviewers=$reviewers immutable-releases=$imm (v* tag ruleset + bypass actors are a human-audited prerequisite — see docs/UPGRADE.md)"
 
-            - name: Download build artifact
+            - name: Download build artifacts
               uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
               with:
-                  name: program-so
+                  pattern: program-*
+                  merge-multiple: true
                   path: dist
 
-            - name: Resolve artifact
+            # Exactly one .so and one hashes file per program, and nothing else, so
+            # the attestation glob below covers precisely the release's programs.
+            - name: Resolve artifacts
               run: |
                   set -euo pipefail
-                  SO=$(find dist -name "${PACKAGE}_${TAG}.so")
-                  [ -n "$SO" ] || { echo "::error::missing ${PACKAGE}_${TAG}.so"; exit 1; }
-                  echo "SO=$SO" >> "$GITHUB_ENV"
-                  sha256sum "$SO"
+                  want=$(jq -r --arg t "$TAG" '.[] | "\(.)_\($t).hashes.txt", "\(.)_\($t).so"' <<<"$PROGRAMS" | sort | tr '\n' ' ')
+                  got=$(find dist -mindepth 1 -printf '%P\n' | sort | tr '\n' ' ')
+                  [ "$got" = "$want" ] || { echo "::error::dist holds [$got], expected [$want]"; exit 1; }
+                  sha256sum dist/*.so
 
             # Attest before publishing, so a published release is always attested.
             - name: Attest build provenance
               uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1.4.4
               with:
-                  subject-path: dist/${{ env.PACKAGE }}_${{ github.ref_name }}.so
+                  subject-path: dist/*_${{ github.ref_name }}.so
 
             - name: Publish one immutable release on the protected tag
               run: |
@@ -198,9 +236,19 @@ jobs:
                   tagsha=$(gh api "repos/$REPO/commits/$TAG" --jq '.sha')
                   [ "$tagsha" = "$SHA" ] || { echo "::error::trigger tag $TAG points to $tagsha, not $SHA"; exit 1; }
 
-                  EXEC=$(grep -o 'exec_sha256=.*' "dist/${PACKAGE}_${TAG}.hashes.txt" | cut -d= -f2)
-                  NOTES=$(printf 'Reproducible build of %s at commit %s (solana-verify %s, image %s).\n\nExecutable hash (get-program-hash / get-executable-hash): `%s`.\n\nReproduce: check out this tag and follow VERIFY.md.\n\nDeploying on-chain: this artifact is NOT auto-deployed. The mainnet upgrade authority is a Fordefi MPC key; perform the verified upgrade + OtterSec registration per docs/UPGRADE.md. Verification is point-in-time (the program is upgradeable).' \
-                    "$PACKAGE" "$SHA" "$SOLANA_VERIFY_VERSION" "$VERIFIABLE_IMAGE" "$EXEC")
+                  pkgs=$(jq -r '.[]' <<<"$PROGRAMS")
+                  HASHES=""
+                  for pkg in $pkgs; do
+                    exec=$(grep -o 'exec_sha256=.*' "dist/${pkg}_${TAG}.hashes.txt" | cut -d= -f2)
+                    HASHES=$(printf '%s\n- `%s`: `%s`' "$HASHES" "$pkg" "$exec")
+                  done
+                  NOTES=$(printf 'Reproducible builds at commit %s (solana-verify %s, image %s).\n\nExecutable hashes (get-program-hash / get-executable-hash):\n%s\n\nReproduce: check out this tag and follow VERIFY.md.\n\nDeploying on-chain: these artifacts are NOT auto-deployed. The mainnet upgrade authority is a Fordefi MPC key; perform the upgrade, deployment and OtterSec registration per docs/UPGRADE.md. Verification is point-in-time (the programs are upgradeable).' \
+                    "$SHA" "$SOLANA_VERIFY_VERSION" "$VERIFIABLE_IMAGE" "$HASHES")
+
+                  # A `-` marks a dry-run tag (v0.2.0-rc.1): a prerelease, so it is
+                  # never shown as Latest, but built, attested and read back the same.
+                  pre=()
+                  case "$TAG" in *-*) pre=(--prerelease) ;; esac
 
                   # NO --target. It is redundant (the tag already exists and the
                   # assertion above proves it points at $SHA), and passing it makes
@@ -219,17 +267,18 @@ jobs:
                   # any workflow change merged after that commit triggers this. See
                   # https://github.com/cli/cli/issues/9514.
                   if gh release view "$TAG" >/dev/null 2>&1; then
-                    echo "Release $TAG already exists — verifying its asset."
+                    echo "Release $TAG already exists — verifying its assets."
                   else
-                    gh release create "$TAG" \
-                      "dist/${PACKAGE}_${TAG}.so" "dist/${PACKAGE}_${TAG}.hashes.txt" \
-                      --title "$TAG" --notes "$NOTES"
+                    gh release create "$TAG" dist/* --title "$TAG" --notes "$NOTES" "${pre[@]}"
                   fi
 
-                  # Read back the published .so and confirm it matches what we built.
+                  # Read back every published .so and confirm it matches what we built.
                   vrf=$(mktemp -d)
-                  gh release download "$TAG" --pattern "${PACKAGE}_${TAG}.so" --dir "$vrf" --clobber
-                  got=$(sha256sum "$vrf/${PACKAGE}_${TAG}.so" | cut -d' ' -f1)
-                  want=$(sha256sum "dist/${PACKAGE}_${TAG}.so" | cut -d' ' -f1)
-                  [ "$got" = "$want" ] || { echo "::error::published asset ($got) != built ($want)"; exit 1; }
-                  echo "Published $TAG; asset raw-sha256 $got."
+                  for pkg in $pkgs; do
+                    so="${pkg}_${TAG}.so"
+                    gh release download "$TAG" --pattern "$so" --dir "$vrf" --clobber
+                    got=$(sha256sum "$vrf/$so" | cut -d' ' -f1)
+                    want=$(sha256sum "dist/$so" | cut -d' ' -f1)
+                    [ "$got" = "$want" ] || { echo "::error::published $so ($got) != built ($want)"; exit 1; }
+                    echo "Published $so; raw-sha256 $got."
+                  done

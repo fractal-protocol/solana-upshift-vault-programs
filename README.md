@@ -466,7 +466,7 @@ the first time; a PR body can be edited, a commit message effectively cannot.
 
 ## Reproducible Builds & Verification
 
-The program builds reproducibly: `solana-verify build` in a pinned Docker image (Solana 2.3.0) yields a byte-identical `.so` whose SHA-256 is recorded in [`verified-hashes.txt`](verified-hashes.txt) and asserted in CI, and the program embeds a `security_txt!` contact + source-repo pointer in its bytecode. Because the program is **upgradeable**, on-chain verification is point-in-time. See **[VERIFY.md](VERIFY.md)** for the pinned toolchain, exact commands, expected hashes, and how to verify the live on-chain program.
+Both programs build reproducibly: `solana-verify build` in a pinned Docker image (Solana 2.3.0) yields a byte-identical `.so` per program, whose SHA-256 is recorded in [`verified-hashes.txt`](verified-hashes.txt) and asserted in CI and at release, and each embeds a `security_txt!` contact + source-repo pointer in its bytecode. Because both are **upgradeable**, on-chain verification is point-in-time. See **[VERIFY.md](VERIFY.md)** for the pinned toolchain, exact commands, expected hashes, and how to verify the live on-chain programs.
 
 ## License
 
