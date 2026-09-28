@@ -15,3 +15,4 @@ pub mod release_vault;
 pub mod request_withdrawal;
 pub mod set_cooldown;
 pub mod set_fulfillment_window;
+pub mod sweep_escrow_shares;

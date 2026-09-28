@@ -828,6 +828,32 @@ impl VaultCtx {
         send_tx(&mut self.svm, &signer, &[ix], &[&signer]).expect("token transfer");
     }
 
+    /// An owner-signed `transfer_checked` of `mint`'s tokens under the vault's token
+    /// program. Share and deposit mints share the deposit decimals, so either works.
+    pub fn transfer_mint_tokens_as(
+        &mut self,
+        owner: &Keypair,
+        mint: &Pubkey,
+        from: &Pubkey,
+        to: &Pubkey,
+        amount: u64,
+    ) {
+        let program = self.token_program.id();
+        let ix = spl_token_2022::instruction::transfer_checked(
+            &program,
+            from,
+            mint,
+            to,
+            &owner.pubkey(),
+            &[],
+            amount,
+            DEPOSIT_DECIMALS,
+        )
+        .unwrap();
+        let signer = owner.insecure_clone();
+        send_tx(&mut self.svm, &signer, &[ix], &[&signer]).expect("token transfer");
+    }
+
     /// Have `subaccount` revoke whatever delegation its ATA carries.
     pub fn revoke_delegate(&mut self, subaccount: &Subaccount) {
         let ix = revoke_ix(
@@ -1931,6 +1957,60 @@ impl VaultCtx {
             )
             .expect("plant request");
         address
+    }
+
+    // ---- sweep ----
+
+    /// `sweep_escrow_shares` as the admin, moving the stray shares to `destination`.
+    pub fn sweep_escrow_shares(
+        &mut self,
+        destination: Pubkey,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let admin = self.admin.insecure_clone();
+        self.sweep_escrow_shares_as(&admin, destination)
+    }
+
+    /// `sweep_escrow_shares` signed by `signer`, who may be the wrong person.
+    pub fn sweep_escrow_shares_as(
+        &mut self,
+        signer: &Keypair,
+        destination: Pubkey,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let accounts = self.sweep_escrow_shares_accounts(&signer.pubkey(), destination);
+        self.send_sweep_escrow_shares(signer, accounts)
+    }
+
+    /// The genuine account set for a `sweep_escrow_shares` to `destination`.
+    pub fn sweep_escrow_shares_accounts(
+        &self,
+        admin: &Pubkey,
+        destination: Pubkey,
+    ) -> q_accounts::SweepEscrowShares {
+        q_accounts::SweepEscrowShares {
+            queue: self.withdrawal_queue_pda(),
+            vault_state: self.vault_state,
+            admin: *admin,
+            escrow_shares: self.queue_escrow(&self.share_mint),
+            share_mint: self.share_mint,
+            destination,
+            token_program: self.token_program.id(),
+            event_authority: event_authority_pda(),
+            program: august_withdrawal_queue::ID,
+        }
+    }
+
+    /// Sends `sweep_escrow_shares` with an explicit account set.
+    pub fn send_sweep_escrow_shares(
+        &mut self,
+        signer: &Keypair,
+        accounts: q_accounts::SweepEscrowShares,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let ix = Instruction {
+            program_id: august_withdrawal_queue::ID,
+            accounts: accounts.to_account_metas(None),
+            data: q_ix::SweepEscrowShares {}.data(),
+        };
+        send_tx(&mut self.svm, signer, &[ix], &[signer])
     }
 
     // ---- expedite ----
