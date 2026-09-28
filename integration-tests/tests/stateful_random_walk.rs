@@ -23,7 +23,6 @@
 //! Case count is deliberately modest (each case boots a fresh SVM); override
 //! with PROPTEST_CASES for a deeper local search.
 
-use std::cell::Cell;
 use std::collections::BTreeMap;
 
 use august_vault::state::vault::FEE_RATE_DENOMINATOR_VALUE;
@@ -285,8 +284,10 @@ proptest! {
 const REQUEST_ID_POOL: u64 = 4;
 const QUEUE_WALK_CASES: u32 = 40;
 const QUEUE_WALK_STEPS: usize = 250;
-/// WQ-10's floor on the steps one run of the queue walk executes.
+/// WQ-10's floor on the steps one run of the queue walk executes. Every case
+/// runs all its steps or fails the test, so the constants alone decide it.
 const MIN_QUEUE_WALK_STEPS: usize = 10_000;
+const _: () = assert!(QUEUE_WALK_CASES as usize * QUEUE_WALK_STEPS >= MIN_QUEUE_WALK_STEPS);
 const DAY: u64 = 24 * 60 * 60;
 const INITIAL_COOLDOWN: u64 = 60 * 60;
 
@@ -785,14 +786,12 @@ impl QueueWalk {
     }
 }
 
-/// Runs `cases` walks of `QUEUE_WALK_STEPS` ops each, returning the number of
-/// steps executed.
+/// Runs `cases` walks of `QUEUE_WALK_STEPS` ops each.
 fn run_queue_walk(
     include_yield_ops: bool,
     cases: u32,
     unwind: fn(&mut QueueWalk) -> Result<(), TestCaseError>,
-) -> usize {
-    let steps = Cell::new(0usize);
+) {
     let mut runner = TestRunner::new(ProptestConfig {
         cases,
         source_file: Some(file!()),
@@ -805,14 +804,12 @@ fn run_queue_walk(
         walk.assert_invariants()?;
         for op in &ops {
             walk.step(op)?;
-            steps.set(steps.get() + 1);
         }
         unwind(&mut walk)
     });
     if let Err(e) = result {
         panic!("{e}");
     }
-    steps.get()
 }
 
 /// The full op mix, vault and queue: every op succeeds exactly when the model
@@ -820,11 +817,7 @@ fn run_queue_walk(
 /// redeem at the same state would, and the invariants hold after every step.
 #[test]
 fn queue_walk_invariants_hold_over_ten_thousand_steps() {
-    let steps = run_queue_walk(true, QUEUE_WALK_CASES, |_| Ok(()));
-    assert!(
-        steps >= MIN_QUEUE_WALK_STEPS,
-        "the queue walk ran {steps} steps, fewer than {MIN_QUEUE_WALK_STEPS}"
-    );
+    run_queue_walk(true, QUEUE_WALK_CASES, |_| Ok(()));
 }
 
 /// No-yield queue walks: once the operator returns everything, every request is
