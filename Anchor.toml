@@ -6,7 +6,7 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-august_vault = "C8B1EpsSGVWK2vMrk3aDT3kL7RCE77otokUh4EC35kK7"
+august_vault = "up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt"
 august_withdrawal_queue = "upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW"
 
 [programs.localnet]

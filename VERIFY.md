@@ -140,5 +140,4 @@ as verified.
 - `security_txt!` is embedded in both programs (`programs/*/src/lib.rs`),
   exposing the security contact and source repository in the deployed bytecode.
 - Devnet: `up12…` is the current devnet vault. `C8B1EpsSGVWK2vMrk3aDT3kL7RCE77otokUh4EC35kK7`
-  is an older, non-reproducible devnet deployment, kept only because
-  `Anchor.toml` still names it.
+  is an older, non-reproducible devnet deployment that nothing here targets any more.
