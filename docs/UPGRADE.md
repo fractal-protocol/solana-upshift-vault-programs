@@ -55,8 +55,8 @@ the upgraded vault trusts whatever program sits at `upQhC7…`.
 
 | Key | Address | Used for | Custody |
 | --- | --- | --- | --- |
-| Vault program keypair | `up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt` | Creating `up12…` on a new cluster. Mainnet and devnet are done | Ops laptop, `~/.config/solana/programs/august_vault-keypair-mainnet-up12byto.json` (mode 600). Offline copy in the team 1Password (28 Sep 2026). **Owner: TBD** |
-| Queue program keypair | `upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW` | First deployment on devnet (Step 2) and mainnet (Step 3) | Ops laptop, `~/.config/solana/programs/august_withdrawal_queue-keypair-mainnet-upQhC7mg.json` (mode 600). Generated 28 Sep 2026, replacing an earlier id whose keypair was lost before any deployment. Offline copy in the team 1Password (28 Sep 2026). **Owner: TBD** |
+| Vault program keypair | `up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt` | Creating `up12…` on a new cluster. Mainnet and devnet are done | Held by ops outside this repository, with an offline copy. Where, and who: the team's private custody record |
+| Queue program keypair | `upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW` | First deployment on devnet (Step 2) and mainnet (Step 3) | Held by ops outside this repository, with an offline copy. Where, and who: the team's private custody record |
 | Upgrade authority (mainnet) | `B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM` | Upgrades, verify PDAs, `ProgramConfig` | Fordefi MPC |
 | Upgrade authority (devnet) | `APuzErEVGAbvhyj2hbmo6vp7pacNHRVXbu43UhcAne2i` | Devnet upgrades and deploys | Team-held keypair |
 
