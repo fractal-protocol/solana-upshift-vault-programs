@@ -103,7 +103,7 @@ pub struct Deposit<'info> {
         mut,
         seeds=[VAULT_STATE_SEED.as_ref(), deposit_mint.key().as_ref(), &vault_state.vault_version],
         bump)]
-    pub vault_state: Account<'info, VaultState>,
+    pub vault_state: Box<Account<'info, VaultState>>,
 
     #[account(
         mut,
