@@ -218,21 +218,27 @@ THESE artifacts.
 
 Both ids are the same on devnet and `declare_id!` matches, so rehearse with the
 release artifacts themselves. The devnet authority is a team-held keypair, so
-every step signs directly with the CLI.
+every step signs directly with the CLI. Use a private RPC if you can: the public
+endpoints throttle a run like this with `429 Too Many Requests`.
 
 ```bash
 URL=https://api.devnet.solana.com
 DEV=<devnet-authority-keypair.json>        # APuzEr…
 
-# Queue: first deployment, straight under the devnet authority.
+# Queue: rehearse Step 3 exactly, with a throwaway ops key standing in for the
+# ops payer and $DEV standing in for Fordefi. Fund the ops key with ~5.5 SOL.
+solana-keygen new --no-bip39-passphrase -o ops-devnet.json
 solana-keygen pubkey <queue-program-keypair.json>   # must print upQhC7…
 solana program deploy "rel-$TAG/august_withdrawal_queue_$TAG.so" \
   --program-id <queue-program-keypair.json> \
-  --upgrade-authority "$DEV" -u "$URL" -k "$DEV"
+  --upgrade-authority ops-devnet.json -u "$URL" -k ops-devnet.json
+solana program set-upgrade-authority upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW \
+  --new-upgrade-authority APuzErEVGAbvhyj2hbmo6vp7pacNHRVXbu43UhcAne2i \
+  --skip-new-upgrade-authority-signer-check -u "$URL" -k ops-devnet.json
 
 # Vault: extend, then upgrade. On devnet the authority signs the extend itself,
 # so the Agave 3.x restriction in Step 4 does not matter here.
-solana program show up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt -u "$URL"   # Data Length
+solana program show up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt -u "$URL" -k "$DEV"   # Data Length
 solana program extend up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt <additional_bytes> -u "$URL" -k "$DEV"
 solana program deploy "rel-$TAG/august_vault_$TAG.so" \
   --program-id up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt \
@@ -242,10 +248,16 @@ solana-verify get-program-hash -u "$URL" upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZH
 solana-verify get-program-hash -u "$URL" up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt   # == vault row
 ```
 
-Then run Step 6 on one devnet vault and walk a request through: request,
-expedite, finalize, a second request cancelled, `release_vault`, re-attach. Also
-confirm that an existing devnet vault with no queue still deposits and redeems
-as before. Only proceed to mainnet once the rehearsal is clean.
+Then run Step 6 on one devnet vault (`pnpm run init:devnet-vault` creates one,
+bootstrapping `ProgramConfig` if needed) and walk a request through: request,
+a finalize refused before eligibility (`CooldownNotElapsed`, 6012), expedite,
+finalize by a key other than the owner, a second request cancelled,
+`release_vault`, a direct redeem that works again, and re-attach. Only proceed
+to mainnet once the rehearsal is clean.
+
+**Rehearsed 28 Sep 2026** with the artifacts pinned at PR #34: every step above
+passed as written. Devnet `up12…` now runs `2f8dc1ac…` and `upQhC7…` runs
+`5e7ea878…` under `APuzEr…`.
 
 ---
 

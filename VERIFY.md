@@ -77,7 +77,7 @@ solana-verify get-program-hash -u https://api.mainnet-beta.solana.com \
 
 ## Current on-chain status
 
-Checked 27 Sep 2026.
+Mainnet, checked 27 Sep 2026:
 
 | Program | Mainnet | Executable hash | Release |
 |---|---|---|---|
@@ -86,7 +86,9 @@ Checked 27 Sep 2026.
 
 The vault's hash is OtterSec-verified
 ([status](https://verify.osec.io/status/up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt)).
-The `up12…` program on devnet runs the same `cb1352a5…` build.
+
+Devnet carries the release rehearsal (28 Sep 2026): `up12…` runs `2f8dc1ac…`
+and `upQhC7…` runs `5e7ea878…`, both matching `verified-hashes.txt` at the time.
 
 **`verified-hashes.txt` describes this source tree, not the deployed programs.**
 The `reproducible-build` CI job rebuilds from source and asserts every row, so an
