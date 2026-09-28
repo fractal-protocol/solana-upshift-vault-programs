@@ -84,8 +84,8 @@ Rules for both program keypairs:
   `sh -c "$(curl -sSfL https://release.anza.xyz/v2.1.14/install)"`, then
   `solana --version`.
 - A **funded ops fee-payer** keypair (about 10 SOL at the current sizes). It is
-  NOT the upgrade authority. It pays the queue's ProgramData rent (2.34 SOL,
-  `solana rent 461013`) plus an equal buffer that the deploy refunds, the vault
+  NOT the upgrade authority. It pays the queue's ProgramData rent (2.43 SOL,
+  `solana rent 479189`) plus an equal buffer that the deploy refunds, the vault
   `extend` (0.42 SOL), and the vault buffer (3.49 SOL, refunded to the spill
   account by the `Upgrade`).
 - The queue program keypair, checked as above.
