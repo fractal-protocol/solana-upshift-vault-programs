@@ -44,7 +44,7 @@ VAULT_STATE_RS="programs/august-vault/src/state/vault.rs"
 # minimum-deposit, update-metadata, set-aum-limits, comprehensive) predate the
 # multi-vault / versioned-PDA / 4-arg-initialize refactors and currently fail
 # against the program; they are intentionally not offered here until updated.
-MAINTAINED_SUITES="tests/1_*.ts tests/2_*.ts tests/3_*.ts tests/11_*.ts tests/12_*.ts tests/13_*.ts"
+MAINTAINED_SUITES="tests/1_*.ts tests/2_*.ts tests/3_*.ts tests/11_*.ts tests/12_*.ts tests/13_*.ts tests/14_*.ts"
 
 # Backups are set when a step first mutates a file and restored (verified) by the
 # EXIT trap, so a dev machine is never left with a mutated declare_id!, test
@@ -283,16 +283,17 @@ run_focused() {
 # Menu — read the choice FIRST, then spin up localnet. Every option runs a
 # maintained (CI-green) suite; the stale suites 4-10 are deliberately not listed.
 echo -e "${BLUE}Select test suite:${NC}"
-echo "1) Run all maintained tests (CI suite: init, users, operator, multi-vault, close, version)"
+echo "1) Run all maintained tests (CI suite: init, users, operator, multi-vault, close, version, queue)"
 echo "2) Run user function tests (2_users)"
 echo "3) Run operator function tests (3_operator)"
 echo "4) Run multi-vault + redeem-CEI tests (11_*)"
 echo "5) Run close-vault tests (12_*)"
 echo "6) Run version-security tests (13_*)"
-echo "7) Exit"
+echo "7) Run withdrawal-queue tests (14_*)"
+echo "8) Exit"
 echo ""
 
-read -r -p "Enter choice [1-7]: " choice
+read -r -p "Enter choice [1-8]: " choice
 
 # All maintained suites are validator-backed and share the same prep.
 run_suite() {
@@ -327,6 +328,10 @@ case $choice in
         run_suite "tests/13_*.ts"
         ;;
     7)
+        echo -e "${GREEN}Running withdrawal-queue tests...${NC}"
+        run_suite "tests/14_withdrawal_queue.ts"
+        ;;
+    8)
         echo -e "${YELLOW}Exiting...${NC}"
         exit 0
         ;;
