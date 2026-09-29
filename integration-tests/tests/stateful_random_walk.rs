@@ -1,9 +1,11 @@
 //! Stateful property tests: random sequences of deposits/redeems (plain and
 //! slippage-checked) by several depositors, operator withdraw/return/AUM
 //! reports, subaccount custody (register, withdraw to, return from, custodian
-//! loss, settle, deregister), and admin fee, limit, pause and handover changes
-//! are executed against a real LiteSVM vault, checking accounting invariants
-//! after every step. This addresses the due-diligence recommendation for
+//! loss, settle, deregister), admin fee, limit, pause and handover changes,
+//! role and config-authority handovers, vault creation, share metadata and
+//! clock warps are executed against a real LiteSVM vault, checking accounting
+//! invariants after every step. Each case draws the vault's shape: SPL or
+//! Token-2022, 6 or 9 decimals, share offset 10^3 or 10^6. This addresses the due-diligence recommendation for
 //! property testing over "AUM and fee arithmetic, and stateful sequences of
 //! deposits, operator actions, and redemptions".
 //!
@@ -29,7 +31,12 @@
 //! - In the queue walk, an instruction (a holder's, the queue's, the
 //!   operator's or the admin's) forged with one account the program must bind
 //!   swapped for a decoy (another vault's, another holder's, the wrong kind)
-//!   is refused and changes nothing.
+//!   is refused and changes nothing; so is one signed by anyone but its
+//!   signer; so is one whose data is truncated, under an unknown
+//!   discriminator, or noise.
+//! - In the queue walk, two honest instructions in one transaction do exactly
+//!   what they do one after the other, or nothing when either would fail.
+//! - Every instruction's honest run stays within [`COMPUTE_BUDGET`].
 //!
 //! A second walk (no AUM reports or custody losses; everything deployed comes
 //! home at the end) checks the economic end-state property: with no yield
@@ -42,21 +49,28 @@
 //! with PROPTEST_CASES for a deeper local search. `nightly-property.yml` does.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use anchor_lang::{InstructionData, ToAccountMetas};
 
 use august_vault::errors::ErrorCode as VaultError;
-use august_vault::state::vault::{BPS_DENOMINATOR, FEE_RATE_DENOMINATOR_VALUE};
+use august_vault::state::vault::{
+    VaultState, BPS_DENOMINATOR, EXTRA_SHARES, FEE_RATE_DENOMINATOR_VALUE,
+};
 use august_withdrawal_queue::errors::{ErrorCode as QueueError, ANCHOR_USER_ERROR_OFFSET};
 use august_withdrawal_queue::state::WITHDRAWAL_REQUEST_SEED;
 use integration_tests::harness::{
     assert_anchor_err, assert_anchor_framework_err, event_authority_pda, expected_withdrawal_fee,
-    program_config_pda, CeiSnapshot, Depositor, OtherVault, Subaccount, VaultCtx,
+    program_config_pda, CeiSnapshot, Depositor, OtherVault, QueueCoSigner, Subaccount,
+    TokenProgramKind, VaultCtx,
 };
 use proptest::prelude::*;
 use proptest::test_runner::TestRunner;
-use solana_sdk::{instruction::Instruction, pubkey::Pubkey, signature::Keypair, signer::Signer};
+use solana_sdk::{
+    instruction::Instruction, pubkey::Pubkey, signature::Keypair, signer::Signer,
+    transaction::Transaction,
+};
+use spl_token_2022::{extension::StateWithExtensions, state::Account as TokenAccountState};
 
 /// Initial balance minted to each depositor; caps total value in play so the
 /// `new_aum * 10000` guard math stays far from u64 overflow.
@@ -112,6 +126,60 @@ enum Op {
     Nominate { who: usize },
     /// Admin candidate `who` accepts a nomination.
     Accept { who: usize },
+    /// Time passes, so a nomination can lapse.
+    Warp(u64),
+    /// Admin hands the operator role to spare operator `who`.
+    SetOperator { who: usize },
+    /// Admin names spare fee recipient `who`.
+    SetFeeRecipient { who: usize },
+    /// The config authority hands itself to config candidate `who`.
+    SetConfigAuthority { who: usize },
+    /// The program's upgrade authority takes the config authority back for
+    /// config candidate `who`.
+    OverrideConfigAuthority { who: usize },
+    /// A new vault is initialized by the config authority, or by a key that
+    /// is not it, while fewer than [`MAX_NEW_VAULTS`] exist.
+    CreateVault { by_other: bool },
+    /// Admin creates the share token's metadata.
+    CreateMetadata,
+    /// Admin updates the share token's metadata.
+    UpdateMetadata,
+}
+
+/// Vaults a walk may create besides its own and the foreign one.
+const MAX_NEW_VAULTS: u8 = 3;
+/// Spare operators, fee recipients and config authorities.
+const SPARES: usize = 2;
+
+/// The vault a walk runs against: token program, deposit-mint decimals and
+/// share offset. Drawn per case, so a failure names the shape it needs.
+#[derive(Debug, Clone, Copy)]
+struct Shape {
+    token_2022: bool,
+    decimals: u8,
+    offset: u64,
+}
+
+impl Shape {
+    /// The shape every walk ran against before shapes were drawn.
+    const DEFAULT: Shape = Shape {
+        token_2022: false,
+        decimals: 9,
+        offset: EXTRA_SHARES as u64,
+    };
+}
+
+fn shape_strategy() -> impl Strategy<Value = Shape> {
+    (
+        any::<bool>(),
+        prop_oneof![Just(6u8), Just(9u8)],
+        prop_oneof![Just(1_000u64), Just(EXTRA_SHARES as u64)],
+    )
+        .prop_map(|(token_2022, decimals, offset)| Shape {
+            token_2022,
+            decimals,
+            offset,
+        })
 }
 
 /// Subaccounts registered at once. Two, so one can inherit the principal and
@@ -152,15 +220,23 @@ fn op_strategy(include_yield_ops: bool) -> BoxedStrategy<Op> {
         1 => any::<usize>().prop_map(|sub| Op::Deregister { sub }),
         1 => (0..CANDIDATES).prop_map(|who| Op::Nominate { who }),
         1 => (0..CANDIDATES).prop_map(|who| Op::Accept { who }),
+        1 => (0u64..=2 * 24 * 60 * 60).prop_map(Op::Warp),
+        1 => (0..SPARES).prop_map(|who| Op::SetOperator { who }),
+        1 => (0..SPARES).prop_map(|who| Op::SetFeeRecipient { who }),
+        1 => (0..SPARES).prop_map(|who| Op::SetConfigAuthority { who }),
+        1 => (0..SPARES).prop_map(|who| Op::OverrideConfigAuthority { who }),
+        1 => any::<bool>().prop_map(|by_other| Op::CreateVault { by_other }),
+        1 => Just(Op::CreateMetadata),
+        1 => Just(Op::UpdateMetadata),
     ];
     if include_yield_ops {
         // AUM reports and custody losses move the vault's value outside its
         // own accounts, so the no-yield walks leave both out. `prop_oneof!`
         // weights are per-arm at the level they appear, so `base` is weighted
-        // by its own total (26) to keep each exactly as likely as an operator
+        // by its own total (34) to keep each exactly as likely as an operator
         // withdrawal.
         prop_oneof![
-            26 => base,
+            34 => base,
             2 => (-100i8..=100).prop_map(Op::UpdateAum),
             2 => (any::<usize>(), 0u16..=1000).prop_map(|(sub, pm)| Op::SubLose { sub, pm }),
         ]
@@ -204,14 +280,37 @@ struct VaultModel {
     nomination: Option<(Pubkey, i64)>,
     /// Where a custodian's losses go: a token account nobody in the walk owns.
     sink: Pubkey,
+    /// Operators not in office, each with its deposit-token account. The one
+    /// in office is `ctx.operator`; a handover swaps it with a spare.
+    operators: Vec<(Keypair, Pubkey)>,
+    /// Fee recipients not in office, likewise.
+    fee_recipients: Vec<(Keypair, Pubkey)>,
+    /// Config authorities not in office; the one in office is
+    /// `ctx.protocol_authority`.
+    config_candidates: Vec<Keypair>,
+    /// The program's upgrade authority, which alone may override the config
+    /// authority. It starts as the config authority too.
+    upgrade_authority: Keypair,
+    vaults_created: u8,
+    metadata: bool,
+    /// The share-metadata instructions take the classic token program only,
+    /// so a Token-2022 vault refuses both.
+    token_2022: bool,
 }
 
-/// A fresh vault and its depositors. The first is the harness's own user, who
-/// makes the seed deposit; the rest start with the same funds and no shares.
-fn fresh_walk_vault() -> (VaultCtx, Vec<Depositor>, VaultModel) {
-    let mut ctx = VaultCtx::fresh();
+/// A fresh vault of `shape` and its depositors. The first is the harness's own
+/// user, who makes the seed deposit (raised to the shape's first-deposit floor
+/// where that is higher); the rest start with the same funds and no shares.
+fn fresh_walk_vault(shape: Shape) -> (VaultCtx, Vec<Depositor>, VaultModel) {
+    let token = if shape.token_2022 {
+        TokenProgramKind::Token2022
+    } else {
+        TokenProgramKind::Spl
+    };
+    let mut ctx = VaultCtx::fresh_shaped(token, shape.decimals, shape.offset);
+    let floor = VaultState::min_first_deposit_for(shape.decimals, shape.offset as u128);
     ctx.mint_to_user(INITIAL_USER_FUNDS);
-    ctx.deposit(SEED_DEPOSIT).expect("seed deposit");
+    ctx.deposit(SEED_DEPOSIT.max(floor)).expect("seed deposit");
     let mut users = vec![Depositor {
         keypair: ctx.user.insecure_clone(),
         deposit_ata: ctx.user_deposit_ata,
@@ -226,11 +325,30 @@ fn fresh_walk_vault() -> (VaultCtx, Vec<Depositor>, VaultModel) {
     let sink_owner = Keypair::new().pubkey();
     let deposit_mint = ctx.deposit_mint;
     let sink = ctx.create_ata_for(&sink_owner, &deposit_mint);
+    let mut spare_with_account = || {
+        let key = ctx.new_funded_keypair(1_000_000_000);
+        let account = ctx.create_ata_for(&key.pubkey(), &deposit_mint);
+        (key, account)
+    };
+    let operators = (0..SPARES).map(|_| spare_with_account()).collect();
+    let fee_recipients = (0..SPARES).map(|_| spare_with_account()).collect();
+    let config_candidates = (0..SPARES)
+        .map(|_| ctx.new_funded_keypair(1_000_000_000))
+        .collect();
+    let upgrade_authority = ctx.protocol_authority.insecure_clone();
+    ctx.load_mpl_token_metadata();
     let model = VaultModel {
         subs: Vec::new(),
         candidates,
         nomination: None,
         sink,
+        operators,
+        fee_recipients,
+        config_candidates,
+        upgrade_authority,
+        vaults_created: 0,
+        metadata: false,
+        token_2022: shape.token_2022,
     };
     (ctx, users, model)
 }
@@ -534,6 +652,113 @@ fn execute(
             }
             (ok, None, false)
         }
+        Op::Warp(secs) => {
+            ctx.warp_forward_seconds(secs as i64);
+            (true, None, false)
+        }
+        Op::SetOperator { who } => {
+            let (spare, account) = &model.operators[who];
+            let (spare, account) = (spare.insecure_clone(), *account);
+            expected = Some(true);
+            let ok = ctx.set_operator_as(&admin, spare.pubkey()).is_ok();
+            if ok {
+                prop_assert_eq!(ctx.vault_state_data().operator, spare.pubkey());
+                let former = std::mem::replace(&mut ctx.operator, spare);
+                let former_account = std::mem::replace(&mut ctx.operator_deposit_ata, account);
+                prop_assert!(
+                    ctx.operator_update_aum_as(&former, state.deployed_aum)
+                        .is_err(),
+                    "the replaced operator still reported AUM"
+                );
+                model.operators[who] = (former, former_account);
+            }
+            (ok, None, false)
+        }
+        Op::SetFeeRecipient { who } => {
+            let (spare, account) = &model.fee_recipients[who];
+            let (spare, account) = (spare.insecure_clone(), *account);
+            expected = Some(true);
+            let ok = ctx.set_fee_recipient_as(&admin, spare.pubkey()).is_ok();
+            if ok {
+                prop_assert_eq!(ctx.vault_state_data().fee_recipient, spare.pubkey());
+                let former = std::mem::replace(&mut ctx.fee_recipient, spare);
+                let former_account = std::mem::replace(&mut ctx.fee_recipient_deposit_ata, account);
+                model.fee_recipients[who] = (former, former_account);
+            }
+            (ok, None, false)
+        }
+        Op::SetConfigAuthority { who } => {
+            let authority = ctx.protocol_authority.insecure_clone();
+            let spare = model.config_candidates[who].insecure_clone();
+            expected = Some(true);
+            let ok = ctx
+                .set_config_authority_as(&authority, spare.pubkey())
+                .is_ok();
+            if ok {
+                prop_assert_eq!(ctx.program_config().authority, spare.pubkey());
+                model.config_candidates[who] =
+                    std::mem::replace(&mut ctx.protocol_authority, spare);
+            }
+            (ok, None, false)
+        }
+        Op::OverrideConfigAuthority { who } => {
+            let upgrade = model.upgrade_authority.insecure_clone();
+            let spare = model.config_candidates[who].insecure_clone();
+            expected = Some(true);
+            let ok = ctx
+                .override_config_authority_as(&upgrade, spare.pubkey())
+                .is_ok();
+            if ok {
+                prop_assert_eq!(ctx.program_config().authority, spare.pubkey());
+                model.config_candidates[who] =
+                    std::mem::replace(&mut ctx.protocol_authority, spare);
+            }
+            (ok, None, false)
+        }
+        Op::CreateVault { by_other } => {
+            if model.vaults_created >= MAX_NEW_VAULTS {
+                return Ok(noop(before, holdings_before, fee_rate));
+            }
+            let mint = ctx.create_extra_deposit_mint();
+            // A spare is never the authority in office: every handover swaps
+            // the two.
+            let signer = if by_other {
+                model.config_candidates[0].insecure_clone()
+            } else {
+                ctx.protocol_authority.insecure_clone()
+            };
+            expected = Some(!by_other);
+            let ok = ctx.try_initialize_vault(&signer, mint, 0).is_ok();
+            if ok {
+                model.vaults_created += 1;
+            }
+            (ok, None, false)
+        }
+        Op::CreateMetadata | Op::UpdateMetadata => {
+            let create = matches!(op, Op::CreateMetadata);
+            expected = Some(model.metadata != create && !state.paused && !model.token_2022);
+            let ok = if create {
+                ctx.create_share_token_metadata_as(
+                    &admin,
+                    "Walk Share",
+                    "WALK",
+                    "https://w.example/a",
+                )
+                .is_ok()
+            } else {
+                ctx.update_share_token_metadata_as(
+                    &admin,
+                    "Walk Share II",
+                    "WALK2",
+                    "https://w.example/b",
+                )
+                .is_ok()
+            };
+            if ok {
+                model.metadata = true;
+            }
+            (ok, None, false)
+        }
     };
     if let Some(expected) = expected {
         prop_assert_eq!(ok, expected, "{:?} at {}", op, now);
@@ -607,6 +832,15 @@ fn recall_deployed(ctx: &mut VaultCtx, model: &mut VaultModel) {
         }
         ctx.deregister_subaccount_as(&admin, &sub)
             .expect("deregister");
+    }
+    // A former operator keeps what it withdrew; it hands that to the one in
+    // office, who returns it all.
+    let office = ctx.operator_deposit_ata;
+    for (former, account) in &model.operators {
+        let held = ctx.token_account_amount(account);
+        if held > 0 {
+            ctx.transfer_tokens_as(former, account, &office, held);
+        }
     }
     let operator_balance = ctx.token_account_amount(&ctx.operator_deposit_ata);
     if operator_balance > 0 {
@@ -807,9 +1041,10 @@ proptest! {
     /// successful redeem conserves value with exact ceil-rounded fees.
     #[test]
     fn invariants_hold_under_random_op_sequences(
+        shape in shape_strategy(),
         ops in proptest::collection::vec(op_strategy(true), 1..60)
     ) {
-        let (mut ctx, users, mut model) = fresh_walk_vault();
+        let (mut ctx, users, mut model) = fresh_walk_vault(shape);
         assert_state_invariants(&ctx, &users, &model)?;
 
         for op in &ops {
@@ -839,9 +1074,10 @@ proptest! {
     /// no share is left.
     #[test]
     fn no_value_extraction_without_yield(
+        shape in shape_strategy(),
         ops in proptest::collection::vec(op_strategy(false), 1..60)
     ) {
-        let (mut ctx, users, mut model) = fresh_walk_vault();
+        let (mut ctx, users, mut model) = fresh_walk_vault(shape);
 
         for op in &ops {
             execute(&mut ctx, &users, &mut model, op)?;
@@ -865,7 +1101,7 @@ proptest! {
 /// for more than the reserve holds.
 #[test]
 fn a_custody_loss_leaves_every_holder_a_full_exit() {
-    let (mut ctx, users, mut model) = fresh_walk_vault();
+    let (mut ctx, users, mut model) = fresh_walk_vault(Shape::DEFAULT);
     for op in [
         Op::UserDeposit {
             who: 1,
@@ -970,6 +1206,26 @@ enum QueueOp {
         pick: usize,
         decoy: usize,
     },
+    /// Two honest instructions, each `(target, who, pick)` as for
+    /// `Substitute`, sent in one transaction. See [`QueueWalk::bundle`].
+    Bundle {
+        first: (usize, usize, usize),
+        second: (usize, usize, usize),
+    },
+    /// An honest instruction with its data mangled per `how`, seeded by
+    /// `seed`. See [`QueueWalk::garble`].
+    Garble {
+        target: Target,
+        who: usize,
+        pick: usize,
+        how: u8,
+        seed: u64,
+    },
+    /// Admin detaches the queue without the queue's signature, either leaving
+    /// the queue account unsigned or having a stranger sign in its place.
+    DetachDirect {
+        stranger_signs: bool,
+    },
 }
 
 /// The instructions [`QueueOp::Substitute`] forges: the holders' and the
@@ -998,9 +1254,13 @@ enum Target {
     SetWindow,
     Release,
     Attach,
+    SetOperator,
+    SetFeeRecipient,
+    SetConfigAuthority,
+    OverrideConfigAuthority,
 }
 
-const TARGETS: [Target; 22] = [
+const TARGETS: [Target; 26] = [
     Target::Deposit,
     Target::Redeem,
     Target::Request,
@@ -1023,7 +1283,20 @@ const TARGETS: [Target; 22] = [
     Target::SetWindow,
     Target::Release,
     Target::Attach,
+    Target::SetOperator,
+    Target::SetFeeRecipient,
+    Target::SetConfigAuthority,
+    Target::OverrideConfigAuthority,
 ];
+
+/// The vault program's `ProgramData`, which records its upgrade authority.
+fn program_data_pda() -> Pubkey {
+    Pubkey::find_program_address(
+        &[august_vault::ID.as_ref()],
+        &solana_sdk::bpf_loader_upgradeable::ID,
+    )
+    .0
+}
 
 fn vault_ix(accounts: impl ToAccountMetas, data: impl InstructionData) -> Instruction {
     Instruction {
@@ -1074,19 +1347,39 @@ fn queue_op_strategy(include_yield_ops: bool) -> BoxedStrategy<QueueOp> {
         1 => Just(QueueOp::Release),
         1 => Just(QueueOp::Attach),
         // Heavier than any one op: it spreads over every target in `TARGETS`.
-        6 => (0..TARGETS.len(), 0..DEPOSITORS, any::<usize>(), any::<usize>())
+        8 => (0..TARGETS.len(), 0..DEPOSITORS, any::<usize>(), any::<usize>())
             .prop_map(|(t, who, pick, decoy)| QueueOp::Substitute {
                 target: TARGETS[t],
                 who,
                 pick,
                 decoy,
             }),
+        // One bundle in three repeats its first instruction, so the same
+        // finalize, cancel or deregister is tried twice in one transaction.
+        2 => (bundle_step(), bundle_step(), prop::bool::weighted(1.0 / 3.0))
+            .prop_map(|(first, second, repeat)| QueueOp::Bundle {
+                first,
+                second: if repeat { first } else { second },
+            }),
+        2 => (0..TARGETS.len(), 0..DEPOSITORS, any::<usize>(), 0u8..3, any::<u64>())
+            .prop_map(|(t, who, pick, how, seed)| QueueOp::Garble {
+                target: TARGETS[t],
+                who,
+                pick,
+                how,
+                seed,
+            }),
+        1 => any::<bool>().prop_map(|stranger_signs| QueueOp::DetachDirect { stranger_signs }),
     ];
     prop_oneof![
         1 => op_strategy(include_yield_ops).prop_map(QueueOp::Vault),
         3 => queue,
     ]
     .boxed()
+}
+
+fn bundle_step() -> impl Strategy<Value = (usize, usize, usize)> {
+    (0..TARGETS.len(), 0..DEPOSITORS, any::<usize>())
 }
 
 /// The walk's own record of a live request, kept independently of the chain.
@@ -1124,8 +1417,8 @@ fn fund_foreign_vault(ctx: &mut VaultCtx, holder: &Depositor, other: &OtherVault
     let deposit_ata = ctx.create_ata_for(&owner, &other.deposit_mint);
     let share_ata = ctx.create_ata_for(&owner, &other.share_mint);
     let payer = ctx.payer.insecure_clone();
-    let mint = spl_token::instruction::mint_to(
-        &spl_token::ID,
+    let mint = spl_token_2022::instruction::mint_to(
+        &ctx.token_program_id(),
         &other.deposit_mint,
         &deposit_ata,
         &payer.pubkey(),
@@ -1146,7 +1439,7 @@ fn fund_foreign_vault(ctx: &mut VaultCtx, holder: &Depositor, other: &OtherVault
             share_mint: other.share_mint,
             deposit_mint: other.deposit_mint,
             signer: owner,
-            token_program: spl_token::ID,
+            token_program: ctx.token_program_id(),
         }
         .to_account_metas(None),
         data: august_vault::instruction::Deposit {
@@ -1193,7 +1486,7 @@ fn fund_foreign_vault(ctx: &mut VaultCtx, holder: &Depositor, other: &OtherVault
             share_mint: other.share_mint,
             recipient_token_account: deposit_ata,
             request,
-            token_program: spl_token::ID,
+            token_program: ctx.token_program_id(),
             system_program: solana_sdk::system_program::ID,
             event_authority: event_authority_pda(),
             program: august_withdrawal_queue::ID,
@@ -1217,10 +1510,10 @@ type AccountKind = (Pubkey, usize, Vec<u8>);
 
 fn account_kind(ctx: &VaultCtx, key: &Pubkey) -> AccountKind {
     let account = ctx.svm.get_account(key).unwrap_or_default();
-    let mint = if account.owner == spl_token::ID && account.data.len() == 165 {
-        account.data[..32].to_vec()
-    } else {
-        Vec::new()
+    let is_token = account.owner == spl_token::ID || account.owner == spl_token_2022::ID;
+    let mint = match StateWithExtensions::<TokenAccountState>::unpack(&account.data) {
+        Ok(token) if is_token => token.base.mint.to_bytes().to_vec(),
+        _ => Vec::new(),
     };
     (account.owner, account.data.len(), mint)
 }
@@ -1240,14 +1533,37 @@ struct QueueWalk {
     /// Accounts a forged instruction may name in place of the right one; the
     /// live requests' own PDAs are added when a substitution is drawn.
     decoys: Vec<Pubkey>,
-    /// Forged instructions per [`TARGETS`] entry whose honest twin succeeded,
-    /// i.e. the ones that tested something.
+    /// What the walk exercised, for the run's own coverage checks.
+    stats: WalkStats,
+}
+
+/// What a walk exercised. Forgeries and garbles count only when the honest
+/// twin succeeded, i.e. when they tested something.
+#[derive(Default)]
+struct WalkStats {
     forged: [usize; TARGETS.len()],
+    garbled: [usize; TARGETS.len()],
+    /// Most compute units an honest instruction of each target consumed.
+    compute: [u64; TARGETS.len()],
+    bundles: usize,
+}
+
+/// Compute units an instruction may use: the 200,000 a transaction gets per
+/// instruction when it asks for no budget, less a quarter of headroom, so a
+/// caller that sets no compute budget cannot be pushed over it by state the
+/// walk never reached.
+const COMPUTE_BUDGET: u64 = 150_000;
+
+fn target_index(target: Target) -> usize {
+    TARGETS
+        .iter()
+        .position(|t| *t == target)
+        .expect("listed target")
 }
 
 impl QueueWalk {
-    fn new() -> Self {
-        let (mut ctx, users, model) = fresh_walk_vault();
+    fn new(shape: Shape) -> Self {
+        let (mut ctx, users, model) = fresh_walk_vault(shape);
         ctx.open_queue(INITIAL_COOLDOWN);
         let keeper = ctx.new_funded_keypair(1_000_000_000);
         let stranger = ctx.new_funded_keypair(1_000_000_000);
@@ -1280,6 +1596,7 @@ impl QueueWalk {
             august_withdrawal_queue::ID,
             event_authority_pda(),
             program_config_pda(),
+            program_data_pda(),
         ];
         for user in &users {
             decoys.push(user.deposit_ata);
@@ -1296,7 +1613,7 @@ impl QueueWalk {
             stray: 0,
             attached: true,
             decoys,
-            forged: [0; TARGETS.len()],
+            stats: WalkStats::default(),
         }
     }
 
@@ -1674,7 +1991,201 @@ impl QueueWalk {
                 pick,
                 decoy,
             } => self.substitute(target, who, pick, decoy),
+            QueueOp::Bundle { first, second } => self.bundle(first, second),
+            QueueOp::Garble {
+                target,
+                who,
+                pick,
+                how,
+                seed,
+            } => self.garble(target, who, pick, how, seed),
+            QueueOp::DetachDirect { stranger_signs } => {
+                let admin = self.ctx.admin.insecure_clone();
+                let queue = self.ctx.withdrawal_queue_pda();
+                let stranger = self.stranger.insecure_clone();
+                let slot = if stranger_signs {
+                    QueueCoSigner::Signing(&stranger)
+                } else {
+                    QueueCoSigner::Unsigned(queue)
+                };
+                let ok = self.ctx.detach_withdrawal_queue_as(&admin, slot).is_ok();
+                prop_assert!(!ok, "detached without the queue's signature");
+                Ok(false)
+            }
         }
+    }
+
+    /// Everyone who could try to sign in another's place: the other roles,
+    /// the spares and candidates, and every depositor.
+    fn impostors(&self) -> Vec<Keypair> {
+        let mut keys = vec![
+            self.stranger.insecure_clone(),
+            self.keeper.insecure_clone(),
+            self.ctx.admin.insecure_clone(),
+            self.ctx.operator.insecure_clone(),
+        ];
+        keys.extend(self.model.candidates.iter().map(|k| k.insecure_clone()));
+        keys.extend(self.model.operators.iter().map(|(k, _)| k.insecure_clone()));
+        keys.extend(
+            self.model
+                .fee_recipients
+                .iter()
+                .map(|(k, _)| k.insecure_clone()),
+        );
+        keys.extend(
+            self.model
+                .config_candidates
+                .iter()
+                .map(|k| k.insecure_clone()),
+        );
+        keys.push(self.ctx.protocol_authority.insecure_clone());
+        keys.push(self.model.upgrade_authority.insecure_clone());
+        keys.extend(self.users.iter().map(|u| u.keypair.insecure_clone()));
+        keys
+    }
+
+    /// Sends `ixs` in one transaction signed by `signers` (deduplicated), the
+    /// first paying. The harness sends one signer at a time.
+    fn send_together(&mut self, signers: &[&Keypair], ixs: &[Instruction]) -> bool {
+        let mut unique: Vec<&Keypair> = Vec::new();
+        for signer in signers {
+            if !unique.iter().any(|k| k.pubkey() == signer.pubkey()) {
+                unique.push(signer);
+            }
+        }
+        let svm = &mut self.ctx.svm;
+        svm.expire_blockhash();
+        let tx = Transaction::new_signed_with_payer(
+            ixs,
+            Some(&unique[0].pubkey()),
+            &unique,
+            svm.latest_blockhash(),
+        );
+        svm.send_transaction(tx).is_ok()
+    }
+
+    /// Every account the walk's instructions can write, raw, for comparing two
+    /// copies of the chain.
+    fn raw_state(&self) -> Vec<Option<Vec<u8>>> {
+        let mut keys = self.decoys.clone();
+        for who in 0..DEPOSITORS {
+            for id in 0..REQUEST_ID_POOL {
+                keys.push(self.ctx.request_pda(&self.owner(who), id));
+            }
+        }
+        for (sub, _) in &self.model.subs {
+            keys.push(sub.pda);
+            keys.push(sub.deposit_ata);
+        }
+        // The spares' accounts, and those of whoever holds each role now: a
+        // handover swaps the two, so neither list covers the office alone.
+        keys.extend(self.model.operators.iter().map(|(_, a)| *a));
+        keys.extend(self.model.fee_recipients.iter().map(|(_, a)| *a));
+        keys.push(self.ctx.operator_deposit_ata);
+        keys.push(self.ctx.fee_recipient_deposit_ata);
+        keys.push(self.ctx.nominated_admin_pda());
+        keys.push(self.model.sink);
+        keys.iter()
+            .map(|key| match self.ctx.svm.get_account(key) {
+                Some(account) if account.lamports > 0 => Some(account.data),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Two honest instructions in one transaction must do exactly what they
+    /// do one after the other: succeed together only if both succeed in turn,
+    /// and then leave the same state; otherwise change nothing. Both runs are
+    /// on copies of the chain, so the walk's model is untouched.
+    fn bundle(
+        &mut self,
+        first: (usize, usize, usize),
+        second: (usize, usize, usize),
+    ) -> Result<bool, TestCaseError> {
+        let a = self.honest(TARGETS[first.0], first.1, first.2);
+        let b = self.honest(TARGETS[second.0], second.1, second.2);
+        let (Some((sa, ia, _)), Some((sb, ib, _))) = (a, b) else {
+            return Ok(false);
+        };
+        let saved = self.ctx.svm.clone();
+        let untouched = self.raw_state();
+
+        let in_turn = self
+            .ctx
+            .send_instructions(&sa, std::slice::from_ref(&ia))
+            .is_ok()
+            && self
+                .ctx
+                .send_instructions(&sb, std::slice::from_ref(&ib))
+                .is_ok();
+        let after_in_turn = self.raw_state();
+        self.ctx.svm = saved.clone();
+
+        let together = self.send_together(&[&sa, &sb], &[ia, ib]);
+        let after_together = self.raw_state();
+        self.ctx.svm = saved;
+
+        let (ta, tb) = (TARGETS[first.0], TARGETS[second.0]);
+        prop_assert_eq!(
+            together,
+            in_turn,
+            "{:?} + {:?} in one transaction disagreed with them in turn",
+            ta,
+            tb
+        );
+        let expected = if in_turn { after_in_turn } else { untouched };
+        prop_assert!(
+            after_together == expected,
+            "{:?} + {:?} in one transaction left a different state",
+            ta,
+            tb
+        );
+        self.stats.bundles += 1;
+        Ok(false)
+    }
+
+    /// An honest instruction with its data mangled must be refused and change
+    /// nothing: truncated (`how` 0), under a discriminator no instruction has
+    /// (1), or replaced by noise (2). Only tried when the honest instruction
+    /// succeeds on a copy of the chain.
+    fn garble(
+        &mut self,
+        target: Target,
+        who: usize,
+        pick: usize,
+        how: u8,
+        seed: u64,
+    ) -> Result<bool, TestCaseError> {
+        let Some((signer, ix, _)) = self.honest(target, who, pick) else {
+            return Ok(false);
+        };
+        let saved = self.ctx.svm.clone();
+        let honest_ok = self
+            .ctx
+            .send_instructions(&signer, std::slice::from_ref(&ix))
+            .is_ok();
+        self.ctx.svm = saved;
+        if !honest_ok {
+            return Ok(false);
+        }
+        let mut garbled = ix.clone();
+        match how {
+            0 => garbled.data.truncate(seed as usize % ix.data.len()),
+            1 => garbled.data[..8].copy_from_slice(&seed.to_le_bytes()),
+            _ => {
+                let len = (seed % 64) as usize;
+                garbled.data = (0..len)
+                    .map(|i| seed.rotate_left(7 * i as u32) as u8)
+                    .collect();
+            }
+        }
+        if garbled.data == ix.data {
+            return Ok(false);
+        }
+        let accepted = self.ctx.send_instructions(&signer, &[garbled]).is_ok();
+        prop_assert!(!accepted, "{:?} accepted garbled data ({})", target, how);
+        self.stats.garbled[target_index(target)] += 1;
+        Ok(false)
     }
 
     /// `target` with every account right, its signer, and the accounts the
@@ -1702,7 +2213,7 @@ impl QueueWalk {
                         share_mint: ctx.share_mint,
                         deposit_mint: ctx.deposit_mint,
                         signer: user.keypair.pubkey(),
-                        token_program: spl_token::ID,
+                        token_program: ctx.token_program_id(),
                     }
                     .to_account_metas(None),
                     data: august_vault::instruction::Deposit { amount }.data(),
@@ -1725,7 +2236,7 @@ impl QueueWalk {
                         share_mint: ctx.share_mint,
                         deposit_mint: ctx.deposit_mint,
                         signer: user.keypair.pubkey(),
-                        token_program: spl_token::ID,
+                        token_program: ctx.token_program_id(),
                     }
                     .to_account_metas(None),
                     data: august_vault::instruction::Redeem { shares }.data(),
@@ -1856,7 +2367,7 @@ impl QueueWalk {
                     subaccount: None,
                     deposit_mint: ctx.deposit_mint,
                     operator: operator.pubkey(),
-                    token_program: spl_token::ID,
+                    token_program: ctx.token_program_id(),
                 };
                 let ix = if target == Target::OperatorWithdraw {
                     let amount = state.local_aum / 10;
@@ -1893,7 +2404,7 @@ impl QueueWalk {
                         subaccount: Some(sub.pda),
                         deposit_mint: ctx.deposit_mint,
                         operator: operator.pubkey(),
-                        token_program: spl_token::ID,
+                        token_program: ctx.token_program_id(),
                     };
                     vault_ix(
                         accounts,
@@ -1908,7 +2419,7 @@ impl QueueWalk {
                         subaccount: Some(sub.pda),
                         deposit_mint: ctx.deposit_mint,
                         operator: operator.pubkey(),
-                        token_program: spl_token::ID,
+                        token_program: ctx.token_program_id(),
                     };
                     vault_ix(
                         accounts,
@@ -1977,7 +2488,7 @@ impl QueueWalk {
                     subaccount: sub.pda,
                     deposit_mint: ctx.deposit_mint,
                     subaccount_ata: sub.deposit_ata,
-                    token_program: spl_token::ID,
+                    token_program: ctx.token_program_id(),
                     admin: admin.pubkey(),
                 };
                 let data = august_vault::instruction::SettleSubaccountLoss { amount };
@@ -2032,6 +2543,51 @@ impl QueueWalk {
                 );
                 (admin, ix, vec![])
             }
+            Target::SetOperator => {
+                let accounts = august_vault::accounts::SetOperator {
+                    vault_state: ctx.vault_state,
+                    deposit_mint: ctx.deposit_mint,
+                    admin: admin.pubkey(),
+                };
+                let data = august_vault::instruction::SetOperator {
+                    new_operator: state.operator,
+                };
+                (admin, vault_ix(accounts, data), vec![])
+            }
+            Target::SetFeeRecipient => {
+                let accounts = august_vault::accounts::SetFeeRecipient {
+                    vault_state: ctx.vault_state,
+                    deposit_mint: ctx.deposit_mint,
+                    admin: admin.pubkey(),
+                };
+                let data = august_vault::instruction::SetFeeRecipient {
+                    new_fee_recipient: state.fee_recipient,
+                };
+                (admin, vault_ix(accounts, data), vec![])
+            }
+            Target::SetConfigAuthority => {
+                let authority = ctx.protocol_authority.insecure_clone();
+                let accounts = august_vault::accounts::SetConfigAuthority {
+                    program_config: program_config_pda(),
+                    authority: authority.pubkey(),
+                };
+                let data = august_vault::instruction::SetConfigAuthority {
+                    new_authority: authority.pubkey(),
+                };
+                (authority, vault_ix(accounts, data), vec![])
+            }
+            Target::OverrideConfigAuthority => {
+                let upgrade = self.model.upgrade_authority.insecure_clone();
+                let accounts = august_vault::accounts::OverrideConfigAuthority {
+                    program_config: program_config_pda(),
+                    upgrade_authority: upgrade.pubkey(),
+                    program_data: program_data_pda(),
+                };
+                let data = august_vault::instruction::OverrideConfigAuthority {
+                    new_authority: ctx.protocol_authority.pubkey(),
+                };
+                (upgrade, vault_ix(accounts, data), vec![])
+            }
             Target::Attach => {
                 let accounts = august_vault::accounts::AttachWithdrawalQueue {
                     vault_state: ctx.vault_state,
@@ -2068,14 +2624,16 @@ impl QueueWalk {
             return Ok(false);
         };
         let saved = self.ctx.svm.clone();
-        let honest_ok = self
+        let honest = self
             .ctx
-            .send_instructions(&signer, std::slice::from_ref(&ix))
-            .is_ok();
+            .send_instructions(&signer, std::slice::from_ref(&ix));
         self.ctx.svm = saved;
-        if !honest_ok {
+        let Ok(meta) = honest else {
             return Ok(false);
-        }
+        };
+        let index = target_index(target);
+        let compute = &mut self.stats.compute[index];
+        *compute = (*compute).max(meta.compute_units_consumed);
 
         let mut pool = self.decoys.clone();
         for (owner, id) in self.live.keys() {
@@ -2093,8 +2651,6 @@ impl QueueWalk {
             .map(|key| (key, account_kind(&self.ctx, &key)))
             .collect();
 
-        let index = TARGETS.iter().position(|t| *t == target);
-        let index = index.expect("listed target");
         for (n, meta) in ix.accounts.iter().enumerate() {
             // The queue's own id fills the `program` account `#[event_cpi]`
             // adds, which Anchor leaves unchecked: `emit_cpi!` invokes
@@ -2135,7 +2691,44 @@ impl QueueWalk {
                 n,
                 real
             );
-            self.forged[index] += 1;
+            self.stats.forged[index] += 1;
+        }
+
+        // Then the signer. A finalize may be signed by anyone unless the
+        // request names a finalizer, which the caller ops cover; an expedite
+        // by the admin or the operator. Every other target has one signer,
+        // and anyone else in its place must be refused, even with every
+        // account right. The impostor takes the signer's place wherever the
+        // signer's key appears (a nomination's payer too).
+        if target == Target::Finalize {
+            return Ok(false);
+        }
+        let real = signer.pubkey();
+        let mut allowed = vec![real];
+        if target == Target::Expedite {
+            allowed.push(self.ctx.admin.pubkey());
+            allowed.push(self.ctx.operator.pubkey());
+        }
+        for impostor in self.impostors() {
+            let key = impostor.pubkey();
+            if allowed.contains(&key) {
+                continue;
+            }
+            let mut forged = ix.clone();
+            for meta in forged.accounts.iter_mut() {
+                if meta.pubkey == real {
+                    meta.pubkey = key;
+                }
+            }
+            let accepted = self.ctx.send_instructions(&impostor, &[forged]).is_ok();
+            prop_assert!(
+                !accepted,
+                "{:?} accepted {} signing in place of {}",
+                target,
+                key,
+                real
+            );
+            self.stats.forged[index] += 1;
         }
         Ok(false)
     }
@@ -2228,36 +2821,50 @@ fn queue_walk_cases(floor: u32) -> u32 {
 }
 
 /// Runs `cases` walks of `QUEUE_WALK_STEPS` ops each, or more when
-/// `PROPTEST_CASES` asks for them, and returns how many forgeries per
-/// [`TARGETS`] entry tested something across them.
+/// `PROPTEST_CASES` asks for them, each against a drawn vault shape, and
+/// returns what they exercised between them.
 fn run_queue_walk(
     include_yield_ops: bool,
     cases: u32,
     unwind: fn(&mut QueueWalk) -> Result<(), TestCaseError>,
-) -> [usize; TARGETS.len()] {
+) -> WalkStats {
     let forged: [AtomicUsize; TARGETS.len()] = Default::default();
+    let garbled: [AtomicUsize; TARGETS.len()] = Default::default();
+    let compute: [AtomicU64; TARGETS.len()] = Default::default();
+    let bundles = AtomicUsize::new(0);
     let mut runner = TestRunner::new(ProptestConfig {
         cases: queue_walk_cases(cases),
         source_file: Some(file!()),
         ..ProptestConfig::default()
     });
-    let strategy =
-        proptest::collection::vec(queue_op_strategy(include_yield_ops), QUEUE_WALK_STEPS);
-    let result = runner.run(&strategy, |ops| {
-        let mut walk = QueueWalk::new();
+    let strategy = (
+        shape_strategy(),
+        proptest::collection::vec(queue_op_strategy(include_yield_ops), QUEUE_WALK_STEPS),
+    );
+    let result = runner.run(&strategy, |(shape, ops)| {
+        let mut walk = QueueWalk::new(shape);
         walk.assert_invariants()?;
         for op in &ops {
             walk.step(op)?;
         }
-        for (total, n) in forged.iter().zip(walk.forged) {
-            total.fetch_add(n, Ordering::Relaxed);
+        let stats = &walk.stats;
+        for i in 0..TARGETS.len() {
+            forged[i].fetch_add(stats.forged[i], Ordering::Relaxed);
+            garbled[i].fetch_add(stats.garbled[i], Ordering::Relaxed);
+            compute[i].fetch_max(stats.compute[i], Ordering::Relaxed);
         }
+        bundles.fetch_add(stats.bundles, Ordering::Relaxed);
         unwind(&mut walk)
     });
     if let Err(e) = result {
         panic!("{e}");
     }
-    forged.map(|n| n.into_inner())
+    WalkStats {
+        forged: forged.map(|n| n.into_inner()),
+        garbled: garbled.map(|n| n.into_inner()),
+        compute: compute.map(|n| n.into_inner()),
+        bundles: bundles.into_inner(),
+    }
 }
 
 /// The full op mix, vault and queue: every op succeeds exactly when the model
@@ -2267,13 +2874,28 @@ fn run_queue_walk(
 /// invariants hold after every step.
 #[test]
 fn queue_walk_invariants_hold_over_ten_thousand_steps() {
-    let forged = run_queue_walk(true, QUEUE_WALK_CASES, |_| Ok(()));
+    let stats = run_queue_walk(true, QUEUE_WALK_CASES, |_| Ok(()));
     // A target whose honest instruction never succeeds would forge nothing and
     // still pass, so each must have been exercised.
-    for (target, n) in TARGETS.iter().zip(forged) {
-        assert!(n > 0, "no forged {target:?} tested anything");
+    for (i, target) in TARGETS.iter().enumerate() {
+        assert!(stats.forged[i] > 0, "no forged {target:?} tested anything");
+        assert!(
+            stats.compute[i] <= COMPUTE_BUDGET,
+            "{target:?} used {} compute units, over the {COMPUTE_BUDGET} budget",
+            stats.compute[i]
+        );
     }
-    println!("forgeries that tested something: {forged:?}");
+    assert!(stats.bundles > 0, "no bundle tested anything");
+    assert!(
+        stats.garbled.iter().sum::<usize>() > 0,
+        "no garbled instruction tested anything"
+    );
+    println!("forgeries that tested something: {:?}", stats.forged);
+    println!("garbled that tested something: {:?}", stats.garbled);
+    println!("bundles that tested something: {}", stats.bundles);
+    for (target, units) in TARGETS.iter().zip(stats.compute) {
+        println!("most compute units, {target:?}: {units}");
+    }
 }
 
 /// No-yield queue walks: once the operator returns everything, every request is
