@@ -9,4 +9,4 @@ use solana_pubkey::{pubkey, Pubkey};
 
 /// `august_withdrawal_queue` program ID.
 pub const AUGUST_WITHDRAWAL_QUEUE_ID: Pubkey =
-    pubkey!("NmJ9CGaiPJSfAGSdhNeVDkMPGi7ZQMABYYwWUC4GHyf");
+    pubkey!("upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW");

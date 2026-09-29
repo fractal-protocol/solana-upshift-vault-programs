@@ -75,7 +75,7 @@ fn initialize_config_rejects_non_upgrade_authority() {
 /// Recorded as a test because it imposes an ordering rule on deployment that is
 /// invisible from the code: the config must be bootstrapped **before** anyone
 /// considers making the program immutable. Reversing that order permanently
-/// prevents vault creation, with no on-chain remedy. See docs/UPGRADE.md Step 2.
+/// prevents vault creation, with no on-chain remedy. See docs/UPGRADE.md Step 4.
 #[test]
 fn immutable_program_can_never_bootstrap_config() {
     let mut ctx = BareCtx::new();
