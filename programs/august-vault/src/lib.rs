@@ -37,7 +37,7 @@ pub mod instructions;
 
 use anchor_lang::prelude::*;
 
-// Devnet: C8B1EpsSGVWK2vMrk3aDT3kL7RCE77otokUh4EC35kK7
+// Devnet: the same id (the older C8B1Eps… deployment is retired)
 // Mainnet: up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt
 declare_id!("up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt");
 

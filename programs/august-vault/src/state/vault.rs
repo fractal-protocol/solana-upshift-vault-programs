@@ -35,7 +35,7 @@ pub const VAULT_TOKEN_SEED: &[u8] = b"token_vault";
 /// `the_hardcoded_queue_program_id_is_the_queue_crates_id` in
 /// `integration-tests`, which depends on both.
 pub const WITHDRAWAL_QUEUE_PROGRAM_ID: Pubkey =
-    pubkey!("NmJ9CGaiPJSfAGSdhNeVDkMPGi7ZQMABYYwWUC4GHyf");
+    pubkey!("upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW");
 
 /// The first seed of the queue program's per-vault PDA. The second seed is the
 /// vault state address. The account belongs to the queue, but the vault derives

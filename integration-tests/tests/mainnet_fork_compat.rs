@@ -9,11 +9,13 @@
 //! on the *existing* state correctly:
 //!   1. deserializes the existing `VaultState` (guards the account layout);
 //!   2. reads the vault reserve token account back, consistent with accounting;
-//!   3. exercises a real user deposit against the live USDC vault state, minting
+//!   3. exercises a real user deposit against each live vault's state, minting
 //!      shares exactly per the on-chain formula with correct accounting;
-//!   4. redeems those shares straight back out, so `assets_for_redeem` — which
-//!      carries the raised offsets and the pro-rata cap — is exercised against
-//!      real state too, and the round trip is shown not to extract value.
+//!   4. redeems those shares straight back out, signed by the holder, so every
+//!      live vault is shown to still redeem instantly after the upgrade (none is
+//!      gated by a withdrawal queue), `assets_for_redeem` — which carries the
+//!      raised offsets and the pro-rata cap — runs against real state, and the
+//!      round trip is shown not to extract value.
 //!
 //! The USDC and jitoSOL snapshots are exactly 1:1 (supply == total_assets), a
 //! state in which the share-price offsets cancel identically — so those two tests
@@ -543,6 +545,108 @@ fn jito_vault_real_state_read() {
         "invariant: on-chain reserve balance == local_aum accounting"
     );
     println!("jitoSOL fork OK: local_aum={JITO_LOCAL_AUM} deployed_aum={JITO_DEPLOYED_AUM} reserve={JITO_LOCAL_AUM}");
+
+    // The upgrade must leave this vault redeeming instantly: a holder deposits
+    // and redeems straight back out, signing the redeem themselves, with no
+    // queue anywhere in the transaction.
+    let user = Keypair::new();
+    svm.airdrop(&user.pubkey(), 1_000_000_000).unwrap();
+    let deposit: u64 = 1_000_000_000; // 1 jitoSOL (9 decimals)
+    let user_jito = Keypair::new().pubkey();
+    let user_shares_acct = Keypair::new().pubkey();
+    let fee_recipient_acct = Keypair::new().pubkey();
+    inject(
+        &mut svm,
+        user_jito,
+        spl,
+        packed_token(deposit_mint, user.pubkey(), deposit),
+    );
+    inject(
+        &mut svm,
+        user_shares_acct,
+        spl,
+        packed_token(share_mint, user.pubkey(), 0),
+    );
+    inject(
+        &mut svm,
+        fee_recipient_acct,
+        spl,
+        packed_token(deposit_mint, vs.fee_recipient, 0),
+    );
+    assert_eq!(
+        vs.withdrawal_fee, 0,
+        "fixture assumption: the live jitoSOL vault charges no withdrawal fee"
+    );
+
+    let deposit_ix = Instruction {
+        program_id: august_vault::ID,
+        accounts: ix_accounts::Deposit {
+            vault_state,
+            vault_token_ata: vault_ata,
+            sender_token_account: user_jito,
+            sender_share_account: user_shares_acct,
+            share_mint,
+            deposit_mint,
+            signer: user.pubkey(),
+            token_program: spl,
+        }
+        .to_account_metas(None),
+        data: ix_data::Deposit { amount: deposit }.data(),
+    };
+    let bh = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(&[deposit_ix], Some(&user.pubkey()), &[&user], bh);
+    svm.send_transaction(tx)
+        .expect("deposit against real jitoSOL vault state");
+    let minted = token_amount(&svm, &user_shares_acct);
+    assert!(minted > 0, "deposit minted zero shares");
+
+    let vs_after = read_vault_state(&svm, &vault_state);
+    let supply = SplMint::unpack(&svm.get_account(&share_mint).unwrap().data[..SplMint::LEN])
+        .unwrap()
+        .supply;
+    let expected_assets = ref_assets(supply, vs_after.total_assets().unwrap(), minted);
+
+    let redeem_ix = Instruction {
+        program_id: august_vault::ID,
+        accounts: ix_accounts::Redeem {
+            vault_state,
+            vault_deposit_ata: vault_ata,
+            sender_token_account: user_jito,
+            sender_share_account: user_shares_acct,
+            fee_recipient_account: fee_recipient_acct,
+            share_mint,
+            deposit_mint,
+            signer: user.pubkey(),
+            token_program: spl,
+        }
+        .to_account_metas(None),
+        data: ix_data::Redeem { shares: minted }.data(),
+    };
+    let bh = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(&[redeem_ix], Some(&user.pubkey()), &[&user], bh);
+    svm.send_transaction(tx)
+        .expect("a holder redeems instantly against real jitoSOL vault state");
+
+    let returned = token_amount(&svm, &user_jito);
+    assert_eq!(
+        returned, expected_assets,
+        "assets returned must match the on-chain formula"
+    );
+    assert!(
+        returned <= deposit,
+        "round trip extracted value: paid {deposit}, took {returned}"
+    );
+    assert_eq!(
+        token_amount(&svm, &user_shares_acct),
+        0,
+        "all shares burned"
+    );
+    assert_eq!(
+        read_vault_state(&svm, &vault_state).local_aum,
+        token_amount(&svm, &vault_ata),
+        "local_aum must still equal the reserve after the round trip"
+    );
+    println!("jitoSOL fork redeem OK: {minted} shares -> {returned} units (paid {deposit})");
 }
 
 /// Guards floor-rounding of the deposit math on a NON-1:1 share price, which the

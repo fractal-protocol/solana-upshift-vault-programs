@@ -22,7 +22,7 @@ import { ensureProgramConfig } from "../deploy/helpers/program-config.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const PROGRAM_ID = new PublicKey("C8B1EpsSGVWK2vMrk3aDT3kL7RCE77otokUh4EC35kK7");
+const PROGRAM_ID = new PublicKey("up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt");
 const JITOSOL_MINT = new PublicKey("J1tos8mqbhdGcF3pgj4PCKyVjzWSURcpLZU7pPGHxSYi");
 // Per-vault virtual-share offset. jitoSOL is 9-decimal, so the program's
 // default is appropriate; a high-value, low-decimal mint would want a smaller

@@ -71,7 +71,7 @@ if (!programId) {
   console.error(
     '❌ Pass --program-id <PROGRAM_ID>. It is not inferred, so an upgrade can\n' +
     '   never target a program you did not name.\n\n' +
-    '   Devnet: C8B1EpsSGVWK2vMrk3aDT3kL7RCE77otokUh4EC35kK7'
+    '   Devnet: up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt'
   );
   process.exit(1);
 }

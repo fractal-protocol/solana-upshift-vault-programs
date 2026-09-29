@@ -6,16 +6,16 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-august_vault = "C8B1EpsSGVWK2vMrk3aDT3kL7RCE77otokUh4EC35kK7"
-august_withdrawal_queue = "NmJ9CGaiPJSfAGSdhNeVDkMPGi7ZQMABYYwWUC4GHyf"
+august_vault = "up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt"
+august_withdrawal_queue = "upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW"
 
 [programs.localnet]
 august_vault = "up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt"
-august_withdrawal_queue = "NmJ9CGaiPJSfAGSdhNeVDkMPGi7ZQMABYYwWUC4GHyf"
+august_withdrawal_queue = "upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW"
 
 [programs.mainnet]
 august_vault = "up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt"
-august_withdrawal_queue = "NmJ9CGaiPJSfAGSdhNeVDkMPGi7ZQMABYYwWUC4GHyf"
+august_withdrawal_queue = "upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW"
 
 [registry]
 url = "https://api.apr.dev"
@@ -36,5 +36,6 @@ startup_wait = 20000
 cei-pattern = "pnpm exec ts-mocha -p ./tsconfig.json -t 1000000 tests/1_*.ts tests/11_redeem_cei_pattern.ts"
 close-vault = "pnpm exec ts-mocha -p ./tsconfig.json -t 1000000 tests/12_*.ts"
 multi-vault = "pnpm exec ts-mocha -p ./tsconfig.json -t 1000000 tests/11_*.ts"
-test = "pnpm exec ts-mocha -p ./tsconfig.json -t 1000000 tests/1_*.ts tests/2_*.ts tests/3_*.ts tests/11_*.ts tests/12_*.ts tests/13_*.ts"
+test = "pnpm exec ts-mocha -p ./tsconfig.json -t 1000000 tests/1_*.ts tests/2_*.ts tests/3_*.ts tests/11_*.ts tests/12_*.ts tests/13_*.ts tests/14_*.ts"
 version-security = "pnpm exec ts-mocha -p ./tsconfig.json -t 1000000 tests/13_*.ts"
+withdrawal-queue = "pnpm exec ts-mocha -p ./tsconfig.json -t 1000000 tests/14_*.ts"

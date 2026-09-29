@@ -33,7 +33,7 @@ pub const MIN_SUPPLY_MULTIPLE: u128 = 100;
 ///
 /// Keep in step with `programs/august-vault/src/state/vault.rs`.
 pub const WITHDRAWAL_QUEUE_PROGRAM_ID: Pubkey =
-    Pubkey::from_str_const("NmJ9CGaiPJSfAGSdhNeVDkMPGi7ZQMABYYwWUC4GHyf");
+    Pubkey::from_str_const("upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW");
 
 /// First seed of the queue's per-vault PDA; the second is the vault state
 /// address. Mirrors `WITHDRAWAL_QUEUE_SEED` in the program.

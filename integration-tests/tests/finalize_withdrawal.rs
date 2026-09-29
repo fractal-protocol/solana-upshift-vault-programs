@@ -17,6 +17,7 @@ use august_vault::state::vault::VAULT_STATE_SEED;
 use august_withdrawal_queue::accounts::FinalizeWithdrawal as Finalize;
 use august_withdrawal_queue::errors::{ErrorCode, ANCHOR_USER_ERROR_OFFSET};
 use august_withdrawal_queue::events::WithdrawalFinalized;
+use august_withdrawal_queue::state::MAX_COOLDOWN_SECONDS;
 use integration_tests::harness::{
     assert_anchor_err, assert_anchor_framework_err, events_of, VaultCtx, DEPOSIT_DECIMALS,
     VAULT_VERSION,
@@ -333,6 +334,56 @@ fn early_is_refused_until_the_exact_eligibility_instant() {
     ctx.warp_forward_seconds(1);
     ctx.finalize_withdrawal(1, 1)
         .expect("at the instant itself");
+}
+
+/// The longest cooldown the queue allows is waited out in full, to the second.
+#[test]
+fn the_maximum_cooldown_is_waited_out_to_the_second() {
+    let (mut ctx, _) = holder_with_request(VaultCtx::fresh(), MAX_COOLDOWN_SECONDS);
+    let user = ctx.user.pubkey();
+    let request = ctx.request_state_data(&user, 1);
+    assert_eq!(
+        request.eligible_at - request.requested_at,
+        MAX_COOLDOWN_SECONDS as i64
+    );
+
+    ctx.warp_forward_seconds(MAX_COOLDOWN_SECONDS as i64 - 1);
+    let err = ctx.finalize_withdrawal(1, 1).expect_err("one second early");
+    assert_queue_err(&err, ErrorCode::CooldownNotElapsed);
+
+    ctx.warp_forward_seconds(1);
+    ctx.finalize_withdrawal(1, 1).expect("thirty days on");
+}
+
+/// A cooldown change applies to later requests only: shortening it does not
+/// let an earlier request out sooner, and lengthening it does not hold one back.
+#[test]
+fn a_cooldown_change_moves_only_later_requests() {
+    let (mut ctx, half) = holder_with_request(VaultCtx::fresh(), DAY);
+    ctx.set_cooldown(0).expect("shorter");
+    ctx.request_withdrawal(2, half / 2)
+        .expect("under the shorter cooldown");
+    ctx.set_cooldown(2 * DAY).expect("longer");
+    ctx.request_withdrawal(3, half / 2)
+        .expect("under the longer cooldown");
+
+    ctx.finalize_withdrawal(2, 2)
+        .expect("no wait for request 2");
+    let err = ctx
+        .finalize_withdrawal(1, 1)
+        .expect_err("still a day to go");
+    assert_queue_err(&err, ErrorCode::CooldownNotElapsed);
+
+    ctx.warp_forward_seconds(DAY as i64);
+    ctx.finalize_withdrawal(1, 1)
+        .expect("a day on, as when requested");
+    let err = ctx
+        .finalize_withdrawal(3, 3)
+        .expect_err("request 3 waits two days");
+    assert_queue_err(&err, ErrorCode::CooldownNotElapsed);
+
+    ctx.warp_forward_seconds(DAY as i64);
+    ctx.finalize_withdrawal(3, 3).expect("two days on");
 }
 
 /// A zero cooldown is eligible in the same slot as the request.
