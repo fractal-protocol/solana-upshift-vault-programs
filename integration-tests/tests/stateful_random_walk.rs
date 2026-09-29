@@ -2957,6 +2957,25 @@ impl TwoVaults {
         }
     }
 
+    /// Brings walk `i`'s view of the other vault up to date: a handover there
+    /// installs new roles and accounts, and those must be refused here too.
+    /// Former holders stay on the lists, since they must be refused as well.
+    fn refresh_outside(&mut self, i: usize) {
+        let other = &self.walks[1 - i];
+        let (roles, accounts) = (other.roles(), other.own_accounts());
+        let walk = &mut self.walks[i];
+        for key in roles {
+            if !walk.outsiders.iter().any(|k| k.pubkey() == key.pubkey()) {
+                walk.outsiders.push(key);
+            }
+        }
+        for account in accounts {
+            if !walk.outside_decoys.contains(&account) {
+                walk.outside_decoys.push(account);
+            }
+        }
+    }
+
     /// Runs `f` on walk `i` with the chain in its hands.
     fn on<R>(&mut self, i: usize, f: impl FnOnce(&mut QueueWalk) -> R) -> R {
         let [first, second] = &mut self.walks;
@@ -2974,6 +2993,7 @@ impl TwoVaults {
     /// other vault's accounts are untouched and its invariants still hold.
     fn step(&mut self, i: usize, op: &QueueOp) -> Result<(), TestCaseError> {
         let other = 1 - i;
+        self.refresh_outside(i);
         let before = self.on(other, |w| w.raw_state());
         self.on(i, |w| w.step(op))?;
         let after = self.on(other, |w| w.raw_state());
