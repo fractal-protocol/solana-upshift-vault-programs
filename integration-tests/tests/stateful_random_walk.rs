@@ -1,15 +1,22 @@
-//! Stateful property tests: random sequences of deposits/redeems by several
-//! depositors, operator withdraw/return/AUM reports, and admin fee changes are
-//! executed against a real LiteSVM vault, checking accounting invariants after
-//! every step. This addresses the due-diligence recommendation for property
-//! testing over "AUM and fee arithmetic, and stateful sequences of deposits,
-//! operator actions, and redemptions".
+//! Stateful property tests: random sequences of deposits/redeems (plain and
+//! slippage-checked) by several depositors, operator withdraw/return/AUM
+//! reports, subaccount custody (register, withdraw to, return from, custodian
+//! loss, settle, deregister), and admin fee, limit, pause and handover changes
+//! are executed against a real LiteSVM vault, checking accounting invariants
+//! after every step. This addresses the due-diligence recommendation for
+//! property testing over "AUM and fee arithmetic, and stateful sequences of
+//! deposits, operator actions, and redemptions".
 //!
 //! Invariants checked after every operation:
+//! - An op whose outcome the walk's model can decide (a paused vault, an AUM
+//!   report against the current limits, a slippage bound, a subaccount rule, a
+//!   nomination and its expiry) succeeds exactly when the model says.
 //! - `local_aum` equals the vault token account's actual balance (no
 //!   accounting drift, with or without fees).
 //! - Share-mint supply equals the depositors' share balances combined (nothing
 //!   else mints or burns).
+//! - While any subaccount is registered, `deployed_principal` equals their
+//!   principals combined, each as the model tracked it.
 //! - Any failed operation leaves every observable state slot unchanged
 //!   (transaction-level atomicity backing the CEI audit finding).
 //! - A successful operation moves no balance of a depositor it does not
@@ -19,18 +26,20 @@
 //!   redeemer receives the remainder.
 //! - Every successful deposit mints, and every redeem pays, exactly what the
 //!   vault's conversion math quotes on the state before it.
-//! - In the queue walk, an instruction forged with one account the program
-//!   must bind swapped for a decoy (another vault's, another holder's, the
-//!   wrong kind) is refused and changes nothing.
+//! - In the queue walk, an instruction (a holder's, the queue's, the
+//!   operator's or the admin's) forged with one account the program must bind
+//!   swapped for a decoy (another vault's, another holder's, the wrong kind)
+//!   is refused and changes nothing.
 //!
-//! A second walk (no AUM reports, operator returns everything at the end)
-//! checks the economic end-state property: with no yield injected, the
-//! depositors together can never withdraw more than they deposited. Not each
-//! one alone: a redeem's rounding dust stays in the vault and lifts the price
-//! for whoever remains.
+//! A second walk (no AUM reports or custody losses; everything deployed comes
+//! home at the end) checks the economic end-state property: with no yield
+//! injected, the depositors together can never withdraw more than they
+//! deposited. Not each one alone: a redeem's rounding dust stays in the vault
+//! and lifts the price for whoever remains. It then checks `close_vault` is
+//! refused while any share is out and succeeds once none is.
 //!
 //! Case count is deliberately modest (each case boots a fresh SVM); override
-//! with PROPTEST_CASES for a deeper local search.
+//! with PROPTEST_CASES for a deeper local search. `nightly-property.yml` does.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -38,12 +47,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use anchor_lang::{InstructionData, ToAccountMetas};
 
 use august_vault::errors::ErrorCode as VaultError;
-use august_vault::state::vault::FEE_RATE_DENOMINATOR_VALUE;
+use august_vault::state::vault::{BPS_DENOMINATOR, FEE_RATE_DENOMINATOR_VALUE};
 use august_withdrawal_queue::errors::{ErrorCode as QueueError, ANCHOR_USER_ERROR_OFFSET};
 use august_withdrawal_queue::state::WITHDRAWAL_REQUEST_SEED;
 use integration_tests::harness::{
     assert_anchor_err, assert_anchor_framework_err, event_authority_pda, expected_withdrawal_fee,
-    program_config_pda, CeiSnapshot, Depositor, OtherVault, VaultCtx,
+    program_config_pda, CeiSnapshot, Depositor, OtherVault, Subaccount, VaultCtx,
 };
 use proptest::prelude::*;
 use proptest::test_runner::TestRunner;
@@ -65,32 +74,97 @@ enum Op {
     UserDeposit { who: usize, amount: u64 },
     /// Depositor `who` redeems this many per-mille of their share balance.
     UserRedeem { who: usize, pm: u16 },
-    /// Operator withdraws this many per-mille of current `local_aum`.
+    /// `deposit_checked` with `min_shares_out` set `slack` away from the quote.
+    DepositChecked { who: usize, amount: u64, slack: i8 },
+    /// `redeem_checked` with `min_assets_out` set `slack` away from the quoted
+    /// net payout.
+    RedeemChecked { who: usize, pm: u16, slack: i8 },
+    /// Operator withdraws this many per-mille of current `local_aum` to its
+    /// own account, which the vault refuses once a subaccount is registered.
     OperatorWithdraw(u16),
-    /// Operator returns this many per-mille of its current token balance.
+    /// Operator returns this many per-mille of its own token balance.
     OperatorReturn(u16),
     /// Operator reports AUM this many basis points away from the current
-    /// `deployed_aum` (kept within the default ±20 bps window).
+    /// `deployed_aum`, inside or outside the current limits.
     UpdateAum(i8),
     /// Admin sets the withdrawal fee (always below the 10% cap).
     SetFee(u32),
+    /// Admin pauses a running vault or unpauses a paused one.
+    TogglePause,
+    /// Admin sets the AUM report limits in basis points; over 100% is refused.
+    SetAumLimits { increase: u32, decrease: u32 },
+    /// Admin registers a fresh custody subaccount, while fewer than
+    /// [`MAX_SUBACCOUNTS`] are registered.
+    RegisterSub,
+    /// Operator withdraws this many per-mille of `local_aum` to subaccount
+    /// `sub` (modulo the number registered).
+    SubWithdraw { sub: usize, pm: u16 },
+    /// Operator returns this many per-mille of subaccount `sub`'s balance.
+    SubReturn { sub: usize, pm: u16 },
+    /// Subaccount `sub`'s custodian loses this many per-mille of its balance.
+    SubLose { sub: usize, pm: u16 },
+    /// Admin settles this many per-mille of subaccount `sub`'s shortfall; over
+    /// 1000 asks for more than the shortfall and is refused.
+    SettleLoss { sub: usize, pm: u16 },
+    /// Admin deregisters subaccount `sub`, refused while it carries principal.
+    Deregister { sub: usize },
+    /// Admin nominates admin candidate `who`.
+    Nominate { who: usize },
+    /// Admin candidate `who` accepts a nomination.
+    Accept { who: usize },
 }
 
+/// Subaccounts registered at once. Two, so one can inherit the principal and
+/// the other start empty.
+const MAX_SUBACCOUNTS: usize = 2;
+/// Admin candidates besides the sitting admin.
+const CANDIDATES: usize = 2;
+/// How long a nomination stays acceptable (`NominatedAdmin::initialize`).
+const NOMINATION_WINDOW: i64 = 24 * 60 * 60;
+/// What a subaccount lets the vault move; far above anything a walk deploys.
+const SUBACCOUNT_ALLOWANCE: u64 = u64::MAX / 4;
+
 fn op_strategy(include_yield_ops: bool) -> BoxedStrategy<Op> {
+    let slack = prop_oneof![Just(-1i8), Just(0i8), Just(1i8)];
     let base = prop_oneof![
-        (0..DEPOSITORS, 1u64..20_000_000_000)
+        4 => (0..DEPOSITORS, 1u64..20_000_000_000)
             .prop_map(|(who, amount)| Op::UserDeposit { who, amount }),
-        (0..DEPOSITORS, 0u16..=1000).prop_map(|(who, pm)| Op::UserRedeem { who, pm }),
-        (0u16..=1000).prop_map(Op::OperatorWithdraw),
-        (0u16..=1000).prop_map(Op::OperatorReturn),
-        (0u32..FEE_RATE_DENOMINATOR_VALUE / 10).prop_map(Op::SetFee),
+        4 => (0..DEPOSITORS, 0u16..=1000).prop_map(|(who, pm)| Op::UserRedeem { who, pm }),
+        1 => (0..DEPOSITORS, 1u64..20_000_000_000, slack.clone())
+            .prop_map(|(who, amount, slack)| Op::DepositChecked { who, amount, slack }),
+        1 => (0..DEPOSITORS, 0u16..=1000, slack)
+            .prop_map(|(who, pm, slack)| Op::RedeemChecked { who, pm, slack }),
+        2 => (0u16..=1000).prop_map(Op::OperatorWithdraw),
+        2 => (0u16..=1000).prop_map(Op::OperatorReturn),
+        1 => (0u32..FEE_RATE_DENOMINATOR_VALUE / 10).prop_map(Op::SetFee),
+        1 => Just(Op::TogglePause),
+        1 => (
+            prop_oneof![0u32..=100, 0u32..=BPS_DENOMINATOR, BPS_DENOMINATOR..=BPS_DENOMINATOR + 50],
+            prop_oneof![0u32..=100, 0u32..=BPS_DENOMINATOR, BPS_DENOMINATOR..=BPS_DENOMINATOR + 50],
+        )
+            .prop_map(|(increase, decrease)| Op::SetAumLimits { increase, decrease }),
+        1 => Just(Op::RegisterSub),
+        2 => (any::<usize>(), 0u16..=1000).prop_map(|(sub, pm)| Op::SubWithdraw { sub, pm }),
+        2 => (any::<usize>(), 0u16..=1000).prop_map(|(sub, pm)| Op::SubReturn { sub, pm }),
+        // Half the settlements ask for more than the shortfall, up to twice it.
+        1 => (any::<usize>(), prop_oneof![0u16..=1000, 1001u16..=2000])
+            .prop_map(|(sub, pm)| Op::SettleLoss { sub, pm }),
+        1 => any::<usize>().prop_map(|sub| Op::Deregister { sub }),
+        1 => (0..CANDIDATES).prop_map(|who| Op::Nominate { who }),
+        1 => (0..CANDIDATES).prop_map(|who| Op::Accept { who }),
     ];
     if include_yield_ops {
-        // `prop_oneof!` weights are per-arm at the level they appear, so a bare
-        // `prop_oneof![base, aum]` would hand AUM reports half of every walk
-        // and starve the deposit/redeem interleavings. Weighting `base` by its
-        // arm count keeps all six ops equally likely.
-        prop_oneof![5 => base, 1 => (-20i8..=20).prop_map(Op::UpdateAum)].boxed()
+        // AUM reports and custody losses move the vault's value outside its
+        // own accounts, so the no-yield walks leave both out. `prop_oneof!`
+        // weights are per-arm at the level they appear, so `base` is weighted
+        // by its own total to keep each about as likely as an operator
+        // withdrawal.
+        prop_oneof![
+            29 => base,
+            2 => (-100i8..=100).prop_map(Op::UpdateAum),
+            2 => (any::<usize>(), 0u16..=1000).prop_map(|(sub, pm)| Op::SubLose { sub, pm }),
+        ]
+        .boxed()
     } else {
         base.boxed()
     }
@@ -120,9 +194,21 @@ fn increase(before: u64, after: u64, what: &str) -> Result<u64, TestCaseError> {
     })
 }
 
+/// What the walk tracks of the vault beside the harness: the registered
+/// subaccounts with the principal each must carry, the admin candidates, and
+/// the pending nomination.
+struct VaultModel {
+    subs: Vec<(Subaccount, u64)>,
+    candidates: Vec<Keypair>,
+    /// Nominee and the instant the nomination stops being acceptable.
+    nomination: Option<(Pubkey, i64)>,
+    /// Where a custodian's losses go: a token account nobody in the walk owns.
+    sink: Pubkey,
+}
+
 /// A fresh vault and its depositors. The first is the harness's own user, who
 /// makes the seed deposit; the rest start with the same funds and no shares.
-fn fresh_walk_vault() -> (VaultCtx, Vec<Depositor>) {
+fn fresh_walk_vault() -> (VaultCtx, Vec<Depositor>, VaultModel) {
     let mut ctx = VaultCtx::fresh();
     ctx.mint_to_user(INITIAL_USER_FUNDS);
     ctx.deposit(SEED_DEPOSIT).expect("seed deposit");
@@ -134,7 +220,19 @@ fn fresh_walk_vault() -> (VaultCtx, Vec<Depositor>) {
     for _ in 1..DEPOSITORS {
         users.push(ctx.new_depositor(INITIAL_USER_FUNDS));
     }
-    (ctx, users)
+    let candidates = (0..CANDIDATES)
+        .map(|_| ctx.new_funded_keypair(1_000_000_000))
+        .collect();
+    let sink_owner = Keypair::new().pubkey();
+    let deposit_mint = ctx.deposit_mint;
+    let sink = ctx.create_ata_for(&sink_owner, &deposit_mint);
+    let model = VaultModel {
+        subs: Vec::new(),
+        candidates,
+        nomination: None,
+        sink,
+    };
+    (ctx, users, model)
 }
 
 /// One depositor's deposit-token and share balances.
@@ -194,20 +292,44 @@ struct OpOutcome {
     quote: Option<u64>,
 }
 
-/// Execute one op against the live vault.
-fn execute(ctx: &mut VaultCtx, users: &[Depositor], op: &Op) -> OpOutcome {
+/// Runs `op` on a copy of the chain and reports whether it succeeded, leaving
+/// the real chain untouched.
+fn succeeds_on_copy(ctx: &mut VaultCtx, op: impl FnOnce(&mut VaultCtx) -> bool) -> bool {
+    let saved = ctx.svm.clone();
+    let ok = op(ctx);
+    ctx.svm = saved;
+    ok
+}
+
+/// Execute one op against the live vault, and check it succeeded exactly when
+/// the model says it must.
+fn execute(
+    ctx: &mut VaultCtx,
+    users: &[Depositor],
+    model: &mut VaultModel,
+    op: &Op,
+) -> Result<OpOutcome, TestCaseError> {
     let before = ctx.snapshot();
     let holdings_before = holdings(ctx, users);
     let state = ctx.vault_state_data();
     let fee_rate = state.withdrawal_fee;
     let supply = ctx.share_mint_supply();
     let total_assets = state.total_assets().expect("total assets");
+    let now = ctx.now();
     let mut quote = None;
+    // Whether the op must succeed, where the model decides it; `None` leaves
+    // the outcome to the program and checks only its effects.
+    let mut expected = None;
+    let admin = ctx.admin.insecure_clone();
+    let sub_count = model.subs.len();
 
     let (ok, actor, is_redeem) = match *op {
         Op::UserDeposit { who, amount } => {
             if let Ok(shares) = state.shares_for_deposit(supply, total_assets, amount) {
                 quote = Some(shares);
+            }
+            if state.paused || amount > holdings_before[who].deposit {
+                expected = Some(false);
             }
             (
                 ctx.deposit_as(&users[who], amount).is_ok(),
@@ -220,31 +342,203 @@ fn execute(ctx: &mut VaultCtx, users: &[Depositor], op: &Op) -> OpOutcome {
             if let Ok(gross) = state.assets_for_redeem(supply, total_assets, shares) {
                 quote = Some(gross - expected_withdrawal_fee(gross, fee_rate));
             }
+            if state.paused {
+                expected = Some(false);
+            }
             (ctx.redeem_as(&users[who], shares).is_ok(), Some(who), true)
         }
+        Op::DepositChecked { who, amount, slack } => {
+            if let Ok(shares) = state.shares_for_deposit(supply, total_assets, amount) {
+                quote = Some(shares);
+            }
+            let min = (quote.unwrap_or(0) as i128 + slack as i128).max(0) as u64;
+            // The bound is the only difference from a plain deposit, so the
+            // plain one on a copy decides everything else.
+            let plain = succeeds_on_copy(ctx, |c| c.deposit_as(&users[who], amount).is_ok());
+            expected = Some(plain && quote.unwrap_or(0) >= min);
+            let ok = ctx.deposit_checked_as(&users[who], amount, min).is_ok();
+            (ok, Some(who), false)
+        }
+        Op::RedeemChecked { who, pm, slack } => {
+            let shares = per_mille(holdings_before[who].shares, pm);
+            if let Ok(gross) = state.assets_for_redeem(supply, total_assets, shares) {
+                quote = Some(gross - expected_withdrawal_fee(gross, fee_rate));
+            }
+            let min = (quote.unwrap_or(0) as i128 + slack as i128).max(0) as u64;
+            let plain = succeeds_on_copy(ctx, |c| c.redeem_as(&users[who], shares).is_ok());
+            expected = Some(plain && quote.unwrap_or(0) >= min);
+            let ok = ctx.redeem_checked_as(&users[who], shares, min).is_ok();
+            (ok, Some(who), true)
+        }
         Op::OperatorWithdraw(pm) => {
-            let amount = per_mille(ctx.vault_state_data().local_aum, pm);
+            let amount = per_mille(state.local_aum, pm);
+            expected = Some(sub_count == 0 && amount > 0);
             (ctx.operator_withdraw(amount).is_ok(), None, false)
         }
         Op::OperatorReturn(pm) => {
             let amount = per_mille(ctx.token_account_amount(&ctx.operator_deposit_ata), pm);
+            expected = Some(sub_count == 0 && amount > 0);
             (ctx.operator_deposit(amount).is_ok(), None, false)
         }
         Op::UpdateAum(bps) => {
-            let deployed = ctx.vault_state_data().deployed_aum;
+            let deployed = state.deployed_aum;
             let delta = (deployed as u128) * (bps.unsigned_abs() as u128) / 10_000;
-            // Rounding the |delta| down keeps the report strictly inside the
-            // ±window, so a rejection here would be a genuine guard bug.
             let new_aum = if bps >= 0 {
                 deployed + delta as u64
             } else {
                 deployed - delta as u64
             };
+            let bps_den = BPS_DENOMINATOR as u128;
+            let scaled = new_aum as u128 * bps_den;
+            let floor = (bps_den - state.aum_decrease_limit as u128) * deployed as u128;
+            let ceiling = (bps_den + state.aum_increase_limit as u128) * deployed as u128;
+            expected = Some(floor <= scaled && scaled <= ceiling);
             (ctx.operator_update_aum(new_aum).is_ok(), None, false)
         }
-        Op::SetFee(fee) => (ctx.set_withdrawal_fee(fee).is_ok(), None, false),
+        Op::SetFee(fee) => {
+            expected = Some(true);
+            (ctx.set_withdrawal_fee(fee).is_ok(), None, false)
+        }
+        Op::TogglePause => {
+            expected = Some(true);
+            let ok = if state.paused {
+                ctx.unpause().is_ok()
+            } else {
+                ctx.pause().is_ok()
+            };
+            (ok, None, false)
+        }
+        Op::SetAumLimits { increase, decrease } => {
+            expected = Some(increase <= BPS_DENOMINATOR && decrease <= BPS_DENOMINATOR);
+            let ok = ctx.set_aum_limits_as(&admin, increase, decrease).is_ok();
+            (ok, None, false)
+        }
+        Op::RegisterSub => {
+            if sub_count >= MAX_SUBACCOUNTS {
+                return Ok(noop(before, holdings_before, fee_rate));
+            }
+            let sub = ctx.new_delegated_subaccount(SUBACCOUNT_ALLOWANCE);
+            // The first subaccount inherits everything the operator has out.
+            let inherited = if sub_count == 0 {
+                state.deployed_principal
+            } else {
+                0
+            };
+            expected = Some(true);
+            let ok = ctx.register_subaccount_as(&admin, &sub).is_ok();
+            if ok {
+                model.subs.push((sub, inherited));
+            }
+            (ok, None, false)
+        }
+        Op::SubWithdraw { sub, pm } | Op::SubReturn { sub, pm } | Op::SubLose { sub, pm } => {
+            if sub_count == 0 {
+                return Ok(noop(before, holdings_before, fee_rate));
+            }
+            let i = sub % sub_count;
+            let custody = model.subs[i].0.deposit_ata;
+            let ok = match *op {
+                Op::SubWithdraw { .. } => {
+                    let amount = per_mille(state.local_aum, pm);
+                    expected = Some(amount > 0);
+                    let ok = ctx.operator_withdraw_to(&model.subs[i].0, amount).is_ok();
+                    if ok {
+                        model.subs[i].1 += amount;
+                    }
+                    ok
+                }
+                Op::SubReturn { .. } => {
+                    let amount = per_mille(ctx.token_account_amount(&custody), pm);
+                    expected = Some(amount > 0);
+                    let ok = ctx.operator_deposit_from(&model.subs[i].0, amount).is_ok();
+                    if ok {
+                        model.subs[i].1 -= amount.min(model.subs[i].1);
+                    }
+                    ok
+                }
+                _ => {
+                    // The custodian moves funds away: not a vault instruction,
+                    // just the loss `settle_subaccount_loss` exists for.
+                    let amount = per_mille(ctx.token_account_amount(&custody), pm);
+                    if amount > 0 {
+                        let owner = model.subs[i].0.keypair.insecure_clone();
+                        let sink = model.sink;
+                        ctx.transfer_tokens_as(&owner, &custody, &sink, amount);
+                    }
+                    true
+                }
+            };
+            (ok, None, false)
+        }
+        Op::SettleLoss { sub, pm } => {
+            if sub_count == 0 {
+                return Ok(noop(before, holdings_before, fee_rate));
+            }
+            let i = sub % sub_count;
+            let balance = ctx.token_account_amount(&model.subs[i].0.deposit_ata);
+            let shortfall = model.subs[i].1.saturating_sub(balance);
+            let amount = per_mille(shortfall, pm);
+            expected = Some(amount > 0 && amount <= shortfall);
+            let ok = ctx
+                .settle_subaccount_loss_as(&admin, &model.subs[i].0, amount)
+                .is_ok();
+            if ok {
+                model.subs[i].1 -= amount;
+            }
+            (ok, None, false)
+        }
+        Op::Deregister { sub } => {
+            if sub_count == 0 {
+                return Ok(noop(before, holdings_before, fee_rate));
+            }
+            let i = sub % sub_count;
+            expected = Some(model.subs[i].1 == 0);
+            let ok = ctx
+                .deregister_subaccount_as(&admin, &model.subs[i].0)
+                .is_ok();
+            if ok {
+                model.subs.remove(i);
+            }
+            (ok, None, false)
+        }
+        Op::Nominate { who } => {
+            let nominee = model.candidates[who].pubkey();
+            expected = Some(true);
+            let ok = ctx.nominate_admin_as(&admin, nominee).is_ok();
+            if ok {
+                model.nomination = Some((nominee, now + NOMINATION_WINDOW));
+            }
+            (ok, None, false)
+        }
+        Op::Accept { who } => {
+            let candidate = model.candidates[who].insecure_clone();
+            let valid = match model.nomination {
+                Some((nominee, until)) => nominee == candidate.pubkey() && now < until,
+                None => false,
+            };
+            expected = Some(valid);
+            // On success the harness makes the candidate `ctx.admin`, so the
+            // walk's admin ops follow the handover.
+            let ok = ctx.accept_admin_nomination_as(&candidate).is_ok();
+            if ok {
+                prop_assert_eq!(ctx.vault_state_data().admin, candidate.pubkey());
+                prop_assert_eq!(ctx.admin.pubkey(), candidate.pubkey());
+                // Accepting closes the nomination, and the old admin, now a
+                // candidate, has lost its powers.
+                model.nomination = None;
+                model.candidates[who] = admin.insecure_clone();
+                prop_assert!(
+                    ctx.set_withdrawal_fee_as(&admin, fee_rate).is_err(),
+                    "the replaced admin still set the fee"
+                );
+            }
+            (ok, None, false)
+        }
     };
-    OpOutcome {
+    if let Some(expected) = expected {
+        prop_assert_eq!(ok, expected, "{:?} at {}", op, now);
+    }
+    Ok(OpOutcome {
         before,
         holdings: holdings_before,
         fee_rate,
@@ -252,11 +546,122 @@ fn execute(ctx: &mut VaultCtx, users: &[Depositor], op: &Op) -> OpOutcome {
         actor,
         is_redeem,
         quote,
+    })
+}
+
+/// The outcome of an op with nothing to act on: it ran nothing, so it
+/// succeeded and moved nothing.
+fn noop(before: CeiSnapshot, holdings: Vec<Holdings>, fee_rate: u32) -> OpOutcome {
+    OpOutcome {
+        before,
+        holdings,
+        fee_rate,
+        ok: true,
+        actor: None,
+        is_redeem: false,
+        quote: None,
     }
 }
 
+/// The subaccount registry matches the model, and while any subaccount is
+/// registered `deployed_principal` is exactly their principals combined: the
+/// first inherits it on registration, and every later movement changes a
+/// subaccount's principal and the total together.
+fn assert_model_invariants(ctx: &VaultCtx, model: &VaultModel) -> Result<(), TestCaseError> {
+    let state = ctx.vault_state_data();
+    prop_assert_eq!(state.subaccount_count, model.subs.len() as u64);
+    let mut total: u64 = 0;
+    for (sub, principal) in &model.subs {
+        let recorded = ctx.subaccount_data(sub).principal;
+        prop_assert_eq!(recorded, *principal, "subaccount {} principal", sub.key());
+        total += recorded;
+    }
+    if !model.subs.is_empty() {
+        prop_assert_eq!(
+            state.deployed_principal,
+            total,
+            "deployed_principal is not the subaccounts' principal"
+        );
+    }
+    Ok(())
+}
+
+/// Brings everything deployed home: each subaccount returns its balance, the
+/// rest of its principal is settled as a loss and it is deregistered, and then
+/// the operator, free of the subaccount rule, returns its own balance.
+fn recall_deployed(ctx: &mut VaultCtx, model: &mut VaultModel) {
+    let admin = ctx.admin.insecure_clone();
+    for (sub, _) in std::mem::take(&mut model.subs) {
+        let balance = ctx.token_account_amount(&sub.deposit_ata);
+        if balance > 0 {
+            ctx.operator_deposit_from(&sub, balance)
+                .expect("subaccount returns all");
+        }
+        let principal = ctx.subaccount_data(&sub).principal;
+        if principal > 0 {
+            ctx.settle_subaccount_loss_as(&admin, &sub, principal)
+                .expect("settle what did not come back");
+        }
+        ctx.deregister_subaccount_as(&admin, &sub)
+            .expect("deregister");
+    }
+    let operator_balance = ctx.token_account_amount(&ctx.operator_deposit_ata);
+    if operator_balance > 0 {
+        ctx.operator_deposit(operator_balance)
+            .expect("operator returns all");
+    }
+}
+
+/// While shares are out the vault cannot close, even with its subaccounts gone
+/// and its reserve empty. Tried on a copy of the chain with the reserve taken
+/// out, so the supply is the one thing that can refuse it.
+fn assert_close_refused_while_held(ctx: &mut VaultCtx) -> Result<(), TestCaseError> {
+    let supply = ctx.share_mint_supply();
+    if supply == 0 {
+        return Ok(());
+    }
+    let saved = ctx.svm.clone();
+    let reserve = ctx.token_account_amount(&ctx.vault_token_pda);
+    if reserve > 0 {
+        ctx.operator_withdraw(reserve).expect("empty the reserve");
+    }
+    let admin = ctx.admin.insecure_clone();
+    let closed = ctx.close_vault_as(&admin).is_ok();
+    ctx.svm = saved;
+    prop_assert!(!closed, "close_vault with {} shares out", supply);
+    Ok(())
+}
+
+/// With every holder out, the vault closes exactly when no share is left. The
+/// operator first takes out whatever is left in the reserve, rounding dust or
+/// the value of shares too small to redeem, so the reserve cannot be the
+/// reason for a refusal and the supply is the only thing under test.
+fn assert_closes_when_empty(ctx: &mut VaultCtx) -> Result<(), TestCaseError> {
+    if ctx.vault_state_data().paused {
+        ctx.unpause().expect("unpause");
+    }
+    let empty = ctx.share_mint_supply() == 0;
+    let dust = ctx.token_account_amount(&ctx.vault_token_pda);
+    if dust > 0 {
+        ctx.operator_withdraw(dust).expect("empty the reserve");
+    }
+    let admin = ctx.admin.insecure_clone();
+    let ok = ctx.close_vault_as(&admin).is_ok();
+    prop_assert_eq!(
+        ok,
+        empty,
+        "close_vault with supply {}",
+        ctx.share_mint_supply()
+    );
+    Ok(())
+}
+
 /// Accounting invariants that must hold in every reachable state.
-fn assert_state_invariants(ctx: &VaultCtx, users: &[Depositor]) -> Result<(), TestCaseError> {
+fn assert_state_invariants(
+    ctx: &VaultCtx,
+    users: &[Depositor],
+    model: &VaultModel,
+) -> Result<(), TestCaseError> {
     let state = ctx.vault_state_data();
     prop_assert_eq!(
         state.local_aum,
@@ -269,7 +674,7 @@ fn assert_state_invariants(ctx: &VaultCtx, users: &[Depositor]) -> Result<(), Te
         held,
         "share supply drifted from the depositors' balances"
     );
-    Ok(())
+    assert_model_invariants(ctx, model)
 }
 
 /// A successful redeem paid `recipient` (deposit balance before and after):
@@ -321,7 +726,7 @@ fn assert_vault_op_effects(
     assert_bystanders_untouched(&outcome.holdings, &after, outcome.actor, &format!("{op:?}"))?;
     let before = &outcome.holdings;
     match *op {
-        Op::UserDeposit { who, amount } => {
+        Op::UserDeposit { who, amount } | Op::DepositChecked { who, amount, .. } => {
             let paid = decrease(before[who].deposit, after[who].deposit, "depositor balance")?;
             prop_assert_eq!(paid, amount, "deposit took {} for {}", paid, amount);
             let vault = ctx.snapshot();
@@ -340,7 +745,7 @@ fn assert_vault_op_effects(
                 minted
             );
         }
-        Op::UserRedeem { who, .. } => {
+        Op::UserRedeem { who, .. } | Op::RedeemChecked { who, .. } => {
             let recipient = (before[who].deposit, after[who].deposit);
             let received = assert_redeem_conserves(
                 &outcome.before,
@@ -359,6 +764,9 @@ fn assert_vault_op_effects(
 /// nothing is refused with `ZeroAmount` and left behind; any other refusal
 /// fails the case.
 fn exit_all(ctx: &mut VaultCtx, users: &[Depositor]) -> Result<(), TestCaseError> {
+    if ctx.vault_state_data().paused {
+        ctx.unpause().expect("unpause");
+    }
     for user in users {
         let shares = ctx.token_account_amount(&user.share_ata);
         if shares == 0 {
@@ -382,19 +790,19 @@ fn total_deposit_tokens(ctx: &VaultCtx, users: &[Depositor]) -> u64 {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(16))]
 
-    /// Full op mix (including in-window AUM reports): accounting invariants
-    /// hold after every step; failures are perfectly atomic; no op moves a
-    /// bystander; every successful redeem conserves value with exact
-    /// ceil-rounded fees.
+    /// Full op mix (including AUM reports): every op the model can decide
+    /// succeeds exactly when it says; accounting invariants hold after every
+    /// step; failures are perfectly atomic; no op moves a bystander; every
+    /// successful redeem conserves value with exact ceil-rounded fees.
     #[test]
     fn invariants_hold_under_random_op_sequences(
-        ops in proptest::collection::vec(op_strategy(true), 1..25)
+        ops in proptest::collection::vec(op_strategy(true), 1..60)
     ) {
-        let (mut ctx, users) = fresh_walk_vault();
-        assert_state_invariants(&ctx, &users)?;
+        let (mut ctx, users, mut model) = fresh_walk_vault();
+        assert_state_invariants(&ctx, &users, &model)?;
 
         for op in &ops {
-            let outcome = execute(&mut ctx, &users, op);
+            let outcome = execute(&mut ctx, &users, &mut model, op)?;
 
             if !outcome.ok {
                 prop_assert_eq!(
@@ -408,37 +816,35 @@ proptest! {
                 continue;
             }
 
-            assert_state_invariants(&ctx, &users)?;
+            assert_state_invariants(&ctx, &users, &model)?;
             assert_vault_op_effects(&ctx, &users, op, &outcome)?;
         }
     }
 
-    /// No-yield walks (AUM reports excluded): after the operator returns its
-    /// full balance and every depositor exits completely, they cannot together
-    /// hold more of the deposit token than they started with — rounding and
-    /// fees only ever favour the vault.
+    /// No-yield walks (AUM reports excluded): after everything deployed comes
+    /// home and every depositor exits completely, they cannot together hold
+    /// more of the deposit token than they started with — rounding, fees and
+    /// custody losses only ever cost them. Then the vault closes exactly when
+    /// no share is left.
     #[test]
     fn no_value_extraction_without_yield(
-        ops in proptest::collection::vec(op_strategy(false), 1..25)
+        ops in proptest::collection::vec(op_strategy(false), 1..60)
     ) {
-        let (mut ctx, users) = fresh_walk_vault();
+        let (mut ctx, users, mut model) = fresh_walk_vault();
 
         for op in &ops {
-            execute(&mut ctx, &users, op); // failures are fine; atomicity checked above
+            execute(&mut ctx, &users, &mut model, op)?;
         }
 
-        // Unwind: operator returns everything it took…
-        let operator_balance = ctx.token_account_amount(&ctx.operator_deposit_ata);
-        if operator_balance > 0 {
-            ctx.operator_deposit(operator_balance).expect("operator returns all");
-        }
-        // …and every depositor exits their entire position.
+        recall_deployed(&mut ctx, &mut model);
+        assert_close_refused_while_held(&mut ctx)?;
         exit_all(&mut ctx, &users)?;
 
         prop_assert!(
             total_deposit_tokens(&ctx, &users) <= INITIAL_USER_FUNDS * DEPOSITORS as u64,
             "depositors extracted value from a yield-free vault"
         );
+        assert_closes_when_empty(&mut ctx)?;
     }
 }
 
@@ -525,7 +931,8 @@ enum QueueOp {
     },
 }
 
-/// The instructions [`QueueOp::Substitute`] forges.
+/// The instructions [`QueueOp::Substitute`] forges: the holders' and the
+/// queue's, then the operator's and the admin's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Target {
     Deposit,
@@ -535,9 +942,24 @@ enum Target {
     Cancel,
     Expedite,
     Sweep,
+    OperatorWithdraw,
+    OperatorReturn,
+    SubWithdraw,
+    SubReturn,
+    UpdateAum,
+    SetFee,
+    Pause,
+    SetAumLimits,
+    SettleLoss,
+    Deregister,
+    Nominate,
+    SetCooldown,
+    SetWindow,
+    Release,
+    Attach,
 }
 
-const TARGETS: [Target; 7] = [
+const TARGETS: [Target; 22] = [
     Target::Deposit,
     Target::Redeem,
     Target::Request,
@@ -545,7 +967,38 @@ const TARGETS: [Target; 7] = [
     Target::Cancel,
     Target::Expedite,
     Target::Sweep,
+    Target::OperatorWithdraw,
+    Target::OperatorReturn,
+    Target::SubWithdraw,
+    Target::SubReturn,
+    Target::UpdateAum,
+    Target::SetFee,
+    Target::Pause,
+    Target::SetAumLimits,
+    Target::SettleLoss,
+    Target::Deregister,
+    Target::Nominate,
+    Target::SetCooldown,
+    Target::SetWindow,
+    Target::Release,
+    Target::Attach,
 ];
+
+fn vault_ix(accounts: impl ToAccountMetas, data: impl InstructionData) -> Instruction {
+    Instruction {
+        program_id: august_vault::ID,
+        accounts: accounts.to_account_metas(None),
+        data: data.data(),
+    }
+}
+
+fn queue_ix(accounts: impl ToAccountMetas, data: impl InstructionData) -> Instruction {
+    Instruction {
+        program_id: august_withdrawal_queue::ID,
+        accounts: accounts.to_account_metas(None),
+        data: data.data(),
+    }
+}
 
 fn queue_op_strategy(include_yield_ops: bool) -> BoxedStrategy<QueueOp> {
     let caller = prop_oneof![
@@ -579,7 +1032,8 @@ fn queue_op_strategy(include_yield_ops: bool) -> BoxedStrategy<QueueOp> {
         1 => prop_oneof![Just(0u64), 1u64..=3 * DAY].prop_map(QueueOp::SetWindow),
         1 => Just(QueueOp::Release),
         1 => Just(QueueOp::Attach),
-        3 => (0..TARGETS.len(), 0..DEPOSITORS, any::<usize>(), any::<usize>())
+        // Heavier than any one op: it spreads over every target in `TARGETS`.
+        6 => (0..TARGETS.len(), 0..DEPOSITORS, any::<usize>(), any::<usize>())
             .prop_map(|(t, who, pick, decoy)| QueueOp::Substitute {
                 target: TARGETS[t],
                 who,
@@ -733,6 +1187,7 @@ fn account_kind(ctx: &VaultCtx, key: &Pubkey) -> AccountKind {
 struct QueueWalk {
     ctx: VaultCtx,
     users: Vec<Depositor>,
+    model: VaultModel,
     keeper: Keypair,
     stranger: Keypair,
     /// Live requests by (owner index, request id).
@@ -751,7 +1206,7 @@ struct QueueWalk {
 
 impl QueueWalk {
     fn new() -> Self {
-        let (mut ctx, users) = fresh_walk_vault();
+        let (mut ctx, users, model) = fresh_walk_vault();
         ctx.open_queue(INITIAL_COOLDOWN);
         let keeper = ctx.new_funded_keypair(1_000_000_000);
         let stranger = ctx.new_funded_keypair(1_000_000_000);
@@ -792,6 +1247,7 @@ impl QueueWalk {
         QueueWalk {
             ctx,
             users,
+            model,
             keeper,
             stranger,
             live: BTreeMap::new(),
@@ -891,7 +1347,7 @@ impl QueueWalk {
     fn execute(&mut self, op: &QueueOp) -> Result<bool, TestCaseError> {
         match *op {
             QueueOp::Vault(ref op) => {
-                let outcome = execute(&mut self.ctx, &self.users, op);
+                let outcome = execute(&mut self.ctx, &self.users, &mut self.model, op)?;
                 if outcome.ok {
                     prop_assert!(
                         !(outcome.is_redeem && self.attached),
@@ -985,6 +1441,7 @@ impl QueueWalk {
                 let expected = permitted
                     && now >= pending.eligible_at
                     && !expired
+                    && !state.paused
                     && gross > 0
                     && gross <= state.local_aum;
 
@@ -1314,6 +1771,240 @@ impl QueueWalk {
                 // The admin chooses where the stray goes.
                 (admin, ix, vec![user.share_ata])
             }
+            _ => self.honest_privileged(target, who)?,
+        };
+        Some(built)
+    }
+
+    /// The operator's and the admin's instructions for [`Self::honest`], each
+    /// built to change nothing it need not: the fee, limits, cooldown and
+    /// window are set to what they already are, the AUM is reported as it
+    /// stands. `who` picks the subaccount or the candidate.
+    fn honest_privileged(
+        &self,
+        target: Target,
+        who: usize,
+    ) -> Option<(Keypair, Instruction, Vec<Pubkey>)> {
+        let ctx = &self.ctx;
+        let state = ctx.vault_state_data();
+        let queue = ctx.queue_state_data();
+        let admin = ctx.admin.insecure_clone();
+        let operator = ctx.operator.insecure_clone();
+        let subs = &self.model.subs;
+        let sub = if subs.is_empty() {
+            None
+        } else {
+            Some(&subs[who % subs.len()])
+        };
+        let queue_admin = || august_withdrawal_queue::accounts::QueueAdmin {
+            queue: ctx.withdrawal_queue_pda(),
+            vault_state: ctx.vault_state,
+            admin: admin.pubkey(),
+            event_authority: event_authority_pda(),
+            program: august_withdrawal_queue::ID,
+        };
+        let built = match target {
+            Target::OperatorWithdraw | Target::OperatorReturn => {
+                if !subs.is_empty() {
+                    return None;
+                }
+                let accounts = august_vault::accounts::OperatorWithdraw {
+                    vault_state: ctx.vault_state,
+                    vault_deposit_ata: ctx.vault_token_pda,
+                    operator_token_account: ctx.operator_deposit_ata,
+                    subaccount: None,
+                    deposit_mint: ctx.deposit_mint,
+                    operator: operator.pubkey(),
+                    token_program: spl_token::ID,
+                };
+                let ix = if target == Target::OperatorWithdraw {
+                    let amount = state.local_aum / 10;
+                    vault_ix(
+                        accounts,
+                        august_vault::instruction::OperatorWithdraw { amount },
+                    )
+                } else {
+                    let amount = ctx.token_account_amount(&ctx.operator_deposit_ata) / 2;
+                    let accounts = august_vault::accounts::OperatorDeposit {
+                        vault_state: accounts.vault_state,
+                        vault_deposit_ata: accounts.vault_deposit_ata,
+                        operator_token_account: accounts.operator_token_account,
+                        subaccount: None,
+                        deposit_mint: accounts.deposit_mint,
+                        operator: accounts.operator,
+                        token_program: accounts.token_program,
+                    };
+                    vault_ix(
+                        accounts,
+                        august_vault::instruction::OperatorDeposit { amount },
+                    )
+                };
+                (operator, ix, vec![])
+            }
+            Target::SubWithdraw | Target::SubReturn => {
+                let (sub, _) = sub?;
+                let ix = if target == Target::SubWithdraw {
+                    let amount = state.local_aum / 10;
+                    let accounts = august_vault::accounts::OperatorWithdraw {
+                        vault_state: ctx.vault_state,
+                        vault_deposit_ata: ctx.vault_token_pda,
+                        operator_token_account: sub.deposit_ata,
+                        subaccount: Some(sub.pda),
+                        deposit_mint: ctx.deposit_mint,
+                        operator: operator.pubkey(),
+                        token_program: spl_token::ID,
+                    };
+                    vault_ix(
+                        accounts,
+                        august_vault::instruction::OperatorWithdraw { amount },
+                    )
+                } else {
+                    let amount = ctx.token_account_amount(&sub.deposit_ata) / 2;
+                    let accounts = august_vault::accounts::OperatorDeposit {
+                        vault_state: ctx.vault_state,
+                        vault_deposit_ata: ctx.vault_token_pda,
+                        operator_token_account: sub.deposit_ata,
+                        subaccount: Some(sub.pda),
+                        deposit_mint: ctx.deposit_mint,
+                        operator: operator.pubkey(),
+                        token_program: spl_token::ID,
+                    };
+                    vault_ix(
+                        accounts,
+                        august_vault::instruction::OperatorDeposit { amount },
+                    )
+                };
+                (operator, ix, vec![])
+            }
+            Target::UpdateAum => {
+                let accounts = august_vault::accounts::OperatorUpdateAum {
+                    vault_state: ctx.vault_state,
+                    deposit_mint: ctx.deposit_mint,
+                    operator: operator.pubkey(),
+                };
+                let data = august_vault::instruction::OperatorUpdateAum {
+                    new_aum: state.deployed_aum,
+                };
+                (operator, vault_ix(accounts, data), vec![])
+            }
+            Target::SetFee => {
+                let accounts = august_vault::accounts::SetWithdrawalFee {
+                    vault_state: ctx.vault_state,
+                    deposit_mint: ctx.deposit_mint,
+                    admin: admin.pubkey(),
+                };
+                let data = august_vault::instruction::SetWithdrawalFee {
+                    new_fee: state.withdrawal_fee,
+                };
+                (admin, vault_ix(accounts, data), vec![])
+            }
+            Target::Pause => {
+                let ix = if state.paused {
+                    let accounts = august_vault::accounts::Unpause {
+                        vault_state: ctx.vault_state,
+                        deposit_mint: ctx.deposit_mint,
+                        admin: admin.pubkey(),
+                    };
+                    vault_ix(accounts, august_vault::instruction::Unpause {})
+                } else {
+                    let accounts = august_vault::accounts::Pause {
+                        vault_state: ctx.vault_state,
+                        deposit_mint: ctx.deposit_mint,
+                        admin: admin.pubkey(),
+                    };
+                    vault_ix(accounts, august_vault::instruction::Pause {})
+                };
+                (admin, ix, vec![])
+            }
+            Target::SetAumLimits => {
+                let accounts = august_vault::accounts::SetAumLimits {
+                    vault_state: ctx.vault_state,
+                    deposit_mint: ctx.deposit_mint,
+                    admin: admin.pubkey(),
+                };
+                let data = august_vault::instruction::SetAumLimits {
+                    increase_limit: state.aum_increase_limit,
+                    decrease_limit: state.aum_decrease_limit,
+                };
+                (admin, vault_ix(accounts, data), vec![])
+            }
+            Target::SettleLoss => {
+                let (sub, principal) = sub?;
+                let amount = principal.saturating_sub(ctx.token_account_amount(&sub.deposit_ata));
+                let accounts = august_vault::accounts::SettleSubaccountLoss {
+                    vault_state: ctx.vault_state,
+                    subaccount: sub.pda,
+                    deposit_mint: ctx.deposit_mint,
+                    subaccount_ata: sub.deposit_ata,
+                    token_program: spl_token::ID,
+                    admin: admin.pubkey(),
+                };
+                let data = august_vault::instruction::SettleSubaccountLoss { amount };
+                (admin, vault_ix(accounts, data), vec![])
+            }
+            Target::Deregister => {
+                let (sub, _) = subs.iter().find(|(_, principal)| *principal == 0)?;
+                let accounts = august_vault::accounts::DeregisterSubaccount {
+                    vault_state: ctx.vault_state,
+                    subaccount: sub.pda,
+                    deposit_mint: ctx.deposit_mint,
+                    admin: admin.pubkey(),
+                };
+                let data = august_vault::instruction::DeregisterSubaccount {};
+                // Which empty subaccount goes is the admin's choice: nothing
+                // else in the instruction ties the registry entry down.
+                (admin, vault_ix(accounts, data), vec![sub.pda])
+            }
+            Target::Nominate => {
+                let candidates = &self.model.candidates;
+                let nominee = candidates[who % candidates.len()].pubkey();
+                let accounts = august_vault::accounts::NominateAdmin {
+                    vault_state: ctx.vault_state,
+                    deposit_mint: ctx.deposit_mint,
+                    nominated_admin_pda: ctx.nominated_admin_pda(),
+                    admin: admin.pubkey(),
+                    payer: admin.pubkey(),
+                    system_program: solana_sdk::system_program::ID,
+                };
+                let data = august_vault::instruction::NominateAdmin { new_admin: nominee };
+                (admin, vault_ix(accounts, data), vec![])
+            }
+            Target::SetCooldown => {
+                let data = august_withdrawal_queue::instruction::SetCooldown {
+                    seconds: queue.cooldown_seconds,
+                };
+                let ix = queue_ix(queue_admin(), data);
+                (admin, ix, vec![])
+            }
+            Target::SetWindow => {
+                let data = august_withdrawal_queue::instruction::SetFulfillmentWindow {
+                    seconds: queue.fulfillment_window_seconds,
+                };
+                let ix = queue_ix(queue_admin(), data);
+                (admin, ix, vec![])
+            }
+            Target::Release => {
+                let accounts = ctx.release_vault_accounts(&admin.pubkey());
+                let ix = queue_ix(
+                    accounts,
+                    august_withdrawal_queue::instruction::ReleaseVault {},
+                );
+                (admin, ix, vec![])
+            }
+            Target::Attach => {
+                let accounts = august_vault::accounts::AttachWithdrawalQueue {
+                    vault_state: ctx.vault_state,
+                    deposit_mint: ctx.deposit_mint,
+                    admin: admin.pubkey(),
+                    queue: ctx.withdrawal_queue_pda(),
+                };
+                let ix = vault_ix(
+                    accounts,
+                    august_vault::instruction::AttachWithdrawalQueue {},
+                );
+                (admin, ix, vec![])
+            }
+            _ => return None,
         };
         Some(built)
     }
@@ -1349,6 +2040,12 @@ impl QueueWalk {
         for (owner, id) in self.live.keys() {
             pool.push(self.ctx.request_pda(&self.owner(*owner), *id));
         }
+        for (sub, _) in &self.model.subs {
+            pool.push(sub.pda);
+            pool.push(sub.deposit_ata);
+        }
+        pool.push(self.ctx.nominated_admin_pda());
+        pool.push(self.model.sink);
         // Refused forgeries change no account, so the kinds hold throughout.
         let pool: Vec<(Pubkey, AccountKind)> = pool
             .into_iter()
@@ -1438,6 +2135,8 @@ impl QueueWalk {
             0,
             "assets left behind in the asset escrow"
         );
+
+        assert_model_invariants(&self.ctx, &self.model)?;
 
         let gate = if self.attached {
             self.ctx.withdrawal_queue_pda()
@@ -1542,12 +2241,8 @@ fn queue_walk_invariants_hold_over_ten_thousand_steps() {
 #[test]
 fn queue_walk_extracts_no_value_without_yield() {
     run_queue_walk(false, 16, |walk| {
-        let ctx = &mut walk.ctx;
-        let operator_balance = ctx.token_account_amount(&ctx.operator_deposit_ata);
-        if operator_balance > 0 {
-            ctx.operator_deposit(operator_balance)
-                .expect("operator returns all");
-        }
+        recall_deployed(&mut walk.ctx, &mut walk.model);
+        assert_close_refused_while_held(&mut walk.ctx)?;
         for ((who, id), pending) in std::mem::take(&mut walk.live) {
             let user = &walk.users[who];
             let (signer, destination) = (user.keypair.insecure_clone(), user.share_ata);
@@ -1567,6 +2262,6 @@ fn queue_walk_extracts_no_value_without_yield() {
             total_deposit_tokens(&walk.ctx, &walk.users) <= INITIAL_USER_FUNDS * DEPOSITORS as u64,
             "depositors extracted value from a yield-free vault through the queue"
         );
-        Ok(())
+        assert_closes_when_empty(&mut walk.ctx)
     });
 }
