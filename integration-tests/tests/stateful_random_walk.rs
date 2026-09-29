@@ -157,10 +157,10 @@ fn op_strategy(include_yield_ops: bool) -> BoxedStrategy<Op> {
         // AUM reports and custody losses move the vault's value outside its
         // own accounts, so the no-yield walks leave both out. `prop_oneof!`
         // weights are per-arm at the level they appear, so `base` is weighted
-        // by its own total to keep each about as likely as an operator
+        // by its own total (26) to keep each exactly as likely as an operator
         // withdrawal.
         prop_oneof![
-            29 => base,
+            26 => base,
             2 => (-100i8..=100).prop_map(Op::UpdateAum),
             2 => (any::<usize>(), 0u16..=1000).prop_map(|(sub, pm)| Op::SubLose { sub, pm }),
         ]
