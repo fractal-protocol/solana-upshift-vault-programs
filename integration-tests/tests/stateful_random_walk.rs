@@ -38,6 +38,9 @@
 //!   with any mix of signers, do exactly what they do one after the other, or
 //!   nothing when any would fail.
 //! - Every instruction's honest run stays within [`COMPUTE_BUDGET`].
+//! - In the queue walk, an instruction another program calls by CPI (the
+//!   relay fixture) does exactly what it does sent directly, and the calling
+//!   program's own PDA never passes for a role.
 //!
 //! A two-vault walk puts two vaults on one chain, of independent shapes or as
 //! two versions of one deposit mint, and interleaves ops between them: an op on one never changes the other's
@@ -72,8 +75,12 @@ use integration_tests::harness::{
 use proptest::prelude::*;
 use proptest::test_runner::TestRunner;
 use solana_sdk::{
-    instruction::Instruction, packet::PACKET_DATA_SIZE, pubkey::Pubkey, signature::Keypair,
-    signer::Signer, transaction::Transaction,
+    instruction::{AccountMeta, Instruction},
+    packet::PACKET_DATA_SIZE,
+    pubkey::Pubkey,
+    signature::Keypair,
+    signer::Signer,
+    transaction::Transaction,
 };
 use spl_token_2022::{extension::StateWithExtensions, state::Account as TokenAccountState};
 
@@ -1246,6 +1253,44 @@ enum QueueOp {
     DetachDirect {
         stranger_signs: bool,
     },
+    /// An honest instruction forwarded by the CPI relay, as it is or with the
+    /// relay's own PDA in its signer's place. See [`QueueWalk::relay`].
+    Relay {
+        target: Target,
+        who: usize,
+        pick: usize,
+        as_pda: bool,
+    },
+}
+
+/// Where the walks load the CPI relay fixture (`integration-tests/fixtures`).
+const RELAY_ID: Pubkey = Pubkey::new_from_array([7; 32]);
+
+/// The PDA the relay signs with, and its bump.
+fn relay_pda() -> (Pubkey, u8) {
+    Pubkey::find_program_address(&[b"relay"], &RELAY_ID)
+}
+
+/// `ix` forwarded by the relay: the target program first, then its accounts
+/// with their flags, and the relay PDA's bump ahead of its data. The relay
+/// marks its PDA a signer inside, so outside it never is.
+fn relayed(ix: &Instruction) -> Instruction {
+    let (pda, bump) = relay_pda();
+    let mut accounts = vec![AccountMeta::new_readonly(ix.program_id, false)];
+    for meta in &ix.accounts {
+        let mut meta = meta.clone();
+        if meta.pubkey == pda {
+            meta.is_signer = false;
+        }
+        accounts.push(meta);
+    }
+    let mut data = vec![bump];
+    data.extend_from_slice(&ix.data);
+    Instruction {
+        program_id: RELAY_ID,
+        accounts,
+        data,
+    }
 }
 
 /// The instructions [`QueueOp::Substitute`] forges: the holders' and the
@@ -1397,6 +1442,13 @@ fn queue_op_strategy(include_yield_ops: bool, config_ops: bool) -> BoxedStrategy
                 seed,
             }),
         1 => any::<bool>().prop_map(|stranger_signs| QueueOp::DetachDirect { stranger_signs }),
+        2 => (0..TARGETS.len(), 0..DEPOSITORS, any::<usize>(), any::<bool>())
+            .prop_map(|(t, who, pick, as_pda)| QueueOp::Relay {
+                target: TARGETS[t],
+                who,
+                pick,
+                as_pda,
+            }),
     ];
     prop_oneof![
         1 => op_strategy(include_yield_ops, config_ops).prop_map(QueueOp::Vault),
@@ -1579,6 +1631,12 @@ struct WalkStats {
     /// Most compute units an honest instruction of each target consumed.
     compute: [u64; TARGETS.len()],
     bundles: usize,
+    /// Honest instructions relayed and compared with sending them directly,
+    /// and how many of those succeeded (both ways).
+    relayed: usize,
+    relayed_ok: usize,
+    /// Relayed instructions with the relay's PDA as signer, refused.
+    relay_forged: usize,
 }
 
 /// Compute units an instruction may use: the 200,000 a transaction gets per
@@ -1601,7 +1659,13 @@ impl QueueWalk {
     }
 
     /// A walk over `ctx`, a vault of `shape` whose chain it holds.
-    fn from_ctx(ctx: VaultCtx, shape: Shape) -> Self {
+    fn from_ctx(mut ctx: VaultCtx, shape: Shape) -> Self {
+        ctx.svm
+            .add_program(
+                RELAY_ID,
+                include_bytes!(concat!(env!("OUT_DIR"), "/cpi_relay.so")),
+            )
+            .expect("load cpi_relay.so, built by build.rs into OUT_DIR");
         let (mut ctx, users, model) = walk_vault(ctx, shape);
         ctx.open_queue(INITIAL_COOLDOWN);
         let keeper = ctx.new_funded_keypair(1_000_000_000);
@@ -1636,6 +1700,8 @@ impl QueueWalk {
             event_authority_pda(),
             program_config_pda(),
             program_data_pda(),
+            RELAY_ID,
+            relay_pda().0,
         ];
         for user in &users {
             decoys.push(user.deposit_ata);
@@ -2040,6 +2106,12 @@ impl QueueWalk {
                 how,
                 seed,
             } => self.garble(target, who, pick, how, seed),
+            QueueOp::Relay {
+                target,
+                who,
+                pick,
+                as_pda,
+            } => self.relay(target, who, pick, as_pda),
             QueueOp::DetachDirect { stranger_signs } => {
                 let admin = self.ctx.admin.insecure_clone();
                 let queue = self.ctx.withdrawal_queue_pda();
@@ -2195,6 +2267,79 @@ impl QueueWalk {
             names
         );
         self.stats.bundles += 1;
+        Ok(false)
+    }
+
+    /// Another program calling an instruction by CPI gets no more than a
+    /// client sending it: relayed as it is, it must succeed exactly when it
+    /// does sent directly and leave the same state (on copies of the chain);
+    /// and the relay's own PDA, the one signature a program can add, must not
+    /// stand in for any role. Finalize is exempt from the second, as anyone
+    /// may sign it.
+    fn relay(
+        &mut self,
+        target: Target,
+        who: usize,
+        pick: usize,
+        as_pda: bool,
+    ) -> Result<bool, TestCaseError> {
+        let Some((signer, ix, _)) = self.honest(target, who, pick) else {
+            return Ok(false);
+        };
+        let saved = self.ctx.svm.clone();
+        let untouched = self.raw_state();
+        let direct = self
+            .ctx
+            .send_instructions(&signer, std::slice::from_ref(&ix))
+            .is_ok();
+        let after_direct = self.raw_state();
+        self.ctx.svm = saved.clone();
+
+        if !as_pda {
+            let through = self.ctx.send_instructions(&signer, &[relayed(&ix)]).is_ok();
+            let after_through = self.raw_state();
+            self.ctx.svm = saved;
+            prop_assert_eq!(
+                through,
+                direct,
+                "{:?} through the relay disagreed with it sent directly",
+                target
+            );
+            let expected = if direct { after_direct } else { untouched };
+            prop_assert!(
+                after_through == expected,
+                "{:?} through the relay left a different state",
+                target
+            );
+            self.stats.relayed += 1;
+            self.stats.relayed_ok += usize::from(through);
+            return Ok(false);
+        }
+
+        self.ctx.svm = saved;
+        if target == Target::Finalize || !direct {
+            return Ok(false);
+        }
+        let (pda, _) = relay_pda();
+        let real = signer.pubkey();
+        let mut forged = ix.clone();
+        for meta in forged.accounts.iter_mut() {
+            if meta.pubkey == real {
+                meta.pubkey = pda;
+            }
+        }
+        let payer = self.stranger.insecure_clone();
+        let accepted = self
+            .ctx
+            .send_instructions(&payer, &[relayed(&forged)])
+            .is_ok();
+        prop_assert!(
+            !accepted,
+            "{:?} accepted the relay's PDA signing in place of {}",
+            target,
+            real
+        );
+        self.stats.relay_forged += 1;
         Ok(false)
     }
 
@@ -2887,6 +3032,9 @@ fn run_queue_walk(
     let garbled: [AtomicUsize; TARGETS.len()] = Default::default();
     let compute: [AtomicU64; TARGETS.len()] = Default::default();
     let bundles = AtomicUsize::new(0);
+    let relayed = AtomicUsize::new(0);
+    let relayed_ok = AtomicUsize::new(0);
+    let relay_forged = AtomicUsize::new(0);
     let mut runner = TestRunner::new(ProptestConfig {
         cases: queue_walk_cases(cases),
         source_file: Some(file!()),
@@ -2909,6 +3057,9 @@ fn run_queue_walk(
             compute[i].fetch_max(stats.compute[i], Ordering::Relaxed);
         }
         bundles.fetch_add(stats.bundles, Ordering::Relaxed);
+        relayed.fetch_add(stats.relayed, Ordering::Relaxed);
+        relayed_ok.fetch_add(stats.relayed_ok, Ordering::Relaxed);
+        relay_forged.fetch_add(stats.relay_forged, Ordering::Relaxed);
         unwind(&mut walk)
     });
     if let Err(e) = result {
@@ -2919,6 +3070,9 @@ fn run_queue_walk(
         garbled: garbled.map(|n| n.into_inner()),
         compute: compute.map(|n| n.into_inner()),
         bundles: bundles.into_inner(),
+        relayed: relayed.into_inner(),
+        relayed_ok: relayed_ok.into_inner(),
+        relay_forged: relay_forged.into_inner(),
     }
 }
 
@@ -3105,6 +3259,9 @@ fn queue_walk_invariants_hold_over_ten_thousand_steps() {
         );
     }
     assert!(stats.bundles > 0, "no bundle tested anything");
+    // Refused both ways proves little, so some relayed calls must land.
+    assert!(stats.relayed_ok > 0, "no relayed instruction succeeded");
+    assert!(stats.relay_forged > 0, "the relay's PDA never tried a role");
     assert!(
         stats.garbled.iter().sum::<usize>() > 0,
         "no garbled instruction tested anything"
@@ -3112,6 +3269,10 @@ fn queue_walk_invariants_hold_over_ten_thousand_steps() {
     println!("forgeries that tested something: {:?}", stats.forged);
     println!("garbled that tested something: {:?}", stats.garbled);
     println!("bundles that tested something: {}", stats.bundles);
+    println!(
+        "relayed: {} ({} succeeded); relay PDA refused as signer: {}",
+        stats.relayed, stats.relayed_ok, stats.relay_forged
+    );
     for (target, units) in TARGETS.iter().zip(stats.compute) {
         println!("most compute units, {target:?}: {units}");
     }

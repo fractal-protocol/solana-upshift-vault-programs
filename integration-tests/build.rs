@@ -103,6 +103,12 @@ const PROGRAMS: &[(&str, &str)] = &[
 ];
 const ESCAPE_HATCH: &str = "ALLOW_STALE_PROGRAM_SO";
 
+/// A test-only program the walks load beside the real ones: an attacker that
+/// forwards instructions by CPI. Its own workspace and lockfile, so nothing of
+/// it reaches the root workspace or the release.
+const FIXTURE_MANIFEST: &str = "integration-tests/fixtures/cpi-relay/Cargo.toml";
+const FIXTURE_ARTIFACT: &str = "cpi_relay.so";
+
 /// Where a parked artifact lives when the escape hatch is used.
 fn parked_path(repo_root: &Path, artifact: &str) -> PathBuf {
     repo_root.join("target/deploy").join(artifact)
@@ -129,12 +135,22 @@ fn main() {
     // integration-test target then relinks each time. This repo has
     // `.cargo/audit.toml` but no `.cargo/config.toml`, so naming that file directly
     // cost ~5s on every no-op `cargo test`.
-    for path in ["programs", "Cargo.toml", "Cargo.lock", ".cargo"] {
+    for path in [
+        "programs",
+        "Cargo.toml",
+        "Cargo.lock",
+        ".cargo",
+        "integration-tests/fixtures",
+    ] {
         let watched = repo_root.join(path);
         if watched.exists() {
             println!("cargo:rerun-if-changed={}", watched.display());
         }
     }
+
+    // Built even under the escape hatch: the hatch picks which vault and queue
+    // bytecode is under test, and the relay is test machinery, not a subject.
+    build_fixture(&repo_root, &out_dir);
 
     if std::env::var_os(ESCAPE_HATCH).is_some() {
         // Declare the parked artifact an input, or replacing it would keep
@@ -286,6 +302,56 @@ fn main() {
              .cargo/config.toml override.\n\n"
             );
         }
+    }
+}
+
+/// Builds the CPI relay fixture into `out_dir`, refusing a build that re-resolved
+/// its lockfile, for the same reason as the programs' build above.
+fn build_fixture(repo_root: &Path, out_dir: &Path) {
+    let manifest = repo_root.join(FIXTURE_MANIFEST);
+    let lock_path = manifest.with_file_name("Cargo.lock");
+    let lock_before = std::fs::read(&lock_path)
+        .unwrap_or_else(|e| panic!("read the committed {}: {e}", lock_path.display()));
+    let staging = out_dir.join("sbf-out-fixture");
+    match std::fs::remove_dir_all(&staging) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => panic!("clear {}: {e}", staging.display()),
+    }
+    std::fs::create_dir_all(&staging).expect("create the fixture staging directory");
+
+    let mut cmd = Command::new("cargo");
+    cmd.arg("build-sbf")
+        .arg("--manifest-path")
+        .arg(&manifest)
+        .arg("--sbf-out-dir")
+        .arg(&staging)
+        .arg("--")
+        .arg("--locked")
+        .current_dir(repo_root);
+    scrub_env(&mut cmd);
+    let output = cmd
+        .output()
+        .unwrap_or_else(|e| panic!("could not run `cargo build-sbf` for the CPI relay ({e})"));
+    if !output.status.success() {
+        panic!(
+            "\n\nThe CPI relay fixture failed to build.\n\n--- cargo build-sbf stderr ---\n{}\n",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let after = std::fs::read(&lock_path)
+        .unwrap_or_else(|e| panic!("re-read {} after the build: {e}", lock_path.display()));
+    if lock_before != after {
+        panic!(
+            "\n\nThe CPI relay build modified {}. Review and commit it if intended.\n\n",
+            lock_path.display()
+        );
+    }
+    if let Err(e) = install(
+        &staging.join(FIXTURE_ARTIFACT),
+        &out_dir.join(FIXTURE_ARTIFACT),
+    ) {
+        panic!("the CPI relay build produced no {FIXTURE_ARTIFACT} ({e})");
     }
 }
 
