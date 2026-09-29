@@ -106,6 +106,9 @@ pub struct VaultCtx {
     /// mutating it post-`fresh_*` would silently desync the derivations from
     /// the program ID passed to instruction CPIs.
     pub(crate) token_program: TokenProgramKind,
+    /// The deposit mint's decimals, which the share mint shares. Crate-private
+    /// for the same reason as `token_program`: the mint was created with it.
+    pub(crate) decimals: u8,
     pub payer: Keypair,
     /// The `ProgramConfig` authority — the only key allowed to call
     /// `initialize`. Tests that need an unauthorized creator should use
@@ -126,6 +129,16 @@ pub struct VaultCtx {
 }
 
 impl VaultCtx {
+    /// The token program the vault was initialized against.
+    pub fn token_program_id(&self) -> Pubkey {
+        self.token_program.id()
+    }
+
+    /// The deposit mint's decimals (the share mint's too).
+    pub fn decimals(&self) -> u8 {
+        self.decimals
+    }
+
     /// Fresh vault using the legacy SPL Token program.
     pub fn fresh() -> Self {
         Self::fresh_with_token_program(TokenProgramKind::Spl)
@@ -141,14 +154,36 @@ impl VaultCtx {
     /// in the vault itself minds them; this exists so the queue's deposit-mint
     /// allow-list can be exercised against real mint bytes.
     pub fn fresh_token_2022_with_extensions(extensions: &[MintExtension]) -> Self {
-        Self::fresh_inner(TokenProgramKind::Token2022, extensions)
+        Self::fresh_inner(
+            TokenProgramKind::Token2022,
+            extensions,
+            DEPOSIT_DECIMALS,
+            HARNESS_SHARE_OFFSET_U64,
+        )
+    }
+
+    /// Fresh vault of a chosen shape: token program, deposit-mint decimals and
+    /// share offset. For suites that sweep vault shapes; everything else uses
+    /// the fixed-shape constructors above.
+    pub fn fresh_shaped(token_program: TokenProgramKind, decimals: u8, share_offset: u64) -> Self {
+        Self::fresh_inner(token_program, &[], decimals, share_offset)
     }
 
     fn fresh_with_token_program(token_program: TokenProgramKind) -> Self {
-        Self::fresh_inner(token_program, &[])
+        Self::fresh_inner(
+            token_program,
+            &[],
+            DEPOSIT_DECIMALS,
+            HARNESS_SHARE_OFFSET_U64,
+        )
     }
 
-    fn fresh_inner(token_program: TokenProgramKind, extensions: &[MintExtension]) -> Self {
+    fn fresh_inner(
+        token_program: TokenProgramKind,
+        extensions: &[MintExtension],
+        decimals: u8,
+        share_offset: u64,
+    ) -> Self {
         // The production 10 KB log cap stays: a test that read past it would
         // pass here and fail on a cluster.
         let mut svm = LiteSVM::new();
@@ -191,7 +226,7 @@ impl VaultCtx {
                 &payer,
                 &deposit_mint_kp,
                 &payer.pubkey(),
-                DEPOSIT_DECIMALS,
+                decimals,
                 token_program,
             );
         } else {
@@ -204,7 +239,7 @@ impl VaultCtx {
                 &payer,
                 &deposit_mint_kp,
                 &payer.pubkey(),
-                DEPOSIT_DECIMALS,
+                decimals,
                 extensions,
             );
         }
@@ -224,7 +259,7 @@ impl VaultCtx {
             operator.pubkey(),
             fee_recipient.pubkey(),
             token_program,
-            HARNESS_SHARE_OFFSET_U64,
+            share_offset,
         );
         send_tx(
             &mut svm,
@@ -261,6 +296,7 @@ impl VaultCtx {
         Self {
             svm,
             token_program,
+            decimals,
             payer,
             protocol_authority,
             admin,
@@ -820,7 +856,7 @@ impl VaultCtx {
                 &owner.pubkey(),
                 &[],
                 amount,
-                DEPOSIT_DECIMALS,
+                self.decimals,
             ),
         }
         .unwrap();
@@ -847,7 +883,7 @@ impl VaultCtx {
             &owner.pubkey(),
             &[],
             amount,
-            DEPOSIT_DECIMALS,
+            self.decimals,
         )
         .unwrap();
         let signer = owner.insecure_clone();
@@ -2299,7 +2335,7 @@ impl VaultCtx {
             &payer,
             &mint_kp,
             &payer.pubkey(),
-            DEPOSIT_DECIMALS,
+            self.decimals,
             self.token_program,
         );
         mint_kp.pubkey()
