@@ -34,8 +34,9 @@
 //!   is refused and changes nothing; so is one signed by anyone but its
 //!   signer; so is one whose data is truncated, under an unknown
 //!   discriminator, or noise.
-//! - In the queue walk, two honest instructions in one transaction do exactly
-//!   what they do one after the other, or nothing when either would fail.
+//! - In the queue walk, two to four honest instructions in one transaction,
+//!   with any mix of signers, do exactly what they do one after the other, or
+//!   nothing when any would fail.
 //! - Every instruction's honest run stays within [`COMPUTE_BUDGET`].
 //!
 //! A second walk (no AUM reports or custody losses; everything deployed comes
@@ -67,8 +68,8 @@ use integration_tests::harness::{
 use proptest::prelude::*;
 use proptest::test_runner::TestRunner;
 use solana_sdk::{
-    instruction::Instruction, pubkey::Pubkey, signature::Keypair, signer::Signer,
-    transaction::Transaction,
+    instruction::Instruction, packet::PACKET_DATA_SIZE, pubkey::Pubkey, signature::Keypair,
+    signer::Signer, transaction::Transaction,
 };
 use spl_token_2022::{extension::StateWithExtensions, state::Account as TokenAccountState};
 
@@ -1206,11 +1207,10 @@ enum QueueOp {
         pick: usize,
         decoy: usize,
     },
-    /// Two honest instructions, each `(target, who, pick)` as for
+    /// Two to four honest instructions, each `(target, who, pick)` as for
     /// `Substitute`, sent in one transaction. See [`QueueWalk::bundle`].
     Bundle {
-        first: (usize, usize, usize),
-        second: (usize, usize, usize),
+        steps: Vec<(usize, usize, usize)>,
     },
     /// An honest instruction with its data mangled per `how`, seeded by
     /// `seed`. See [`QueueWalk::garble`].
@@ -1354,12 +1354,19 @@ fn queue_op_strategy(include_yield_ops: bool) -> BoxedStrategy<QueueOp> {
                 pick,
                 decoy,
             }),
-        // One bundle in three repeats its first instruction, so the same
-        // finalize, cancel or deregister is tried twice in one transaction.
-        2 => (bundle_step(), bundle_step(), prop::bool::weighted(1.0 / 3.0))
-            .prop_map(|(first, second, repeat)| QueueOp::Bundle {
-                first,
-                second: if repeat { first } else { second },
+        // One bundle in three ends by repeating its first instruction, so the
+        // same finalize, cancel or deregister is tried twice in one
+        // transaction.
+        2 => (
+            proptest::collection::vec(bundle_step(), 2..=4),
+            prop::bool::weighted(1.0 / 3.0),
+        )
+            .prop_map(|(mut steps, repeat)| {
+                if repeat {
+                    let last = steps.len() - 1;
+                    steps[last] = steps[0];
+                }
+                QueueOp::Bundle { steps }
             }),
         2 => (0..TARGETS.len(), 0..DEPOSITORS, any::<usize>(), 0u8..3, any::<u64>())
             .prop_map(|(t, who, pick, how, seed)| QueueOp::Garble {
@@ -1991,7 +1998,7 @@ impl QueueWalk {
                 pick,
                 decoy,
             } => self.substitute(target, who, pick, decoy),
-            QueueOp::Bundle { first, second } => self.bundle(first, second),
+            QueueOp::Bundle { ref steps } => self.bundle(steps),
             QueueOp::Garble {
                 target,
                 who,
@@ -2045,8 +2052,10 @@ impl QueueWalk {
     }
 
     /// Sends `ixs` in one transaction signed by `signers` (deduplicated), the
-    /// first paying. The harness sends one signer at a time.
-    fn send_together(&mut self, signers: &[&Keypair], ixs: &[Instruction]) -> bool {
+    /// first paying; `None` when it would not fit in a packet, since LiteSVM
+    /// does not enforce the limit a cluster does. The harness sends one signer
+    /// at a time.
+    fn send_together(&mut self, signers: &[&Keypair], ixs: &[Instruction]) -> Option<bool> {
         let mut unique: Vec<&Keypair> = Vec::new();
         for signer in signers {
             if !unique.iter().any(|k| k.pubkey() == signer.pubkey()) {
@@ -2061,7 +2070,12 @@ impl QueueWalk {
             &unique,
             svm.latest_blockhash(),
         );
-        svm.send_transaction(tx).is_ok()
+        // A signature count under 128 serializes as one byte.
+        let size = 1 + 64 * tx.signatures.len() + tx.message_data().len();
+        if size > PACKET_DATA_SIZE {
+            return None;
+        }
+        Some(svm.send_transaction(tx).is_ok())
     }
 
     /// Every account the walk's instructions can write, raw, for comparing two
@@ -2093,52 +2107,57 @@ impl QueueWalk {
             .collect()
     }
 
-    /// Two honest instructions in one transaction must do exactly what they
-    /// do one after the other: succeed together only if both succeed in turn,
-    /// and then leave the same state; otherwise change nothing. Both runs are
-    /// on copies of the chain, so the walk's model is untouched.
-    fn bundle(
-        &mut self,
-        first: (usize, usize, usize),
-        second: (usize, usize, usize),
-    ) -> Result<bool, TestCaseError> {
-        let a = self.honest(TARGETS[first.0], first.1, first.2);
-        let b = self.honest(TARGETS[second.0], second.1, second.2);
-        let (Some((sa, ia, _)), Some((sb, ib, _))) = (a, b) else {
-            return Ok(false);
-        };
+    /// Honest instructions in one transaction must do exactly what they do
+    /// one after the other: succeed together only if each succeeds in turn,
+    /// and then leave the same state; otherwise change nothing. Each is built
+    /// from the state before the first, and the signers may all differ. Both
+    /// runs are on copies of the chain, so the walk's model is untouched.
+    fn bundle(&mut self, steps: &[(usize, usize, usize)]) -> Result<bool, TestCaseError> {
+        let mut built = Vec::new();
+        for &(t, who, pick) in steps {
+            let Some((signer, ix, _)) = self.honest(TARGETS[t], who, pick) else {
+                return Ok(false);
+            };
+            built.push((signer, ix));
+        }
+        let names: Vec<Target> = steps.iter().map(|s| TARGETS[s.0]).collect();
         let saved = self.ctx.svm.clone();
         let untouched = self.raw_state();
 
-        let in_turn = self
-            .ctx
-            .send_instructions(&sa, std::slice::from_ref(&ia))
-            .is_ok()
-            && self
+        let mut in_turn = true;
+        for (signer, ix) in &built {
+            if self
                 .ctx
-                .send_instructions(&sb, std::slice::from_ref(&ib))
-                .is_ok();
+                .send_instructions(signer, std::slice::from_ref(ix))
+                .is_err()
+            {
+                in_turn = false;
+                break;
+            }
+        }
         let after_in_turn = self.raw_state();
         self.ctx.svm = saved.clone();
 
-        let together = self.send_together(&[&sa, &sb], &[ia, ib]);
+        let signers: Vec<&Keypair> = built.iter().map(|(k, _)| k).collect();
+        let ixs: Vec<Instruction> = built.iter().map(|(_, ix)| ix.clone()).collect();
+        let together = self.send_together(&signers, &ixs);
         let after_together = self.raw_state();
         self.ctx.svm = saved;
+        let Some(together) = together else {
+            return Ok(false);
+        };
 
-        let (ta, tb) = (TARGETS[first.0], TARGETS[second.0]);
         prop_assert_eq!(
             together,
             in_turn,
-            "{:?} + {:?} in one transaction disagreed with them in turn",
-            ta,
-            tb
+            "{:?} in one transaction disagreed with them in turn",
+            names
         );
         let expected = if in_turn { after_in_turn } else { untouched };
         prop_assert!(
             after_together == expected,
-            "{:?} + {:?} in one transaction left a different state",
-            ta,
-            tb
+            "{:?} in one transaction left a different state",
+            names
         );
         self.stats.bundles += 1;
         Ok(false)
