@@ -786,14 +786,28 @@ impl QueueWalk {
     }
 }
 
-/// Runs `cases` walks of `QUEUE_WALK_STEPS` ops each.
+/// `floor`, or `PROPTEST_CASES` when that asks for more. The `proptest!` walks
+/// read the variable themselves; these set their count explicitly, which would
+/// otherwise override it, and must never drop below the step floor.
+fn queue_walk_cases(floor: u32) -> u32 {
+    let Ok(raw) = std::env::var("PROPTEST_CASES") else {
+        return floor;
+    };
+    match raw.parse::<u32>() {
+        Ok(requested) if requested > floor => requested,
+        _ => floor,
+    }
+}
+
+/// Runs `cases` walks of `QUEUE_WALK_STEPS` ops each, or more when
+/// `PROPTEST_CASES` asks for them.
 fn run_queue_walk(
     include_yield_ops: bool,
     cases: u32,
     unwind: fn(&mut QueueWalk) -> Result<(), TestCaseError>,
 ) {
     let mut runner = TestRunner::new(ProptestConfig {
-        cases,
+        cases: queue_walk_cases(cases),
         source_file: Some(file!()),
         ..ProptestConfig::default()
     });
