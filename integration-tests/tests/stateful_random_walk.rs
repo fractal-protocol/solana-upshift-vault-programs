@@ -2077,8 +2077,12 @@ impl QueueWalk {
             keys.push(sub.pda);
             keys.push(sub.deposit_ata);
         }
+        // The spares' accounts, and those of whoever holds each role now: a
+        // handover swaps the two, so neither list covers the office alone.
         keys.extend(self.model.operators.iter().map(|(_, a)| *a));
         keys.extend(self.model.fee_recipients.iter().map(|(_, a)| *a));
+        keys.push(self.ctx.operator_deposit_ata);
+        keys.push(self.ctx.fee_recipient_deposit_ata);
         keys.push(self.ctx.nominated_admin_pda());
         keys.push(self.model.sink);
         keys.iter()
