@@ -39,6 +39,10 @@
 //!   nothing when any would fail.
 //! - Every instruction's honest run stays within [`COMPUTE_BUDGET`].
 //!
+//! A two-vault walk puts two vaults on one chain, of independent shapes or as
+//! two versions of one deposit mint, and interleaves ops between them: an op on one never changes the other's
+//! accounts, and each vault's forgeries use the other's accounts and roles.
+//!
 //! A second walk (no AUM reports or custody losses; everything deployed comes
 //! home at the end) checks the economic end-state property: with no yield
 //! injected, the depositors together can never withdraw more than they
@@ -162,6 +166,14 @@ struct Shape {
 }
 
 impl Shape {
+    fn token(self) -> TokenProgramKind {
+        if self.token_2022 {
+            TokenProgramKind::Token2022
+        } else {
+            TokenProgramKind::Spl
+        }
+    }
+
     /// The shape every walk ran against before shapes were drawn.
     const DEFAULT: Shape = Shape {
         token_2022: false,
@@ -193,7 +205,12 @@ const NOMINATION_WINDOW: i64 = 24 * 60 * 60;
 /// What a subaccount lets the vault move; far above anything a walk deploys.
 const SUBACCOUNT_ALLOWANCE: u64 = u64::MAX / 4;
 
-fn op_strategy(include_yield_ops: bool) -> BoxedStrategy<Op> {
+/// The vault op mix. Without `config_ops` the two config-authority handovers
+/// draw a zero-second warp instead: the authority is program-wide, so a walk
+/// sharing the program with another cannot move it without the other's model
+/// going stale. (`prop_oneof!` refuses a zero weight, hence the stand-in.)
+fn op_strategy(include_yield_ops: bool, config_ops: bool) -> BoxedStrategy<Op> {
+    let config = move |op: Op| if config_ops { op } else { Op::Warp(0) };
     let slack = prop_oneof![Just(-1i8), Just(0i8), Just(1i8)];
     let base = prop_oneof![
         4 => (0..DEPOSITORS, 1u64..20_000_000_000)
@@ -224,8 +241,8 @@ fn op_strategy(include_yield_ops: bool) -> BoxedStrategy<Op> {
         1 => (0u64..=2 * 24 * 60 * 60).prop_map(Op::Warp),
         1 => (0..SPARES).prop_map(|who| Op::SetOperator { who }),
         1 => (0..SPARES).prop_map(|who| Op::SetFeeRecipient { who }),
-        1 => (0..SPARES).prop_map(|who| Op::SetConfigAuthority { who }),
-        1 => (0..SPARES).prop_map(|who| Op::OverrideConfigAuthority { who }),
+        1 => (0..SPARES).prop_map(move |who| config(Op::SetConfigAuthority { who })),
+        1 => (0..SPARES).prop_map(move |who| config(Op::OverrideConfigAuthority { who })),
         1 => any::<bool>().prop_map(|by_other| Op::CreateVault { by_other }),
         1 => Just(Op::CreateMetadata),
         1 => Just(Op::UpdateMetadata),
@@ -303,12 +320,15 @@ struct VaultModel {
 /// user, who makes the seed deposit (raised to the shape's first-deposit floor
 /// where that is higher); the rest start with the same funds and no shares.
 fn fresh_walk_vault(shape: Shape) -> (VaultCtx, Vec<Depositor>, VaultModel) {
-    let token = if shape.token_2022 {
-        TokenProgramKind::Token2022
-    } else {
-        TokenProgramKind::Spl
-    };
-    let mut ctx = VaultCtx::fresh_shaped(token, shape.decimals, shape.offset);
+    walk_vault(
+        VaultCtx::fresh_shaped(shape.token(), shape.decimals, shape.offset),
+        shape,
+    )
+}
+
+/// Funds and seeds `ctx`, a vault of `shape` whose chain it holds, and sets
+/// up its depositors and model as [`fresh_walk_vault`] describes.
+fn walk_vault(mut ctx: VaultCtx, shape: Shape) -> (VaultCtx, Vec<Depositor>, VaultModel) {
     let floor = VaultState::min_first_deposit_for(shape.decimals, shape.offset as u128);
     ctx.mint_to_user(INITIAL_USER_FUNDS);
     ctx.deposit(SEED_DEPOSIT.max(floor)).expect("seed deposit");
@@ -1043,7 +1063,7 @@ proptest! {
     #[test]
     fn invariants_hold_under_random_op_sequences(
         shape in shape_strategy(),
-        ops in proptest::collection::vec(op_strategy(true), 1..60)
+        ops in proptest::collection::vec(op_strategy(true, true), 1..60)
     ) {
         let (mut ctx, users, mut model) = fresh_walk_vault(shape);
         assert_state_invariants(&ctx, &users, &model)?;
@@ -1076,7 +1096,7 @@ proptest! {
     #[test]
     fn no_value_extraction_without_yield(
         shape in shape_strategy(),
-        ops in proptest::collection::vec(op_strategy(false), 1..60)
+        ops in proptest::collection::vec(op_strategy(false, true), 1..60)
     ) {
         let (mut ctx, users, mut model) = fresh_walk_vault(shape);
 
@@ -1314,7 +1334,7 @@ fn queue_ix(accounts: impl ToAccountMetas, data: impl InstructionData) -> Instru
     }
 }
 
-fn queue_op_strategy(include_yield_ops: bool) -> BoxedStrategy<QueueOp> {
+fn queue_op_strategy(include_yield_ops: bool, config_ops: bool) -> BoxedStrategy<QueueOp> {
     let caller = prop_oneof![
         Just(Caller::Owner),
         Just(Caller::Keeper),
@@ -1379,7 +1399,7 @@ fn queue_op_strategy(include_yield_ops: bool) -> BoxedStrategy<QueueOp> {
         1 => any::<bool>().prop_map(|stranger_signs| QueueOp::DetachDirect { stranger_signs }),
     ];
     prop_oneof![
-        1 => op_strategy(include_yield_ops).prop_map(QueueOp::Vault),
+        1 => op_strategy(include_yield_ops, config_ops).prop_map(QueueOp::Vault),
         3 => queue,
     ]
     .boxed()
@@ -1542,6 +1562,12 @@ struct QueueWalk {
     decoys: Vec<Pubkey>,
     /// What the walk exercised, for the run's own coverage checks.
     stats: WalkStats,
+    /// Keys from outside this vault that may try to sign in its roles'
+    /// places: another vault's admin and operator when two share a chain.
+    outsiders: Vec<Keypair>,
+    /// Another walked vault's accounts, decoys for forging only: they are
+    /// not this vault's, so its state comparisons leave them out.
+    outside_decoys: Vec<Pubkey>,
 }
 
 /// What a walk exercised. Forgeries and garbles count only when the honest
@@ -1570,7 +1596,13 @@ fn target_index(target: Target) -> usize {
 
 impl QueueWalk {
     fn new(shape: Shape) -> Self {
-        let (mut ctx, users, model) = fresh_walk_vault(shape);
+        let ctx = VaultCtx::fresh_shaped(shape.token(), shape.decimals, shape.offset);
+        Self::from_ctx(ctx, shape)
+    }
+
+    /// A walk over `ctx`, a vault of `shape` whose chain it holds.
+    fn from_ctx(ctx: VaultCtx, shape: Shape) -> Self {
+        let (mut ctx, users, model) = walk_vault(ctx, shape);
         ctx.open_queue(INITIAL_COOLDOWN);
         let keeper = ctx.new_funded_keypair(1_000_000_000);
         let stranger = ctx.new_funded_keypair(1_000_000_000);
@@ -1621,6 +1653,8 @@ impl QueueWalk {
             attached: true,
             decoys,
             stats: WalkStats::default(),
+            outsiders: Vec::new(),
+            outside_decoys: Vec::new(),
         }
     }
 
@@ -2048,6 +2082,7 @@ impl QueueWalk {
         keys.push(self.ctx.protocol_authority.insecure_clone());
         keys.push(self.model.upgrade_authority.insecure_clone());
         keys.extend(self.users.iter().map(|u| u.keypair.insecure_clone()));
+        keys.extend(self.outsiders.iter().map(|k| k.insecure_clone()));
         keys
     }
 
@@ -2655,6 +2690,7 @@ impl QueueWalk {
         *compute = (*compute).max(meta.compute_units_consumed);
 
         let mut pool = self.decoys.clone();
+        pool.extend(self.outside_decoys.iter().copied());
         for (owner, id) in self.live.keys() {
             pool.push(self.ctx.request_pda(&self.owner(*owner), *id));
         }
@@ -2858,7 +2894,7 @@ fn run_queue_walk(
     });
     let strategy = (
         shape_strategy(),
-        proptest::collection::vec(queue_op_strategy(include_yield_ops), QUEUE_WALK_STEPS),
+        proptest::collection::vec(queue_op_strategy(include_yield_ops, true), QUEUE_WALK_STEPS),
     );
     let result = runner.run(&strategy, |(shape, ops)| {
         let mut walk = QueueWalk::new(shape);
@@ -2883,6 +2919,150 @@ fn run_queue_walk(
         garbled: garbled.map(|n| n.into_inner()),
         compute: compute.map(|n| n.into_inner()),
         bundles: bundles.into_inner(),
+    }
+}
+
+/// Two vaults with their queues on one chain, walked together. The chain lives
+/// in `walks[0]`; an op on the second swaps it in and back out.
+struct TwoVaults {
+    walks: [QueueWalk; 2],
+}
+
+impl TwoVaults {
+    /// With `same_mint` the second vault is version 1 of the first's deposit
+    /// mint (so `shapes.1` must match `shapes.0` but for its offset), and only
+    /// the version seed tells their accounts apart.
+    fn new(shapes: (Shape, Shape), same_mint: bool) -> Self {
+        let mut first = QueueWalk::new(shapes.0);
+        let second_ctx = first.ctx.sibling_vault(
+            shapes.1.token(),
+            shapes.1.decimals,
+            shapes.1.offset,
+            same_mint,
+        );
+        let mut placeholder = second_ctx;
+        std::mem::swap(&mut first.ctx.svm, &mut placeholder.svm);
+        let mut second = QueueWalk::from_ctx(placeholder, shapes.1);
+        std::mem::swap(&mut first.ctx.svm, &mut second.ctx.svm);
+
+        // Each vault's accounts are decoys for the other's forgeries, and each
+        // vault's roles are impostors in the other's.
+        let (a, b) = (first.own_accounts(), second.own_accounts());
+        first.outside_decoys = b;
+        second.outside_decoys = a;
+        first.outsiders = second.roles();
+        second.outsiders = first.roles();
+        TwoVaults {
+            walks: [first, second],
+        }
+    }
+
+    /// Runs `f` on walk `i` with the chain in its hands.
+    fn on<R>(&mut self, i: usize, f: impl FnOnce(&mut QueueWalk) -> R) -> R {
+        let [first, second] = &mut self.walks;
+        if i == 1 {
+            std::mem::swap(&mut first.ctx.svm, &mut second.ctx.svm);
+        }
+        let result = f(if i == 0 { first } else { second });
+        if i == 1 {
+            std::mem::swap(&mut first.ctx.svm, &mut second.ctx.svm);
+        }
+        result
+    }
+
+    /// One op on vault `i`: everything the single walk checks, plus that the
+    /// other vault's accounts are untouched and its invariants still hold.
+    fn step(&mut self, i: usize, op: &QueueOp) -> Result<(), TestCaseError> {
+        let other = 1 - i;
+        let before = self.on(other, |w| w.raw_state());
+        self.on(i, |w| w.step(op))?;
+        let after = self.on(other, |w| w.raw_state());
+        prop_assert!(
+            before == after,
+            "{:?} on vault {} changed vault {}",
+            op,
+            i,
+            other
+        );
+        self.on(other, |w| w.assert_invariants())
+    }
+}
+
+impl QueueWalk {
+    /// This vault's own accounts, for the other vault's decoys.
+    fn own_accounts(&self) -> Vec<Pubkey> {
+        let ctx = &self.ctx;
+        let mut keys = vec![
+            ctx.vault_state,
+            ctx.deposit_mint,
+            ctx.share_mint,
+            ctx.vault_token_pda,
+            ctx.withdrawal_queue_pda(),
+            ctx.queue_escrow(&ctx.share_mint),
+            ctx.queue_escrow(&ctx.deposit_mint),
+            ctx.fee_recipient_deposit_ata,
+            ctx.operator_deposit_ata,
+            ctx.nominated_admin_pda(),
+        ];
+        for user in &self.users {
+            keys.push(user.deposit_ata);
+            keys.push(user.share_ata);
+        }
+        keys
+    }
+
+    fn roles(&self) -> Vec<Keypair> {
+        vec![
+            self.ctx.admin.insecure_clone(),
+            self.ctx.operator.insecure_clone(),
+        ]
+    }
+}
+
+/// Two vaults share the programs, the program config and the chain: in half
+/// the cases with independently drawn shapes, in the other half as versions 0
+/// and 1 of one deposit mint, where no mint check can tell them apart. Ops
+/// interleave between them; after every op on one, the other's accounts are
+/// byte-identical and its invariants hold, and each vault's forgeries draw the
+/// other's live accounts as decoys and its admin and operator as impostors.
+#[test]
+fn two_vaults_walked_together_stay_isolated() {
+    let mut runner = TestRunner::new(ProptestConfig {
+        cases: queue_walk_cases(16),
+        source_file: Some(file!()),
+        ..ProptestConfig::default()
+    });
+    let shapes = (shape_strategy(), shape_strategy(), any::<bool>()).prop_map(
+        |(first, drawn, same_mint)| {
+            let second = if same_mint {
+                Shape {
+                    offset: drawn.offset,
+                    ..first
+                }
+            } else {
+                drawn
+            };
+            ((first, second), same_mint)
+        },
+    );
+    let strategy = (
+        shapes,
+        proptest::collection::vec(
+            (0usize..2, queue_op_strategy(true, false)),
+            QUEUE_WALK_STEPS,
+        ),
+    );
+    let result = runner.run(&strategy, |((shapes, same_mint), ops)| {
+        let mut vaults = TwoVaults::new(shapes, same_mint);
+        vaults.on(0, |w| w.assert_invariants())?;
+        vaults.on(1, |w| w.assert_invariants())?;
+        for (i, op) in &ops {
+            vaults.step(*i, op)?;
+        }
+        Ok(())
+    });
+    if let Err(e) = result {
+        panic!("{e}");
     }
 }
 
