@@ -588,7 +588,10 @@ fn assert_model_invariants(ctx: &VaultCtx, model: &VaultModel) -> Result<(), Tes
 
 /// Brings everything deployed home: each subaccount returns its balance, the
 /// rest of its principal is settled as a loss and it is deregistered, and then
-/// the operator, free of the subaccount rule, returns its own balance.
+/// the operator, free of the subaccount rule, returns its own balance. Last,
+/// `deployed_aum` is marked down to zero: a settled loss clears the principal
+/// but not the AUM, which would otherwise keep pricing tokens that never came
+/// back, and the final exit would be refused for want of liquidity.
 fn recall_deployed(ctx: &mut VaultCtx, model: &mut VaultModel) {
     let admin = ctx.admin.insecure_clone();
     for (sub, _) in std::mem::take(&mut model.subs) {
@@ -609,6 +612,14 @@ fn recall_deployed(ctx: &mut VaultCtx, model: &mut VaultModel) {
     if operator_balance > 0 {
         ctx.operator_deposit(operator_balance)
             .expect("operator returns all");
+    }
+    let state = ctx.vault_state_data();
+    if state.deployed_aum > 0 {
+        // A 100% decrease limit is the only bound that admits a report of zero.
+        ctx.set_aum_limits_as(&admin, state.aum_increase_limit, BPS_DENOMINATOR)
+            .expect("widen the decrease limit");
+        ctx.operator_update_aum(0)
+            .expect("mark nothing as deployed");
     }
 }
 
@@ -846,6 +857,36 @@ proptest! {
         );
         assert_closes_when_empty(&mut ctx)?;
     }
+}
+
+/// A custody loss must not strand the last holder. The loss is settled, which
+/// clears the principal but not `deployed_aum`; unless the recall marks the AUM
+/// down, the lost tokens keep pricing the shares and the final full redeem asks
+/// for more than the reserve holds.
+#[test]
+fn a_custody_loss_leaves_every_holder_a_full_exit() {
+    let (mut ctx, users, mut model) = fresh_walk_vault();
+    for op in [
+        Op::UserDeposit {
+            who: 1,
+            amount: 5_000_000_000,
+        },
+        Op::RegisterSub,
+        Op::SubWithdraw { sub: 0, pm: 500 },
+        Op::SubLose { sub: 0, pm: 500 },
+    ] {
+        let outcome = execute(&mut ctx, &users, &mut model, &op).expect("op");
+        assert!(outcome.ok, "{op:?} was refused");
+    }
+
+    recall_deployed(&mut ctx, &mut model);
+    let state = ctx.vault_state_data();
+    assert_eq!(
+        (state.deployed_aum, state.deployed_principal),
+        (0, 0),
+        "nothing is deployed once everything is recalled"
+    );
+    exit_all(&mut ctx, &users).expect("every holder exits in full");
 }
 
 // ---- the queue walk (WQ-10) ----
