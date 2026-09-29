@@ -1,0 +1,87 @@
+name: Nightly property tests
+
+# The property suites and random walks at a depth PR CI cannot afford. PR CI
+# runs them at their in-file case counts; this reruns them with
+# PROPTEST_CASES raised, so a rare interleaving gets a nightly chance to show.
+on:
+    schedule:
+        # 03:17 UTC, off the hour to dodge the scheduler's top-of-hour backlog.
+        - cron: "17 3 * * *"
+    workflow_dispatch:
+        inputs:
+            cases:
+                description: "PROPTEST_CASES (at least 2048, or property_arithmetic.rs runs shallower than in PR CI)"
+                type: number
+                default: 4096
+
+concurrency:
+    group: ${{ github.workflow }}
+    cancel-in-progress: false
+
+env:
+    SOLANA_VERSION: "2.1.14"
+    # The `proptest!` macro lets PROPTEST_CASES override an in-file
+    # `with_cases`, in both directions, so this must stay at or above the
+    # largest in-file count (2048, property_arithmetic.rs). The queue walks
+    # take the larger of this and their own floor.
+    PROPTEST_CASES: ${{ inputs.cases || '4096' }}
+
+jobs:
+    property:
+        name: Property tests (deep)
+        runs-on: ubuntu-latest
+        timeout-minutes: 120
+        permissions:
+            contents: read
+        steps:
+            - uses: actions/checkout@v4
+            - uses: dtolnay/rust-toolchain@stable
+
+            - name: Cache Solana CLI
+              id: cache-solana
+              uses: actions/cache@v4
+              with:
+                  path: ~/.local/share/solana/install
+                  key: ${{ runner.os }}-solana-${{ env.SOLANA_VERSION }}
+            - uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry/index/
+                      ~/.cargo/registry/cache/
+                      ~/.cargo/git/db/
+                      integration-tests/target/
+                  key: ${{ runner.os }}-cargo-nightly-${{ hashFiles('**/Cargo.lock') }}
+                  restore-keys: ${{ runner.os }}-cargo-nightly-
+
+            # integration-tests/build.rs runs the SBF build itself, which needs
+            # cargo-build-sbf from the Solana CLI; Anchor is not needed.
+            - name: Install Solana CLI
+              if: steps.cache-solana.outputs.cache-hit != 'true'
+              run: sh -c "$(curl -sSfL https://release.anza.xyz/v${{ env.SOLANA_VERSION }}/install)"
+            - name: Add Solana to PATH
+              run: echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+            - name: Check the case count
+              run: |
+                  [ "$PROPTEST_CASES" -ge 2048 ] || { echo "::error::PROPTEST_CASES=$PROPTEST_CASES is below property_arithmetic.rs's own 2048"; exit 1; }
+
+            # --release: the walks are SVM-bound and an order of magnitude faster
+            # optimised; the crate's release profile keeps overflow checks on.
+            - name: Property suites and random walks
+              run: >
+                  cargo test --release --locked
+                  --manifest-path integration-tests/Cargo.toml
+                  --test property_arithmetic
+                  --test property_queue_state
+                  --test stateful_random_walk
+                  -- --nocapture
+
+            # proptest persists a shrunk failing case next to the test file; keep
+            # it so the failure can be replayed locally by dropping the file in.
+            - name: Upload failing seeds
+              if: failure()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: proptest-regressions
+                  path: integration-tests/tests/*.proptest-regressions
+                  if-no-files-found: ignore
