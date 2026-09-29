@@ -19,6 +19,9 @@
 //!   redeemer receives the remainder.
 //! - Every successful deposit mints, and every redeem pays, exactly what the
 //!   vault's conversion math quotes on the state before it.
+//! - In the queue walk, an instruction forged with one account the program
+//!   must bind swapped for a decoy (another vault's, another holder's, the
+//!   wrong kind) is refused and changes nothing.
 //!
 //! A second walk (no AUM reports, operator returns everything at the end)
 //! checks the economic end-state property: with no yield injected, the
@@ -30,17 +33,21 @@
 //! with PROPTEST_CASES for a deeper local search.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use anchor_lang::{InstructionData, ToAccountMetas};
 
 use august_vault::errors::ErrorCode as VaultError;
 use august_vault::state::vault::FEE_RATE_DENOMINATOR_VALUE;
 use august_withdrawal_queue::errors::{ErrorCode as QueueError, ANCHOR_USER_ERROR_OFFSET};
+use august_withdrawal_queue::state::WITHDRAWAL_REQUEST_SEED;
 use integration_tests::harness::{
-    assert_anchor_err, assert_anchor_framework_err, expected_withdrawal_fee, CeiSnapshot,
-    Depositor, VaultCtx,
+    assert_anchor_err, assert_anchor_framework_err, event_authority_pda, expected_withdrawal_fee,
+    program_config_pda, CeiSnapshot, Depositor, OtherVault, VaultCtx,
 };
 use proptest::prelude::*;
 use proptest::test_runner::TestRunner;
-use solana_sdk::{pubkey::Pubkey, signature::Keypair, signer::Signer};
+use solana_sdk::{instruction::Instruction, pubkey::Pubkey, signature::Keypair, signer::Signer};
 
 /// Initial balance minted to each depositor; caps total value in play so the
 /// `new_aum * 10000` guard math stays far from u64 overflow.
@@ -507,7 +514,38 @@ enum QueueOp {
     SetWindow(u64),
     Release,
     Attach,
+    /// Builds `target` with every account right, for depositor `who` or the
+    /// live request `pick` selects, then forges it with decoys drawn from
+    /// `decoy`. See [`QueueWalk::substitute`].
+    Substitute {
+        target: Target,
+        who: usize,
+        pick: usize,
+        decoy: usize,
+    },
 }
+
+/// The instructions [`QueueOp::Substitute`] forges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Target {
+    Deposit,
+    Redeem,
+    Request,
+    Finalize,
+    Cancel,
+    Expedite,
+    Sweep,
+}
+
+const TARGETS: [Target; 7] = [
+    Target::Deposit,
+    Target::Redeem,
+    Target::Request,
+    Target::Finalize,
+    Target::Cancel,
+    Target::Expedite,
+    Target::Sweep,
+];
 
 fn queue_op_strategy(include_yield_ops: bool) -> BoxedStrategy<QueueOp> {
     let caller = prop_oneof![
@@ -541,6 +579,13 @@ fn queue_op_strategy(include_yield_ops: bool) -> BoxedStrategy<QueueOp> {
         1 => prop_oneof![Just(0u64), 1u64..=3 * DAY].prop_map(QueueOp::SetWindow),
         1 => Just(QueueOp::Release),
         1 => Just(QueueOp::Attach),
+        3 => (0..TARGETS.len(), 0..DEPOSITORS, any::<usize>(), any::<usize>())
+            .prop_map(|(t, who, pick, decoy)| QueueOp::Substitute {
+                target: TARGETS[t],
+                who,
+                pick,
+                decoy,
+            }),
     ];
     prop_oneof![
         1 => op_strategy(include_yield_ops).prop_map(QueueOp::Vault),
@@ -574,6 +619,117 @@ struct QueueSnapshot {
     requests: Vec<Option<Vec<u8>>>,
 }
 
+/// Funds `other` through `holder` and leaves a live request in its queue, so
+/// a decoy drawn from it is a real vault with real balances: a missing
+/// cross-vault check cannot hide behind an empty account. Returns the
+/// request's address.
+fn fund_foreign_vault(ctx: &mut VaultCtx, holder: &Depositor, other: &OtherVault) -> Pubkey {
+    const FOREIGN_DEPOSIT: u64 = 10 * SEED_DEPOSIT;
+    let owner = holder.keypair.pubkey();
+    let deposit_ata = ctx.create_ata_for(&owner, &other.deposit_mint);
+    let share_ata = ctx.create_ata_for(&owner, &other.share_mint);
+    let payer = ctx.payer.insecure_clone();
+    let mint = spl_token::instruction::mint_to(
+        &spl_token::ID,
+        &other.deposit_mint,
+        &deposit_ata,
+        &payer.pubkey(),
+        &[],
+        FOREIGN_DEPOSIT,
+    )
+    .expect("mint_to");
+    ctx.send_instructions(&payer, &[mint])
+        .expect("fund the foreign holder");
+
+    let deposit = Instruction {
+        program_id: august_vault::ID,
+        accounts: august_vault::accounts::Deposit {
+            vault_state: other.vault_state,
+            vault_token_ata: other.vault_token,
+            sender_token_account: deposit_ata,
+            sender_share_account: share_ata,
+            share_mint: other.share_mint,
+            deposit_mint: other.deposit_mint,
+            signer: owner,
+            token_program: spl_token::ID,
+        }
+        .to_account_metas(None),
+        data: august_vault::instruction::Deposit {
+            amount: FOREIGN_DEPOSIT,
+        }
+        .data(),
+    };
+    ctx.send_instructions(&holder.keypair, &[deposit])
+        .expect("foreign deposit");
+
+    let admin = ctx.admin.insecure_clone();
+    let attach = Instruction {
+        program_id: august_vault::ID,
+        accounts: august_vault::accounts::AttachWithdrawalQueue {
+            vault_state: other.vault_state,
+            deposit_mint: other.deposit_mint,
+            admin: admin.pubkey(),
+            queue: other.queue,
+        }
+        .to_account_metas(None),
+        data: august_vault::instruction::AttachWithdrawalQueue {}.data(),
+    };
+    ctx.send_instructions(&admin, &[attach])
+        .expect("attach the foreign queue");
+
+    let request = Pubkey::find_program_address(
+        &[
+            WITHDRAWAL_REQUEST_SEED,
+            other.queue.as_ref(),
+            owner.as_ref(),
+            &0u64.to_le_bytes(),
+        ],
+        &august_withdrawal_queue::ID,
+    )
+    .0;
+    let open = Instruction {
+        program_id: august_withdrawal_queue::ID,
+        accounts: august_withdrawal_queue::accounts::RequestWithdrawal {
+            queue: other.queue,
+            vault_state: other.vault_state,
+            owner,
+            owner_share_account: share_ata,
+            escrow_shares: other.escrow_shares,
+            share_mint: other.share_mint,
+            recipient_token_account: deposit_ata,
+            request,
+            token_program: spl_token::ID,
+            system_program: solana_sdk::system_program::ID,
+            event_authority: event_authority_pda(),
+            program: august_withdrawal_queue::ID,
+        }
+        .to_account_metas(None),
+        data: august_withdrawal_queue::instruction::RequestWithdrawal {
+            request_id: 0,
+            shares: SEED_DEPOSIT,
+            finalizer: Pubkey::default(),
+        }
+        .data(),
+    };
+    ctx.send_instructions(&holder.keypair, &[open])
+        .expect("foreign request");
+    request
+}
+
+/// An account's owner program, size and, for a token account, mint. Only a
+/// decoy of the same kind gets past type checks to the constraint under test.
+type AccountKind = (Pubkey, usize, Vec<u8>);
+
+fn account_kind(ctx: &VaultCtx, key: &Pubkey) -> AccountKind {
+    let account = ctx.svm.get_account(key).unwrap_or_default();
+    let mint = if account.owner == spl_token::ID && account.data.len() == 165 {
+        account.data[..32].to_vec()
+    } else {
+        Vec::new()
+    };
+    (account.owner, account.data.len(), mint)
+}
+
 struct QueueWalk {
     ctx: VaultCtx,
     users: Vec<Depositor>,
@@ -585,6 +741,12 @@ struct QueueWalk {
     /// Shares sent to the escrow outside a request, which only a sweep removes.
     stray: u64,
     attached: bool,
+    /// Accounts a forged instruction may name in place of the right one; the
+    /// live requests' own PDAs are added when a substitution is drawn.
+    decoys: Vec<Pubkey>,
+    /// Forged instructions per [`TARGETS`] entry whose honest twin succeeded,
+    /// i.e. the ones that tested something.
+    forged: [usize; TARGETS.len()],
 }
 
 impl QueueWalk {
@@ -593,6 +755,40 @@ impl QueueWalk {
         ctx.open_queue(INITIAL_COOLDOWN);
         let keeper = ctx.new_funded_keypair(1_000_000_000);
         let stranger = ctx.new_funded_keypair(1_000_000_000);
+        let other = ctx.new_vault_with_queue();
+        let foreign_request = fund_foreign_vault(&mut ctx, &users[1], &other);
+        let mut decoys = vec![
+            other.vault_state,
+            other.deposit_mint,
+            other.share_mint,
+            other.vault_token,
+            other.queue,
+            other.escrow_shares,
+            other.escrow_assets,
+            foreign_request,
+            ctx.vault_state,
+            ctx.deposit_mint,
+            ctx.share_mint,
+            ctx.vault_token_pda,
+            ctx.withdrawal_queue_pda(),
+            ctx.queue_escrow(&ctx.share_mint),
+            ctx.queue_escrow(&ctx.deposit_mint),
+            ctx.fee_recipient_deposit_ata,
+            ctx.operator_deposit_ata,
+            keeper.pubkey(),
+            stranger.pubkey(),
+            solana_sdk::system_program::ID,
+            spl_token::ID,
+            spl_token_2022::ID,
+            august_vault::ID,
+            august_withdrawal_queue::ID,
+            event_authority_pda(),
+            program_config_pda(),
+        ];
+        for user in &users {
+            decoys.push(user.deposit_ata);
+            decoys.push(user.share_ata);
+        }
         QueueWalk {
             ctx,
             users,
@@ -602,6 +798,8 @@ impl QueueWalk {
             sequence: 0,
             stray: 0,
             attached: true,
+            decoys,
+            forged: [0; TARGETS.len()],
         }
     }
 
@@ -972,7 +1170,236 @@ impl QueueWalk {
                 }
                 Ok(ok)
             }
+            QueueOp::Substitute {
+                target,
+                who,
+                pick,
+                decoy,
+            } => self.substitute(target, who, pick, decoy),
         }
+    }
+
+    /// `target` with every account right, its signer, and the accounts the
+    /// caller may legitimately choose, or `None` when there is nothing to
+    /// build it from.
+    fn honest(
+        &self,
+        target: Target,
+        who: usize,
+        pick: usize,
+    ) -> Option<(Keypair, Instruction, Vec<Pubkey>)> {
+        let ctx = &self.ctx;
+        let user = &self.users[who];
+        let admin = ctx.admin.insecure_clone();
+        let built = match target {
+            Target::Deposit => {
+                let amount = ctx.token_account_amount(&user.deposit_ata) / 100 + 1;
+                let ix = Instruction {
+                    program_id: august_vault::ID,
+                    accounts: august_vault::accounts::Deposit {
+                        vault_state: ctx.vault_state,
+                        vault_token_ata: ctx.vault_token_pda,
+                        sender_token_account: user.deposit_ata,
+                        sender_share_account: user.share_ata,
+                        share_mint: ctx.share_mint,
+                        deposit_mint: ctx.deposit_mint,
+                        signer: user.keypair.pubkey(),
+                        token_program: spl_token::ID,
+                    }
+                    .to_account_metas(None),
+                    data: august_vault::instruction::Deposit { amount }.data(),
+                };
+                (user.keypair.insecure_clone(), ix, vec![])
+            }
+            Target::Redeem => {
+                let shares = ctx.token_account_amount(&user.share_ata) / 2;
+                if shares == 0 {
+                    return None;
+                }
+                let ix = Instruction {
+                    program_id: august_vault::ID,
+                    accounts: august_vault::accounts::Redeem {
+                        vault_state: ctx.vault_state,
+                        vault_deposit_ata: ctx.vault_token_pda,
+                        sender_token_account: user.deposit_ata,
+                        sender_share_account: user.share_ata,
+                        fee_recipient_account: ctx.fee_recipient_deposit_ata,
+                        share_mint: ctx.share_mint,
+                        deposit_mint: ctx.deposit_mint,
+                        signer: user.keypair.pubkey(),
+                        token_program: spl_token::ID,
+                    }
+                    .to_account_metas(None),
+                    data: august_vault::instruction::Redeem { shares }.data(),
+                };
+                (user.keypair.insecure_clone(), ix, vec![])
+            }
+            Target::Request => {
+                let id = (0..REQUEST_ID_POOL).find(|id| !self.live.contains_key(&(who, *id)))?;
+                let shares = ctx.token_account_amount(&user.share_ata) / 2;
+                let owner = user.keypair.pubkey();
+                let ix = Instruction {
+                    program_id: august_withdrawal_queue::ID,
+                    accounts: ctx
+                        .request_withdrawal_accounts(&owner, user.share_ata, user.deposit_ata, id)
+                        .to_account_metas(None),
+                    data: august_withdrawal_queue::instruction::RequestWithdrawal {
+                        request_id: id,
+                        shares,
+                        finalizer: Pubkey::default(),
+                    }
+                    .data(),
+                };
+                // The owner names the payout account; any valid one will do.
+                (user.keypair.insecure_clone(), ix, vec![user.deposit_ata])
+            }
+            Target::Finalize | Target::Cancel | Target::Expedite => {
+                // Draw from the requests the honest instruction can act on, or
+                // most finalizes and expedites would be refused on timing and
+                // forge nothing.
+                let now = ctx.now();
+                let actionable: Vec<((usize, u64), Pending)> = self
+                    .live
+                    .iter()
+                    .filter(|(_, p)| {
+                        let expired = p.expires_at != 0 && now >= p.expires_at;
+                        match target {
+                            Target::Finalize => now >= p.eligible_at && !expired,
+                            Target::Expedite => now < p.eligible_at && !expired,
+                            _ => true,
+                        }
+                    })
+                    .map(|(key, p)| (*key, *p))
+                    .collect();
+                if actionable.is_empty() {
+                    return None;
+                }
+                let ((owner_ix, id), pending) = actionable[pick % actionable.len()];
+                let owner = &self.users[owner_ix];
+                let key = owner.keypair.pubkey();
+                match target {
+                    Target::Finalize => (
+                        owner.keypair.insecure_clone(),
+                        ctx.finalize_withdrawal_ix(&key, &key, id, pending.sequence),
+                        vec![],
+                    ),
+                    Target::Cancel => {
+                        let ix = Instruction {
+                            program_id: august_withdrawal_queue::ID,
+                            accounts: ctx
+                                .cancel_withdrawal_accounts(&key, &key, id, owner.share_ata)
+                                .to_account_metas(None),
+                            data: august_withdrawal_queue::instruction::CancelWithdrawal {
+                                expected_sequence: pending.sequence,
+                            }
+                            .data(),
+                        };
+                        (owner.keypair.insecure_clone(), ix, vec![])
+                    }
+                    _ => (
+                        admin.insecure_clone(),
+                        ctx.expedite_request_ix(&admin.pubkey(), &key, id, pending.sequence),
+                        vec![],
+                    ),
+                }
+            }
+            Target::Sweep => {
+                let ix = Instruction {
+                    program_id: august_withdrawal_queue::ID,
+                    accounts: ctx
+                        .sweep_escrow_shares_accounts(&admin.pubkey(), user.share_ata)
+                        .to_account_metas(None),
+                    data: august_withdrawal_queue::instruction::SweepEscrowShares {}.data(),
+                };
+                // The admin chooses where the stray goes.
+                (admin, ix, vec![user.share_ata])
+            }
+        };
+        Some(built)
+    }
+
+    /// Sends `target` once per account the program must bind, each time with
+    /// that one account swapped for a decoy: never a signer (wrong signers are
+    /// the caller ops' job) and never an account the caller may choose. Every
+    /// forgery must be refused and, like any refused op, change nothing, so
+    /// they cannot disturb one another. They are only sent when the honest
+    /// instruction succeeds on a copy of the chain, so the decoy is the one
+    /// thing that can explain each refusal.
+    fn substitute(
+        &mut self,
+        target: Target,
+        who: usize,
+        pick: usize,
+        decoy: usize,
+    ) -> Result<bool, TestCaseError> {
+        let Some((signer, ix, chosen)) = self.honest(target, who, pick) else {
+            return Ok(false);
+        };
+        let saved = self.ctx.svm.clone();
+        let honest_ok = self
+            .ctx
+            .send_instructions(&signer, std::slice::from_ref(&ix))
+            .is_ok();
+        self.ctx.svm = saved;
+        if !honest_ok {
+            return Ok(false);
+        }
+
+        let mut pool = self.decoys.clone();
+        for (owner, id) in self.live.keys() {
+            pool.push(self.ctx.request_pda(&self.owner(*owner), *id));
+        }
+        // Refused forgeries change no account, so the kinds hold throughout.
+        let pool: Vec<(Pubkey, AccountKind)> = pool
+            .into_iter()
+            .map(|key| (key, account_kind(&self.ctx, &key)))
+            .collect();
+
+        let index = TARGETS.iter().position(|t| *t == target);
+        let index = index.expect("listed target");
+        for (n, meta) in ix.accounts.iter().enumerate() {
+            // The queue's own id fills the `program` account `#[event_cpi]`
+            // adds, which Anchor leaves unchecked: `emit_cpi!` invokes
+            // `crate::ID`, not that account, so no value there redirects
+            // anything.
+            if meta.is_signer
+                || chosen.contains(&meta.pubkey)
+                || meta.pubkey == august_withdrawal_queue::ID
+            {
+                continue;
+            }
+            let real = meta.pubkey;
+            let real_kind = account_kind(&self.ctx, &real);
+            let others: Vec<&(Pubkey, AccountKind)> =
+                pool.iter().filter(|(key, _)| *key != real).collect();
+            let alike: Vec<Pubkey> = others
+                .iter()
+                .filter(|(_, kind)| *kind == real_kind)
+                .map(|(key, _)| *key)
+                .collect();
+            // A different draw for each account; three in four take a
+            // look-alike when there is one.
+            let draw = decoy.wrapping_add(n.wrapping_mul(7_919));
+            let decoy = if draw % 4 != 0 && !alike.is_empty() {
+                alike[draw / 4 % alike.len()]
+            } else {
+                others[draw % others.len()].0
+            };
+
+            let mut forged = ix.clone();
+            forged.accounts[n].pubkey = decoy;
+            let accepted = self.ctx.send_instructions(&signer, &[forged]).is_ok();
+            prop_assert!(
+                !accepted,
+                "{:?} accepted {} in account {} in place of {}",
+                target,
+                decoy,
+                n,
+                real
+            );
+            self.forged[index] += 1;
+        }
+        Ok(false)
     }
 
     /// What must hold in every reachable state of a vault with a queue.
@@ -1061,12 +1488,14 @@ fn queue_walk_cases(floor: u32) -> u32 {
 }
 
 /// Runs `cases` walks of `QUEUE_WALK_STEPS` ops each, or more when
-/// `PROPTEST_CASES` asks for them.
+/// `PROPTEST_CASES` asks for them, and returns how many forgeries per
+/// [`TARGETS`] entry tested something across them.
 fn run_queue_walk(
     include_yield_ops: bool,
     cases: u32,
     unwind: fn(&mut QueueWalk) -> Result<(), TestCaseError>,
-) {
+) -> [usize; TARGETS.len()] {
+    let forged: [AtomicUsize; TARGETS.len()] = Default::default();
     let mut runner = TestRunner::new(ProptestConfig {
         cases: queue_walk_cases(cases),
         source_file: Some(file!()),
@@ -1080,20 +1509,31 @@ fn run_queue_walk(
         for op in &ops {
             walk.step(op)?;
         }
+        for (total, n) in forged.iter().zip(walk.forged) {
+            total.fetch_add(n, Ordering::Relaxed);
+        }
         unwind(&mut walk)
     });
     if let Err(e) = result {
         panic!("{e}");
     }
+    forged.map(|n| n.into_inner())
 }
 
 /// The full op mix, vault and queue: every op succeeds exactly when the model
 /// says it may, a refused op changes nothing, no op moves a bystander, every
 /// finalize pays its recipient what a direct redeem at the same state would,
-/// and the invariants hold after every step.
+/// every instruction forged with a decoy account is refused, and the
+/// invariants hold after every step.
 #[test]
 fn queue_walk_invariants_hold_over_ten_thousand_steps() {
-    run_queue_walk(true, QUEUE_WALK_CASES, |_| Ok(()));
+    let forged = run_queue_walk(true, QUEUE_WALK_CASES, |_| Ok(()));
+    // A target whose honest instruction never succeeds would forge nothing and
+    // still pass, so each must have been exercised.
+    for (target, n) in TARGETS.iter().zip(forged) {
+        assert!(n > 0, "no forged {target:?} tested anything");
+    }
+    println!("forgeries that tested something: {forged:?}");
 }
 
 /// No-yield queue walks: once the operator returns everything, every request is
