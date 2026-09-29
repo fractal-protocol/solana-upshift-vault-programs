@@ -1,0 +1,24 @@
+# Test fixture, not a deployed program: an "attacker" that forwards any
+# instruction by CPI, optionally signing with its own PDA. Built by
+# integration-tests/build.rs into OUT_DIR and loaded by the random walks.
+#
+# Its own workspace, so the root workspace (anchor build, release hashes, the
+# CI program-size check) never sees it. The lockfile was seeded from the root
+# Cargo.lock, so it resolves the same solana-program the programs build with
+# under CI's SBF toolchain.
+[workspace]
+
+[package]
+name = "cpi-relay"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+solana-program = "2.3.0"
+
+[profile.release]
+overflow-checks = true

@@ -34,9 +34,17 @@
 //!   is refused and changes nothing; so is one signed by anyone but its
 //!   signer; so is one whose data is truncated, under an unknown
 //!   discriminator, or noise.
-//! - In the queue walk, two honest instructions in one transaction do exactly
-//!   what they do one after the other, or nothing when either would fail.
+//! - In the queue walk, two to four honest instructions in one transaction,
+//!   with any mix of signers, do exactly what they do one after the other, or
+//!   nothing when any would fail.
 //! - Every instruction's honest run stays within [`COMPUTE_BUDGET`].
+//! - In the queue walk, an instruction another program calls by CPI (the
+//!   relay fixture) does exactly what it does sent directly, and the calling
+//!   program's own PDA never passes for a role.
+//!
+//! A two-vault walk puts two vaults on one chain, of independent shapes or as
+//! two versions of one deposit mint, and interleaves ops between them: an op on one never changes the other's
+//! accounts, and each vault's forgeries use the other's accounts and roles.
 //!
 //! A second walk (no AUM reports or custody losses; everything deployed comes
 //! home at the end) checks the economic end-state property: with no yield
@@ -67,7 +75,11 @@ use integration_tests::harness::{
 use proptest::prelude::*;
 use proptest::test_runner::TestRunner;
 use solana_sdk::{
-    instruction::Instruction, pubkey::Pubkey, signature::Keypair, signer::Signer,
+    instruction::{AccountMeta, Instruction},
+    packet::PACKET_DATA_SIZE,
+    pubkey::Pubkey,
+    signature::Keypair,
+    signer::Signer,
     transaction::Transaction,
 };
 use spl_token_2022::{extension::StateWithExtensions, state::Account as TokenAccountState};
@@ -161,6 +173,14 @@ struct Shape {
 }
 
 impl Shape {
+    fn token(self) -> TokenProgramKind {
+        if self.token_2022 {
+            TokenProgramKind::Token2022
+        } else {
+            TokenProgramKind::Spl
+        }
+    }
+
     /// The shape every walk ran against before shapes were drawn.
     const DEFAULT: Shape = Shape {
         token_2022: false,
@@ -192,7 +212,12 @@ const NOMINATION_WINDOW: i64 = 24 * 60 * 60;
 /// What a subaccount lets the vault move; far above anything a walk deploys.
 const SUBACCOUNT_ALLOWANCE: u64 = u64::MAX / 4;
 
-fn op_strategy(include_yield_ops: bool) -> BoxedStrategy<Op> {
+/// The vault op mix. Without `config_ops` the two config-authority handovers
+/// draw a zero-second warp instead: the authority is program-wide, so a walk
+/// sharing the program with another cannot move it without the other's model
+/// going stale. (`prop_oneof!` refuses a zero weight, hence the stand-in.)
+fn op_strategy(include_yield_ops: bool, config_ops: bool) -> BoxedStrategy<Op> {
+    let config = move |op: Op| if config_ops { op } else { Op::Warp(0) };
     let slack = prop_oneof![Just(-1i8), Just(0i8), Just(1i8)];
     let base = prop_oneof![
         4 => (0..DEPOSITORS, 1u64..20_000_000_000)
@@ -223,8 +248,8 @@ fn op_strategy(include_yield_ops: bool) -> BoxedStrategy<Op> {
         1 => (0u64..=2 * 24 * 60 * 60).prop_map(Op::Warp),
         1 => (0..SPARES).prop_map(|who| Op::SetOperator { who }),
         1 => (0..SPARES).prop_map(|who| Op::SetFeeRecipient { who }),
-        1 => (0..SPARES).prop_map(|who| Op::SetConfigAuthority { who }),
-        1 => (0..SPARES).prop_map(|who| Op::OverrideConfigAuthority { who }),
+        1 => (0..SPARES).prop_map(move |who| config(Op::SetConfigAuthority { who })),
+        1 => (0..SPARES).prop_map(move |who| config(Op::OverrideConfigAuthority { who })),
         1 => any::<bool>().prop_map(|by_other| Op::CreateVault { by_other }),
         1 => Just(Op::CreateMetadata),
         1 => Just(Op::UpdateMetadata),
@@ -302,12 +327,15 @@ struct VaultModel {
 /// user, who makes the seed deposit (raised to the shape's first-deposit floor
 /// where that is higher); the rest start with the same funds and no shares.
 fn fresh_walk_vault(shape: Shape) -> (VaultCtx, Vec<Depositor>, VaultModel) {
-    let token = if shape.token_2022 {
-        TokenProgramKind::Token2022
-    } else {
-        TokenProgramKind::Spl
-    };
-    let mut ctx = VaultCtx::fresh_shaped(token, shape.decimals, shape.offset);
+    walk_vault(
+        VaultCtx::fresh_shaped(shape.token(), shape.decimals, shape.offset),
+        shape,
+    )
+}
+
+/// Funds and seeds `ctx`, a vault of `shape` whose chain it holds, and sets
+/// up its depositors and model as [`fresh_walk_vault`] describes.
+fn walk_vault(mut ctx: VaultCtx, shape: Shape) -> (VaultCtx, Vec<Depositor>, VaultModel) {
     let floor = VaultState::min_first_deposit_for(shape.decimals, shape.offset as u128);
     ctx.mint_to_user(INITIAL_USER_FUNDS);
     ctx.deposit(SEED_DEPOSIT.max(floor)).expect("seed deposit");
@@ -1042,7 +1070,7 @@ proptest! {
     #[test]
     fn invariants_hold_under_random_op_sequences(
         shape in shape_strategy(),
-        ops in proptest::collection::vec(op_strategy(true), 1..60)
+        ops in proptest::collection::vec(op_strategy(true, true), 1..60)
     ) {
         let (mut ctx, users, mut model) = fresh_walk_vault(shape);
         assert_state_invariants(&ctx, &users, &model)?;
@@ -1075,7 +1103,7 @@ proptest! {
     #[test]
     fn no_value_extraction_without_yield(
         shape in shape_strategy(),
-        ops in proptest::collection::vec(op_strategy(false), 1..60)
+        ops in proptest::collection::vec(op_strategy(false, true), 1..60)
     ) {
         let (mut ctx, users, mut model) = fresh_walk_vault(shape);
 
@@ -1206,11 +1234,10 @@ enum QueueOp {
         pick: usize,
         decoy: usize,
     },
-    /// Two honest instructions, each `(target, who, pick)` as for
+    /// Two to four honest instructions, each `(target, who, pick)` as for
     /// `Substitute`, sent in one transaction. See [`QueueWalk::bundle`].
     Bundle {
-        first: (usize, usize, usize),
-        second: (usize, usize, usize),
+        steps: Vec<(usize, usize, usize)>,
     },
     /// An honest instruction with its data mangled per `how`, seeded by
     /// `seed`. See [`QueueWalk::garble`].
@@ -1226,6 +1253,44 @@ enum QueueOp {
     DetachDirect {
         stranger_signs: bool,
     },
+    /// An honest instruction forwarded by the CPI relay, as it is or with the
+    /// relay's own PDA in its signer's place. See [`QueueWalk::relay`].
+    Relay {
+        target: Target,
+        who: usize,
+        pick: usize,
+        as_pda: bool,
+    },
+}
+
+/// Where the walks load the CPI relay fixture (`integration-tests/fixtures`).
+const RELAY_ID: Pubkey = Pubkey::new_from_array([7; 32]);
+
+/// The PDA the relay signs with, and its bump.
+fn relay_pda() -> (Pubkey, u8) {
+    Pubkey::find_program_address(&[b"relay"], &RELAY_ID)
+}
+
+/// `ix` forwarded by the relay: the target program first, then its accounts
+/// with their flags, and the relay PDA's bump ahead of its data. The relay
+/// marks its PDA a signer inside, so outside it never is.
+fn relayed(ix: &Instruction) -> Instruction {
+    let (pda, bump) = relay_pda();
+    let mut accounts = vec![AccountMeta::new_readonly(ix.program_id, false)];
+    for meta in &ix.accounts {
+        let mut meta = meta.clone();
+        if meta.pubkey == pda {
+            meta.is_signer = false;
+        }
+        accounts.push(meta);
+    }
+    let mut data = vec![bump];
+    data.extend_from_slice(&ix.data);
+    Instruction {
+        program_id: RELAY_ID,
+        accounts,
+        data,
+    }
 }
 
 /// The instructions [`QueueOp::Substitute`] forges: the holders' and the
@@ -1314,7 +1379,7 @@ fn queue_ix(accounts: impl ToAccountMetas, data: impl InstructionData) -> Instru
     }
 }
 
-fn queue_op_strategy(include_yield_ops: bool) -> BoxedStrategy<QueueOp> {
+fn queue_op_strategy(include_yield_ops: bool, config_ops: bool) -> BoxedStrategy<QueueOp> {
     let caller = prop_oneof![
         Just(Caller::Owner),
         Just(Caller::Keeper),
@@ -1354,12 +1419,19 @@ fn queue_op_strategy(include_yield_ops: bool) -> BoxedStrategy<QueueOp> {
                 pick,
                 decoy,
             }),
-        // One bundle in three repeats its first instruction, so the same
-        // finalize, cancel or deregister is tried twice in one transaction.
-        2 => (bundle_step(), bundle_step(), prop::bool::weighted(1.0 / 3.0))
-            .prop_map(|(first, second, repeat)| QueueOp::Bundle {
-                first,
-                second: if repeat { first } else { second },
+        // One bundle in three ends by repeating its first instruction, so the
+        // same finalize, cancel or deregister is tried twice in one
+        // transaction.
+        2 => (
+            proptest::collection::vec(bundle_step(), 2..=4),
+            prop::bool::weighted(1.0 / 3.0),
+        )
+            .prop_map(|(mut steps, repeat)| {
+                if repeat {
+                    let last = steps.len() - 1;
+                    steps[last] = steps[0];
+                }
+                QueueOp::Bundle { steps }
             }),
         2 => (0..TARGETS.len(), 0..DEPOSITORS, any::<usize>(), 0u8..3, any::<u64>())
             .prop_map(|(t, who, pick, how, seed)| QueueOp::Garble {
@@ -1370,9 +1442,16 @@ fn queue_op_strategy(include_yield_ops: bool) -> BoxedStrategy<QueueOp> {
                 seed,
             }),
         1 => any::<bool>().prop_map(|stranger_signs| QueueOp::DetachDirect { stranger_signs }),
+        2 => (0..TARGETS.len(), 0..DEPOSITORS, any::<usize>(), any::<bool>())
+            .prop_map(|(t, who, pick, as_pda)| QueueOp::Relay {
+                target: TARGETS[t],
+                who,
+                pick,
+                as_pda,
+            }),
     ];
     prop_oneof![
-        1 => op_strategy(include_yield_ops).prop_map(QueueOp::Vault),
+        1 => op_strategy(include_yield_ops, config_ops).prop_map(QueueOp::Vault),
         3 => queue,
     ]
     .boxed()
@@ -1535,6 +1614,12 @@ struct QueueWalk {
     decoys: Vec<Pubkey>,
     /// What the walk exercised, for the run's own coverage checks.
     stats: WalkStats,
+    /// Keys from outside this vault that may try to sign in its roles'
+    /// places: another vault's admin and operator when two share a chain.
+    outsiders: Vec<Keypair>,
+    /// Another walked vault's accounts, decoys for forging only: they are
+    /// not this vault's, so its state comparisons leave them out.
+    outside_decoys: Vec<Pubkey>,
 }
 
 /// What a walk exercised. Forgeries and garbles count only when the honest
@@ -1546,6 +1631,12 @@ struct WalkStats {
     /// Most compute units an honest instruction of each target consumed.
     compute: [u64; TARGETS.len()],
     bundles: usize,
+    /// Honest instructions relayed and compared with sending them directly,
+    /// and how many of those succeeded (both ways).
+    relayed: usize,
+    relayed_ok: usize,
+    /// Relayed instructions with the relay's PDA as signer, refused.
+    relay_forged: usize,
 }
 
 /// Compute units an instruction may use: the 200,000 a transaction gets per
@@ -1563,7 +1654,19 @@ fn target_index(target: Target) -> usize {
 
 impl QueueWalk {
     fn new(shape: Shape) -> Self {
-        let (mut ctx, users, model) = fresh_walk_vault(shape);
+        let ctx = VaultCtx::fresh_shaped(shape.token(), shape.decimals, shape.offset);
+        Self::from_ctx(ctx, shape)
+    }
+
+    /// A walk over `ctx`, a vault of `shape` whose chain it holds.
+    fn from_ctx(mut ctx: VaultCtx, shape: Shape) -> Self {
+        ctx.svm
+            .add_program(
+                RELAY_ID,
+                include_bytes!(concat!(env!("OUT_DIR"), "/cpi_relay.so")),
+            )
+            .expect("load cpi_relay.so, built by build.rs into OUT_DIR");
+        let (mut ctx, users, model) = walk_vault(ctx, shape);
         ctx.open_queue(INITIAL_COOLDOWN);
         let keeper = ctx.new_funded_keypair(1_000_000_000);
         let stranger = ctx.new_funded_keypair(1_000_000_000);
@@ -1597,6 +1700,8 @@ impl QueueWalk {
             event_authority_pda(),
             program_config_pda(),
             program_data_pda(),
+            RELAY_ID,
+            relay_pda().0,
         ];
         for user in &users {
             decoys.push(user.deposit_ata);
@@ -1614,6 +1719,8 @@ impl QueueWalk {
             attached: true,
             decoys,
             stats: WalkStats::default(),
+            outsiders: Vec::new(),
+            outside_decoys: Vec::new(),
         }
     }
 
@@ -1991,7 +2098,7 @@ impl QueueWalk {
                 pick,
                 decoy,
             } => self.substitute(target, who, pick, decoy),
-            QueueOp::Bundle { first, second } => self.bundle(first, second),
+            QueueOp::Bundle { ref steps } => self.bundle(steps),
             QueueOp::Garble {
                 target,
                 who,
@@ -1999,6 +2106,12 @@ impl QueueWalk {
                 how,
                 seed,
             } => self.garble(target, who, pick, how, seed),
+            QueueOp::Relay {
+                target,
+                who,
+                pick,
+                as_pda,
+            } => self.relay(target, who, pick, as_pda),
             QueueOp::DetachDirect { stranger_signs } => {
                 let admin = self.ctx.admin.insecure_clone();
                 let queue = self.ctx.withdrawal_queue_pda();
@@ -2041,12 +2154,15 @@ impl QueueWalk {
         keys.push(self.ctx.protocol_authority.insecure_clone());
         keys.push(self.model.upgrade_authority.insecure_clone());
         keys.extend(self.users.iter().map(|u| u.keypair.insecure_clone()));
+        keys.extend(self.outsiders.iter().map(|k| k.insecure_clone()));
         keys
     }
 
     /// Sends `ixs` in one transaction signed by `signers` (deduplicated), the
-    /// first paying. The harness sends one signer at a time.
-    fn send_together(&mut self, signers: &[&Keypair], ixs: &[Instruction]) -> bool {
+    /// first paying; `None` when it would not fit in a packet, since LiteSVM
+    /// does not enforce the limit a cluster does. The harness sends one signer
+    /// at a time.
+    fn send_together(&mut self, signers: &[&Keypair], ixs: &[Instruction]) -> Option<bool> {
         let mut unique: Vec<&Keypair> = Vec::new();
         for signer in signers {
             if !unique.iter().any(|k| k.pubkey() == signer.pubkey()) {
@@ -2061,7 +2177,12 @@ impl QueueWalk {
             &unique,
             svm.latest_blockhash(),
         );
-        svm.send_transaction(tx).is_ok()
+        // A signature count under 128 serializes as one byte.
+        let size = 1 + 64 * tx.signatures.len() + tx.message_data().len();
+        if size > PACKET_DATA_SIZE {
+            return None;
+        }
+        Some(svm.send_transaction(tx).is_ok())
     }
 
     /// Every account the walk's instructions can write, raw, for comparing two
@@ -2093,54 +2214,132 @@ impl QueueWalk {
             .collect()
     }
 
-    /// Two honest instructions in one transaction must do exactly what they
-    /// do one after the other: succeed together only if both succeed in turn,
-    /// and then leave the same state; otherwise change nothing. Both runs are
-    /// on copies of the chain, so the walk's model is untouched.
-    fn bundle(
-        &mut self,
-        first: (usize, usize, usize),
-        second: (usize, usize, usize),
-    ) -> Result<bool, TestCaseError> {
-        let a = self.honest(TARGETS[first.0], first.1, first.2);
-        let b = self.honest(TARGETS[second.0], second.1, second.2);
-        let (Some((sa, ia, _)), Some((sb, ib, _))) = (a, b) else {
-            return Ok(false);
-        };
+    /// Honest instructions in one transaction must do exactly what they do
+    /// one after the other: succeed together only if each succeeds in turn,
+    /// and then leave the same state; otherwise change nothing. Each is built
+    /// from the state before the first, and the signers may all differ. Both
+    /// runs are on copies of the chain, so the walk's model is untouched.
+    fn bundle(&mut self, steps: &[(usize, usize, usize)]) -> Result<bool, TestCaseError> {
+        let mut built = Vec::new();
+        for &(t, who, pick) in steps {
+            let Some((signer, ix, _)) = self.honest(TARGETS[t], who, pick) else {
+                return Ok(false);
+            };
+            built.push((signer, ix));
+        }
+        let names: Vec<Target> = steps.iter().map(|s| TARGETS[s.0]).collect();
         let saved = self.ctx.svm.clone();
         let untouched = self.raw_state();
 
-        let in_turn = self
-            .ctx
-            .send_instructions(&sa, std::slice::from_ref(&ia))
-            .is_ok()
-            && self
+        let mut in_turn = true;
+        for (signer, ix) in &built {
+            if self
                 .ctx
-                .send_instructions(&sb, std::slice::from_ref(&ib))
-                .is_ok();
+                .send_instructions(signer, std::slice::from_ref(ix))
+                .is_err()
+            {
+                in_turn = false;
+                break;
+            }
+        }
         let after_in_turn = self.raw_state();
         self.ctx.svm = saved.clone();
 
-        let together = self.send_together(&[&sa, &sb], &[ia, ib]);
+        let signers: Vec<&Keypair> = built.iter().map(|(k, _)| k).collect();
+        let ixs: Vec<Instruction> = built.iter().map(|(_, ix)| ix.clone()).collect();
+        let together = self.send_together(&signers, &ixs);
         let after_together = self.raw_state();
         self.ctx.svm = saved;
+        let Some(together) = together else {
+            return Ok(false);
+        };
 
-        let (ta, tb) = (TARGETS[first.0], TARGETS[second.0]);
         prop_assert_eq!(
             together,
             in_turn,
-            "{:?} + {:?} in one transaction disagreed with them in turn",
-            ta,
-            tb
+            "{:?} in one transaction disagreed with them in turn",
+            names
         );
         let expected = if in_turn { after_in_turn } else { untouched };
         prop_assert!(
             after_together == expected,
-            "{:?} + {:?} in one transaction left a different state",
-            ta,
-            tb
+            "{:?} in one transaction left a different state",
+            names
         );
         self.stats.bundles += 1;
+        Ok(false)
+    }
+
+    /// Another program calling an instruction by CPI gets no more than a
+    /// client sending it: relayed as it is, it must succeed exactly when it
+    /// does sent directly and leave the same state (on copies of the chain);
+    /// and the relay's own PDA, the one signature a program can add, must not
+    /// stand in for any role. Finalize is exempt from the second, as anyone
+    /// may sign it.
+    fn relay(
+        &mut self,
+        target: Target,
+        who: usize,
+        pick: usize,
+        as_pda: bool,
+    ) -> Result<bool, TestCaseError> {
+        let Some((signer, ix, _)) = self.honest(target, who, pick) else {
+            return Ok(false);
+        };
+        let saved = self.ctx.svm.clone();
+        let untouched = self.raw_state();
+        let direct = self
+            .ctx
+            .send_instructions(&signer, std::slice::from_ref(&ix))
+            .is_ok();
+        let after_direct = self.raw_state();
+        self.ctx.svm = saved.clone();
+
+        if !as_pda {
+            let through = self.ctx.send_instructions(&signer, &[relayed(&ix)]).is_ok();
+            let after_through = self.raw_state();
+            self.ctx.svm = saved;
+            prop_assert_eq!(
+                through,
+                direct,
+                "{:?} through the relay disagreed with it sent directly",
+                target
+            );
+            let expected = if direct { after_direct } else { untouched };
+            prop_assert!(
+                after_through == expected,
+                "{:?} through the relay left a different state",
+                target
+            );
+            self.stats.relayed += 1;
+            self.stats.relayed_ok += usize::from(through);
+            return Ok(false);
+        }
+
+        self.ctx.svm = saved;
+        if target == Target::Finalize || !direct {
+            return Ok(false);
+        }
+        let (pda, _) = relay_pda();
+        let real = signer.pubkey();
+        let mut forged = ix.clone();
+        for meta in forged.accounts.iter_mut() {
+            if meta.pubkey == real {
+                meta.pubkey = pda;
+            }
+        }
+        let payer = self.stranger.insecure_clone();
+        let accepted = self
+            .ctx
+            .send_instructions(&payer, &[relayed(&forged)])
+            .is_ok();
+        prop_assert!(
+            !accepted,
+            "{:?} accepted the relay's PDA signing in place of {}",
+            target,
+            real
+        );
+        self.stats.relay_forged += 1;
         Ok(false)
     }
 
@@ -2636,6 +2835,7 @@ impl QueueWalk {
         *compute = (*compute).max(meta.compute_units_consumed);
 
         let mut pool = self.decoys.clone();
+        pool.extend(self.outside_decoys.iter().copied());
         for (owner, id) in self.live.keys() {
             pool.push(self.ctx.request_pda(&self.owner(*owner), *id));
         }
@@ -2832,6 +3032,9 @@ fn run_queue_walk(
     let garbled: [AtomicUsize; TARGETS.len()] = Default::default();
     let compute: [AtomicU64; TARGETS.len()] = Default::default();
     let bundles = AtomicUsize::new(0);
+    let relayed = AtomicUsize::new(0);
+    let relayed_ok = AtomicUsize::new(0);
+    let relay_forged = AtomicUsize::new(0);
     let mut runner = TestRunner::new(ProptestConfig {
         cases: queue_walk_cases(cases),
         source_file: Some(file!()),
@@ -2839,7 +3042,7 @@ fn run_queue_walk(
     });
     let strategy = (
         shape_strategy(),
-        proptest::collection::vec(queue_op_strategy(include_yield_ops), QUEUE_WALK_STEPS),
+        proptest::collection::vec(queue_op_strategy(include_yield_ops, true), QUEUE_WALK_STEPS),
     );
     let result = runner.run(&strategy, |(shape, ops)| {
         let mut walk = QueueWalk::new(shape);
@@ -2854,6 +3057,9 @@ fn run_queue_walk(
             compute[i].fetch_max(stats.compute[i], Ordering::Relaxed);
         }
         bundles.fetch_add(stats.bundles, Ordering::Relaxed);
+        relayed.fetch_add(stats.relayed, Ordering::Relaxed);
+        relayed_ok.fetch_add(stats.relayed_ok, Ordering::Relaxed);
+        relay_forged.fetch_add(stats.relay_forged, Ordering::Relaxed);
         unwind(&mut walk)
     });
     if let Err(e) = result {
@@ -2864,6 +3070,173 @@ fn run_queue_walk(
         garbled: garbled.map(|n| n.into_inner()),
         compute: compute.map(|n| n.into_inner()),
         bundles: bundles.into_inner(),
+        relayed: relayed.into_inner(),
+        relayed_ok: relayed_ok.into_inner(),
+        relay_forged: relay_forged.into_inner(),
+    }
+}
+
+/// Two vaults with their queues on one chain, walked together. The chain lives
+/// in `walks[0]`; an op on the second swaps it in and back out.
+struct TwoVaults {
+    walks: [QueueWalk; 2],
+}
+
+impl TwoVaults {
+    /// With `same_mint` the second vault is version 1 of the first's deposit
+    /// mint (so `shapes.1` must match `shapes.0` but for its offset), and only
+    /// the version seed tells their accounts apart.
+    fn new(shapes: (Shape, Shape), same_mint: bool) -> Self {
+        let mut first = QueueWalk::new(shapes.0);
+        let second_ctx = first.ctx.sibling_vault(
+            shapes.1.token(),
+            shapes.1.decimals,
+            shapes.1.offset,
+            same_mint,
+        );
+        let mut placeholder = second_ctx;
+        std::mem::swap(&mut first.ctx.svm, &mut placeholder.svm);
+        let mut second = QueueWalk::from_ctx(placeholder, shapes.1);
+        std::mem::swap(&mut first.ctx.svm, &mut second.ctx.svm);
+
+        // Each vault's accounts are decoys for the other's forgeries, and each
+        // vault's roles are impostors in the other's.
+        let (a, b) = (first.own_accounts(), second.own_accounts());
+        first.outside_decoys = b;
+        second.outside_decoys = a;
+        first.outsiders = second.roles();
+        second.outsiders = first.roles();
+        TwoVaults {
+            walks: [first, second],
+        }
+    }
+
+    /// Brings walk `i`'s view of the other vault up to date: a handover there
+    /// installs new roles and accounts, and those must be refused here too.
+    /// Former holders stay on the lists, since they must be refused as well.
+    fn refresh_outside(&mut self, i: usize) {
+        let other = &self.walks[1 - i];
+        let (roles, accounts) = (other.roles(), other.own_accounts());
+        let walk = &mut self.walks[i];
+        for key in roles {
+            if !walk.outsiders.iter().any(|k| k.pubkey() == key.pubkey()) {
+                walk.outsiders.push(key);
+            }
+        }
+        for account in accounts {
+            if !walk.outside_decoys.contains(&account) {
+                walk.outside_decoys.push(account);
+            }
+        }
+    }
+
+    /// Runs `f` on walk `i` with the chain in its hands.
+    fn on<R>(&mut self, i: usize, f: impl FnOnce(&mut QueueWalk) -> R) -> R {
+        let [first, second] = &mut self.walks;
+        if i == 1 {
+            std::mem::swap(&mut first.ctx.svm, &mut second.ctx.svm);
+        }
+        let result = f(if i == 0 { first } else { second });
+        if i == 1 {
+            std::mem::swap(&mut first.ctx.svm, &mut second.ctx.svm);
+        }
+        result
+    }
+
+    /// One op on vault `i`: everything the single walk checks, plus that the
+    /// other vault's accounts are untouched and its invariants still hold.
+    fn step(&mut self, i: usize, op: &QueueOp) -> Result<(), TestCaseError> {
+        let other = 1 - i;
+        self.refresh_outside(i);
+        let before = self.on(other, |w| w.raw_state());
+        self.on(i, |w| w.step(op))?;
+        let after = self.on(other, |w| w.raw_state());
+        prop_assert!(
+            before == after,
+            "{:?} on vault {} changed vault {}",
+            op,
+            i,
+            other
+        );
+        self.on(other, |w| w.assert_invariants())
+    }
+}
+
+impl QueueWalk {
+    /// This vault's own accounts, for the other vault's decoys.
+    fn own_accounts(&self) -> Vec<Pubkey> {
+        let ctx = &self.ctx;
+        let mut keys = vec![
+            ctx.vault_state,
+            ctx.deposit_mint,
+            ctx.share_mint,
+            ctx.vault_token_pda,
+            ctx.withdrawal_queue_pda(),
+            ctx.queue_escrow(&ctx.share_mint),
+            ctx.queue_escrow(&ctx.deposit_mint),
+            ctx.fee_recipient_deposit_ata,
+            ctx.operator_deposit_ata,
+            ctx.nominated_admin_pda(),
+        ];
+        for user in &self.users {
+            keys.push(user.deposit_ata);
+            keys.push(user.share_ata);
+        }
+        keys
+    }
+
+    fn roles(&self) -> Vec<Keypair> {
+        vec![
+            self.ctx.admin.insecure_clone(),
+            self.ctx.operator.insecure_clone(),
+        ]
+    }
+}
+
+/// Two vaults share the programs, the program config and the chain: in half
+/// the cases with independently drawn shapes, in the other half as versions 0
+/// and 1 of one deposit mint, where no mint check can tell them apart. Ops
+/// interleave between them; after every op on one, the other's accounts are
+/// byte-identical and its invariants hold, and each vault's forgeries draw the
+/// other's live accounts as decoys and its admin and operator as impostors.
+#[test]
+fn two_vaults_walked_together_stay_isolated() {
+    let mut runner = TestRunner::new(ProptestConfig {
+        cases: queue_walk_cases(16),
+        source_file: Some(file!()),
+        ..ProptestConfig::default()
+    });
+    let shapes = (shape_strategy(), shape_strategy(), any::<bool>()).prop_map(
+        |(first, drawn, same_mint)| {
+            let second = if same_mint {
+                Shape {
+                    offset: drawn.offset,
+                    ..first
+                }
+            } else {
+                drawn
+            };
+            ((first, second), same_mint)
+        },
+    );
+    let strategy = (
+        shapes,
+        proptest::collection::vec(
+            (0usize..2, queue_op_strategy(true, false)),
+            QUEUE_WALK_STEPS,
+        ),
+    );
+    let result = runner.run(&strategy, |((shapes, same_mint), ops)| {
+        let mut vaults = TwoVaults::new(shapes, same_mint);
+        vaults.on(0, |w| w.assert_invariants())?;
+        vaults.on(1, |w| w.assert_invariants())?;
+        for (i, op) in &ops {
+            vaults.step(*i, op)?;
+        }
+        Ok(())
+    });
+    if let Err(e) = result {
+        panic!("{e}");
     }
 }
 
@@ -2886,6 +3259,9 @@ fn queue_walk_invariants_hold_over_ten_thousand_steps() {
         );
     }
     assert!(stats.bundles > 0, "no bundle tested anything");
+    // Refused both ways proves little, so some relayed calls must land.
+    assert!(stats.relayed_ok > 0, "no relayed instruction succeeded");
+    assert!(stats.relay_forged > 0, "the relay's PDA never tried a role");
     assert!(
         stats.garbled.iter().sum::<usize>() > 0,
         "no garbled instruction tested anything"
@@ -2893,6 +3269,10 @@ fn queue_walk_invariants_hold_over_ten_thousand_steps() {
     println!("forgeries that tested something: {:?}", stats.forged);
     println!("garbled that tested something: {:?}", stats.garbled);
     println!("bundles that tested something: {}", stats.bundles);
+    println!(
+        "relayed: {} ({} succeeded); relay PDA refused as signer: {}",
+        stats.relayed, stats.relayed_ok, stats.relay_forged
+    );
     for (target, units) in TARGETS.iter().zip(stats.compute) {
         println!("most compute units, {target:?}: {units}");
     }

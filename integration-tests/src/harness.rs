@@ -109,6 +109,9 @@ pub struct VaultCtx {
     /// The deposit mint's decimals, which the share mint shares. Crate-private
     /// for the same reason as `token_program`: the mint was created with it.
     pub(crate) decimals: u8,
+    /// The vault's version seed. 0 for every constructor but
+    /// [`Self::sibling_vault`] on a shared mint.
+    pub(crate) vault_version: u8,
     pub payer: Keypair,
     /// The `ProgramConfig` authority — the only key allowed to call
     /// `initialize`. Tests that need an unauthorized creator should use
@@ -297,6 +300,106 @@ impl VaultCtx {
             svm,
             token_program,
             decimals,
+            vault_version: VAULT_VERSION,
+            payer,
+            protocol_authority,
+            admin,
+            operator,
+            fee_recipient,
+            user,
+            deposit_mint,
+            vault_state,
+            share_mint,
+            vault_token_pda,
+            user_deposit_ata,
+            user_share_ata,
+            operator_deposit_ata,
+            fee_recipient_deposit_ata,
+        }
+    }
+
+    /// A second vault on this vault's chain with its own admin, operator, fee
+    /// recipient and user under the same protocol authority. With `same_mint`
+    /// it is version 1 of this vault's deposit mint, so only the version seed
+    /// tells the two apart (`token_program` and `decimals` must then match
+    /// this vault's); otherwise it gets a fresh mint of the given shape. The
+    /// chain stays in `self`: the returned context holds an empty placeholder,
+    /// and a caller driving both swaps `svm` between the two before acting on
+    /// the sibling.
+    pub fn sibling_vault(
+        &mut self,
+        token_program: TokenProgramKind,
+        decimals: u8,
+        share_offset: u64,
+        same_mint: bool,
+    ) -> VaultCtx {
+        assert!(
+            !same_mint || (token_program == self.token_program && decimals == self.decimals),
+            "a sibling on the same mint shares its token program and decimals"
+        );
+        let shared_mint = self.deposit_mint;
+        let payer = self.payer.insecure_clone();
+        let protocol_authority = self.protocol_authority.insecure_clone();
+        let svm = &mut self.svm;
+        let admin = airdrop_keypair(svm, 1_000_000_000);
+        let operator = airdrop_keypair(svm, 1_000_000_000);
+        let fee_recipient = airdrop_keypair(svm, 1_000_000_000);
+        let user = airdrop_keypair(svm, 1_000_000_000);
+
+        let (deposit_mint, vault_version) = if same_mint {
+            (shared_mint, 1)
+        } else {
+            let deposit_mint_kp = Keypair::new();
+            create_mint(
+                svm,
+                &payer,
+                &deposit_mint_kp,
+                &payer.pubkey(),
+                decimals,
+                token_program,
+            );
+            (deposit_mint_kp.pubkey(), VAULT_VERSION)
+        };
+        let (vault_state, _) = derive_vault_state(&deposit_mint, vault_version);
+        let (share_mint, _) = derive_share_mint(&deposit_mint, vault_version);
+        let (vault_token_pda, _) = derive_vault_token_pda(&deposit_mint, vault_version);
+        let init_ix = initialize_ix(
+            deposit_mint,
+            vault_version,
+            &protocol_authority.pubkey(),
+            &protocol_authority.pubkey(),
+            admin.pubkey(),
+            operator.pubkey(),
+            fee_recipient.pubkey(),
+            token_program,
+            share_offset,
+        );
+        send_tx(svm, &protocol_authority, &[init_ix], &[&protocol_authority])
+            .expect("initialize sibling vault");
+
+        let user_deposit_ata =
+            create_ata(svm, &payer, &user.pubkey(), &deposit_mint, token_program);
+        let user_share_ata = create_ata(svm, &payer, &user.pubkey(), &share_mint, token_program);
+        let operator_deposit_ata = create_ata(
+            svm,
+            &payer,
+            &operator.pubkey(),
+            &deposit_mint,
+            token_program,
+        );
+        let fee_recipient_deposit_ata = create_ata(
+            svm,
+            &payer,
+            &fee_recipient.pubkey(),
+            &deposit_mint,
+            token_program,
+        );
+
+        VaultCtx {
+            svm: LiteSVM::new(),
+            token_program,
+            decimals,
+            vault_version,
             payer,
             protocol_authority,
             admin,
@@ -1152,7 +1255,7 @@ impl VaultCtx {
             &[
                 NOMINATED_ADMIN_PDA_SEED,
                 self.deposit_mint.as_ref(),
-                &[VAULT_VERSION],
+                &[self.vault_version],
             ],
             &august_vault::ID,
         )
