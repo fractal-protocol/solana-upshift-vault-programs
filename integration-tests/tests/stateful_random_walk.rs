@@ -1635,8 +1635,11 @@ struct WalkStats {
     /// and how many of those succeeded (both ways).
     relayed: usize,
     relayed_ok: usize,
-    /// Relayed instructions with the relay's PDA as signer, refused.
+    /// Relayed instructions with the relay's PDA as signer, refused; and of
+    /// those, the ones whose signer holds a role rather than tokens, which a
+    /// token-account check cannot refuse on the role's behalf.
     relay_forged: usize,
+    relay_forged_role: usize,
 }
 
 /// Compute units an instruction may use: the 200,000 a transaction gets per
@@ -2323,7 +2326,8 @@ impl QueueWalk {
         let (pda, _) = relay_pda();
         let real = signer.pubkey();
         // A request's address is seeded by its owner, so it moves with the PDA,
-        // or the seed check would refuse the forgery before the role check.
+        // or the seed check would refuse the forgery before the share account's
+        // authority check.
         let mut forged = ix.clone();
         for meta in forged.accounts.iter_mut() {
             if meta.pubkey == real {
@@ -2356,6 +2360,13 @@ impl QueueWalk {
             real
         );
         self.stats.relay_forged += 1;
+        let holder = matches!(
+            target,
+            Target::Deposit | Target::Redeem | Target::Request | Target::Cancel
+        );
+        if !holder {
+            self.stats.relay_forged_role += 1;
+        }
         Ok(false)
     }
 
@@ -3051,6 +3062,7 @@ fn run_queue_walk(
     let relayed = AtomicUsize::new(0);
     let relayed_ok = AtomicUsize::new(0);
     let relay_forged = AtomicUsize::new(0);
+    let relay_forged_role = AtomicUsize::new(0);
     let mut runner = TestRunner::new(ProptestConfig {
         cases: queue_walk_cases(cases),
         source_file: Some(file!()),
@@ -3076,6 +3088,7 @@ fn run_queue_walk(
         relayed.fetch_add(stats.relayed, Ordering::Relaxed);
         relayed_ok.fetch_add(stats.relayed_ok, Ordering::Relaxed);
         relay_forged.fetch_add(stats.relay_forged, Ordering::Relaxed);
+        relay_forged_role.fetch_add(stats.relay_forged_role, Ordering::Relaxed);
         unwind(&mut walk)
     });
     if let Err(e) = result {
@@ -3089,6 +3102,7 @@ fn run_queue_walk(
         relayed: relayed.into_inner(),
         relayed_ok: relayed_ok.into_inner(),
         relay_forged: relay_forged.into_inner(),
+        relay_forged_role: relay_forged_role.into_inner(),
     }
 }
 
@@ -3277,7 +3291,14 @@ fn queue_walk_invariants_hold_over_ten_thousand_steps() {
     assert!(stats.bundles > 0, "no bundle tested anything");
     // Refused both ways proves little, so some relayed calls must land.
     assert!(stats.relayed_ok > 0, "no relayed instruction succeeded");
-    assert!(stats.relay_forged > 0, "the relay's PDA never tried a role");
+    assert!(
+        stats.relay_forged > 0,
+        "the relay's PDA never tried a signer"
+    );
+    assert!(
+        stats.relay_forged_role > 0,
+        "the relay's PDA never tried a role"
+    );
     assert!(
         stats.garbled.iter().sum::<usize>() > 0,
         "no garbled instruction tested anything"
@@ -3286,8 +3307,8 @@ fn queue_walk_invariants_hold_over_ten_thousand_steps() {
     println!("garbled that tested something: {:?}", stats.garbled);
     println!("bundles that tested something: {}", stats.bundles);
     println!(
-        "relayed: {} ({} succeeded); relay PDA refused as signer: {}",
-        stats.relayed, stats.relayed_ok, stats.relay_forged
+        "relayed: {} ({} succeeded); relay PDA refused as signer: {} ({} in a role)",
+        stats.relayed, stats.relayed_ok, stats.relay_forged, stats.relay_forged_role
     );
     for (target, units) in TARGETS.iter().zip(stats.compute) {
         println!("most compute units, {target:?}: {units}");
