@@ -26,7 +26,7 @@ pub fn handler(ctx: Context<NominateAdmin>, nominated_admin: Pubkey) -> Result<(
 
 #[derive(Accounts)]
 pub struct NominateAdmin<'info> {
-    #[account(mut, seeds=[VAULT_STATE_SEED.as_ref(), deposit_mint.key().as_ref(), &vault_state.vault_version], bump)]
+    #[account(seeds=[VAULT_STATE_SEED.as_ref(), deposit_mint.key().as_ref(), &vault_state.vault_version], bump)]
     pub vault_state: Account<'info, VaultState>,
 
     pub deposit_mint: InterfaceAccount<'info, Mint>,

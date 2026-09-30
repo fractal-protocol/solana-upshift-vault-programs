@@ -62,11 +62,14 @@ impl DepositChecked {
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new(self.share_mint, false));
-        accounts.push(solana_instruction::AccountMeta::new(
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.deposit_mint,
             false,
         ));
-        accounts.push(solana_instruction::AccountMeta::new(self.signer, true));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.signer,
+            true,
+        ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.token_program,
             false,
@@ -130,8 +133,8 @@ impl DepositCheckedInstructionArgs {
 ///   2. `[writable]` sender_token_account
 ///   3. `[writable]` sender_share_account
 ///   4. `[writable]` share_mint
-///   5. `[writable]` deposit_mint
-///   6. `[writable, signer]` signer
+///   5. `[]` deposit_mint
+///   6. `[signer]` signer
 ///   7. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
 #[derive(Clone, Debug, Default)]
 pub struct DepositCheckedBuilder {
@@ -360,11 +363,14 @@ impl<'a, 'b> DepositCheckedCpi<'a, 'b> {
             *self.share_mint.key,
             false,
         ));
-        accounts.push(solana_instruction::AccountMeta::new(
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.deposit_mint.key,
             false,
         ));
-        accounts.push(solana_instruction::AccountMeta::new(*self.signer.key, true));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.signer.key,
+            true,
+        ));
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.token_program.key,
             false,
@@ -416,8 +422,8 @@ impl<'a, 'b> DepositCheckedCpi<'a, 'b> {
 ///   2. `[writable]` sender_token_account
 ///   3. `[writable]` sender_share_account
 ///   4. `[writable]` share_mint
-///   5. `[writable]` deposit_mint
-///   6. `[writable, signer]` signer
+///   5. `[]` deposit_mint
+///   6. `[signer]` signer
 ///   7. `[]` token_program
 #[derive(Clone, Debug)]
 pub struct DepositCheckedCpiBuilder<'a, 'b> {

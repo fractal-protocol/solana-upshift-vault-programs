@@ -22,7 +22,6 @@ pub struct SetAumLimits<'info> {
 
     pub deposit_mint: InterfaceAccount<'info, Mint>,
 
-    #[account(mut)]
     pub admin: Signer<'info>,
 }
 

@@ -51,8 +51,10 @@ impl CreateShareTokenMetadata {
     ) -> solana_instruction::Instruction {
         let mut accounts = Vec::with_capacity(10 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(self.payer, true));
-        accounts.push(solana_instruction::AccountMeta::new(self.admin, true));
-        accounts.push(solana_instruction::AccountMeta::new(
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.admin, true,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.vault_state,
             false,
         ));
@@ -60,7 +62,10 @@ impl CreateShareTokenMetadata {
             self.deposit_mint,
             false,
         ));
-        accounts.push(solana_instruction::AccountMeta::new(self.share_mint, false));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.share_mint,
+            false,
+        ));
         accounts.push(solana_instruction::AccountMeta::new(
             self.metadata_account,
             false,
@@ -138,10 +143,10 @@ impl CreateShareTokenMetadataInstructionArgs {
 /// ### Accounts:
 ///
 ///   0. `[writable, signer]` payer
-///   1. `[writable, signer]` admin
-///   2. `[writable]` vault_state
+///   1. `[signer]` admin
+///   2. `[]` vault_state
 ///   3. `[]` deposit_mint
-///   4. `[writable]` share_mint
+///   4. `[]` share_mint
 ///   5. `[writable]` metadata_account
 ///   6. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
 ///   7. `[optional]` token_metadata_program (default to `metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s`)
@@ -390,8 +395,11 @@ impl<'a, 'b> CreateShareTokenMetadataCpi<'a, 'b> {
     ) -> solana_program_error::ProgramResult {
         let mut accounts = Vec::with_capacity(10 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(*self.payer.key, true));
-        accounts.push(solana_instruction::AccountMeta::new(*self.admin.key, true));
-        accounts.push(solana_instruction::AccountMeta::new(
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.admin.key,
+            true,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.vault_state.key,
             false,
         ));
@@ -399,7 +407,7 @@ impl<'a, 'b> CreateShareTokenMetadataCpi<'a, 'b> {
             *self.deposit_mint.key,
             false,
         ));
-        accounts.push(solana_instruction::AccountMeta::new(
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.share_mint.key,
             false,
         ));
@@ -470,10 +478,10 @@ impl<'a, 'b> CreateShareTokenMetadataCpi<'a, 'b> {
 /// ### Accounts:
 ///
 ///   0. `[writable, signer]` payer
-///   1. `[writable, signer]` admin
-///   2. `[writable]` vault_state
+///   1. `[signer]` admin
+///   2. `[]` vault_state
 ///   3. `[]` deposit_mint
-///   4. `[writable]` share_mint
+///   4. `[]` share_mint
 ///   5. `[writable]` metadata_account
 ///   6. `[]` token_program
 ///   7. `[]` token_metadata_program

@@ -42,7 +42,7 @@ impl NominateAdmin {
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
         let mut accounts = Vec::with_capacity(6 + remaining_accounts.len());
-        accounts.push(solana_instruction::AccountMeta::new(
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.vault_state,
             false,
         ));
@@ -115,7 +115,7 @@ impl NominateAdminInstructionArgs {
 ///
 /// ### Accounts:
 ///
-///   0. `[writable]` vault_state
+///   0. `[]` vault_state
 ///   1. `[]` deposit_mint
 ///   2. `[writable]` nominated_admin_pda
 ///   3. `[signer]` admin
@@ -286,7 +286,7 @@ impl<'a, 'b> NominateAdminCpi<'a, 'b> {
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
         let mut accounts = Vec::with_capacity(6 + remaining_accounts.len());
-        accounts.push(solana_instruction::AccountMeta::new(
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.vault_state.key,
             false,
         ));
@@ -347,7 +347,7 @@ impl<'a, 'b> NominateAdminCpi<'a, 'b> {
 ///
 /// ### Accounts:
 ///
-///   0. `[writable]` vault_state
+///   0. `[]` vault_state
 ///   1. `[]` deposit_mint
 ///   2. `[writable]` nominated_admin_pda
 ///   3. `[signer]` admin

@@ -48,7 +48,7 @@ impl UpdateShareTokenMetadata {
         accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.admin, true,
         ));
-        accounts.push(solana_instruction::AccountMeta::new(
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.vault_state,
             false,
         ));
@@ -130,7 +130,7 @@ impl UpdateShareTokenMetadataInstructionArgs {
 /// ### Accounts:
 ///
 ///   0. `[signer]` admin
-///   1. `[writable]` vault_state
+///   1. `[]` vault_state
 ///   2. `[]` deposit_mint
 ///   3. `[]` share_mint
 ///   4. `[writable]` metadata_account
@@ -341,7 +341,7 @@ impl<'a, 'b> UpdateShareTokenMetadataCpi<'a, 'b> {
             *self.admin.key,
             true,
         ));
-        accounts.push(solana_instruction::AccountMeta::new(
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.vault_state.key,
             false,
         ));
@@ -409,7 +409,7 @@ impl<'a, 'b> UpdateShareTokenMetadataCpi<'a, 'b> {
 /// ### Accounts:
 ///
 ///   0. `[signer]` admin
-///   1. `[writable]` vault_state
+///   1. `[]` vault_state
 ///   2. `[]` deposit_mint
 ///   3. `[]` share_mint
 ///   4. `[writable]` metadata_account

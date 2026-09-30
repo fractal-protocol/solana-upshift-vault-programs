@@ -60,7 +60,7 @@ impl OperatorWithdraw {
             self.operator_token_account,
             false,
         ));
-        accounts.push(solana_instruction::AccountMeta::new(
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.deposit_mint,
             false,
         ));
@@ -136,7 +136,7 @@ impl OperatorWithdrawInstructionArgs {
 ///   0. `[writable]` vault_state
 ///   1. `[writable]` vault_deposit_ata
 ///   2. `[writable]` operator_token_account
-///   3. `[writable]` deposit_mint
+///   3. `[]` deposit_mint
 ///   4. `[signer]` operator
 ///   5. `[optional]` token_program (default to `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`)
 ///   6. `[writable, optional]` subaccount
@@ -352,7 +352,7 @@ impl<'a, 'b> OperatorWithdrawCpi<'a, 'b> {
             *self.operator_token_account.key,
             false,
         ));
-        accounts.push(solana_instruction::AccountMeta::new(
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.deposit_mint.key,
             false,
         ));
@@ -418,7 +418,7 @@ impl<'a, 'b> OperatorWithdrawCpi<'a, 'b> {
 ///   0. `[writable]` vault_state
 ///   1. `[writable]` vault_deposit_ata
 ///   2. `[writable]` operator_token_account
-///   3. `[writable]` deposit_mint
+///   3. `[]` deposit_mint
 ///   4. `[signer]` operator
 ///   5. `[]` token_program
 ///   6. `[writable, optional]` subaccount

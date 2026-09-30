@@ -19,14 +19,12 @@ pub struct CreateShareTokenMetadata<'info> {
 
     /// The admin of the vault - only they can create/update metadata
     #[account(
-        mut,
         constraint = admin.key() == vault_state.admin @ crate::errors::ErrorCode::UnauthorizedAdmin
     )]
     pub admin: Signer<'info>,
 
     /// The vault state PDA that owns the mint authority
     #[account(
-        mut,
         seeds = [VAULT_STATE_SEED.as_ref(), deposit_mint.key().as_ref(), &vault_state.vault_version],
         bump,
         constraint = !vault_state.paused @ crate::errors::ErrorCode::VaultPaused
@@ -38,7 +36,6 @@ pub struct CreateShareTokenMetadata<'info> {
 
     /// The share token mint
     #[account(
-        mut,
         mint::authority = vault_state,
     )]
     pub share_mint: Account<'info, Mint>,

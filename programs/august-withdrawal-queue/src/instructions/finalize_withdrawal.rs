@@ -111,8 +111,8 @@ pub fn handler(ctx: Context<FinalizeWithdrawal>, expected_sequence: u64) -> Resu
 /// The two it does not store, the vault's reserve and the fee account, are bound
 /// by the vault's own constraints inside the CPI: the reserve by its seeds, the
 /// fee account by `fee_recipient`'s authority. Nothing is left to the caller.
-/// Everything the vault's `Redeem` declares writable, both mints included, must
-/// arrive writable here, since a CPI cannot widen an account's privileges.
+/// Everything the vault's `Redeem` declares writable, the share mint included, must
+/// arrive writable here; `deposit_mint` stays read-only on both sides.
 #[event_cpi]
 #[derive(Accounts)]
 pub struct FinalizeWithdrawal<'info> {
@@ -147,7 +147,6 @@ pub struct FinalizeWithdrawal<'info> {
     #[account(mut)]
     pub share_mint: Box<InterfaceAccount<'info, Mint>>,
 
-    #[account(mut)]
     pub deposit_mint: Box<InterfaceAccount<'info, Mint>>,
 
     /// Whoever chooses the moment; `WithdrawalRequest::may_finalize` decides.
