@@ -43,7 +43,9 @@ impl SetAumLimits {
             self.deposit_mint,
             false,
         ));
-        accounts.push(solana_instruction::AccountMeta::new(self.admin, true));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.admin, true,
+        ));
         accounts.extend_from_slice(remaining_accounts);
         let mut data = SetAumLimitsInstructionData::new().try_to_vec().unwrap();
         let mut args = args.try_to_vec().unwrap();
@@ -100,7 +102,7 @@ impl SetAumLimitsInstructionArgs {
 ///
 ///   0. `[writable]` vault_state
 ///   1. `[]` deposit_mint
-///   2. `[writable, signer]` admin
+///   2. `[signer]` admin
 #[derive(Clone, Debug, Default)]
 pub struct SetAumLimitsBuilder {
     vault_state: Option<solana_pubkey::Pubkey>,
@@ -246,7 +248,10 @@ impl<'a, 'b> SetAumLimitsCpi<'a, 'b> {
             *self.deposit_mint.key,
             false,
         ));
-        accounts.push(solana_instruction::AccountMeta::new(*self.admin.key, true));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.admin.key,
+            true,
+        ));
         remaining_accounts.iter().for_each(|remaining_account| {
             accounts.push(solana_instruction::AccountMeta {
                 pubkey: *remaining_account.0.key,
@@ -286,7 +291,7 @@ impl<'a, 'b> SetAumLimitsCpi<'a, 'b> {
 ///
 ///   0. `[writable]` vault_state
 ///   1. `[]` deposit_mint
-///   2. `[writable, signer]` admin
+///   2. `[signer]` admin
 #[derive(Clone, Debug)]
 pub struct SetAumLimitsCpiBuilder<'a, 'b> {
     instruction: Box<SetAumLimitsCpiBuilderInstruction<'a, 'b>>,

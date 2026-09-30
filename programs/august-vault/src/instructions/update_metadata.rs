@@ -22,7 +22,6 @@ pub struct UpdateShareTokenMetadata<'info> {
 
     /// The vault state PDA that owns the mint authority and is the update authority
     #[account(
-        mut,
         seeds = [VAULT_STATE_SEED.as_ref(), deposit_mint.key().as_ref(), &vault_state.vault_version],
         bump,
         constraint = !vault_state.paused @ crate::errors::ErrorCode::VaultPaused

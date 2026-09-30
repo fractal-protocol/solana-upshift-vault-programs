@@ -137,10 +137,8 @@ pub struct Deposit<'info> {
     )]
     pub share_mint: InterfaceAccount<'info, Mint>,
 
-    #[account(mut)]
     pub deposit_mint: InterfaceAccount<'info, Mint>,
 
-    #[account(mut)]
     pub signer: Signer<'info>,
     pub token_program: Interface<'info, TokenInterface>,
 }

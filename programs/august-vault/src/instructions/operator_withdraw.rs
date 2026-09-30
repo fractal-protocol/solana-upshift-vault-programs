@@ -103,7 +103,6 @@ pub struct OperatorWithdraw<'info> {
     )]
     pub operator_token_account: InterfaceAccount<'info, TokenAccount>,
 
-    #[account(mut)]
     pub deposit_mint: InterfaceAccount<'info, Mint>,
 
     #[account(

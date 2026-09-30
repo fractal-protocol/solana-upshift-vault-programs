@@ -84,7 +84,7 @@ impl FinalizeWithdrawal {
             false,
         ));
         accounts.push(solana_instruction::AccountMeta::new(self.share_mint, false));
-        accounts.push(solana_instruction::AccountMeta::new(
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
             self.deposit_mint,
             false,
         ));
@@ -176,7 +176,7 @@ impl FinalizeWithdrawalInstructionArgs {
 ///   4. `[writable]` escrow_shares
 ///   5. `[writable]` escrow_assets
 ///   6. `[writable]` share_mint
-///   7. `[writable]` deposit_mint
+///   7. `[]` deposit_mint
 ///   8. `[signer]` finalizer
 ///   9. `[writable]` request
 ///   10. `[writable]` owner
@@ -519,7 +519,7 @@ impl<'a, 'b> FinalizeWithdrawalCpi<'a, 'b> {
             *self.share_mint.key,
             false,
         ));
-        accounts.push(solana_instruction::AccountMeta::new(
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
             *self.deposit_mint.key,
             false,
         ));
@@ -611,7 +611,7 @@ impl<'a, 'b> FinalizeWithdrawalCpi<'a, 'b> {
 ///   4. `[writable]` escrow_shares
 ///   5. `[writable]` escrow_assets
 ///   6. `[writable]` share_mint
-///   7. `[writable]` deposit_mint
+///   7. `[]` deposit_mint
 ///   8. `[signer]` finalizer
 ///   9. `[writable]` request
 ///   10. `[writable]` owner

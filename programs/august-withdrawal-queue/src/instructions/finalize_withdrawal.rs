@@ -147,7 +147,6 @@ pub struct FinalizeWithdrawal<'info> {
     #[account(mut)]
     pub share_mint: Box<InterfaceAccount<'info, Mint>>,
 
-    #[account(mut)]
     pub deposit_mint: Box<InterfaceAccount<'info, Mint>>,
 
     /// Whoever chooses the moment; `WithdrawalRequest::may_finalize` decides.
