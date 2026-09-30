@@ -135,12 +135,17 @@ fn main() {
     // integration-test target then relinks each time. This repo has
     // `.cargo/audit.toml` but no `.cargo/config.toml`, so naming that file directly
     // cost ~5s on every no-op `cargo test`.
+    //
+    // The fixture is watched file by file, not as a directory: its build writes
+    // `cpi-relay/target`, which would mark it changed on every run.
     for path in [
         "programs",
         "Cargo.toml",
         "Cargo.lock",
         ".cargo",
-        "integration-tests/fixtures",
+        "integration-tests/fixtures/cpi-relay/src",
+        "integration-tests/fixtures/cpi-relay/Cargo.toml",
+        "integration-tests/fixtures/cpi-relay/Cargo.lock",
     ] {
         let watched = repo_root.join(path);
         if watched.exists() {
