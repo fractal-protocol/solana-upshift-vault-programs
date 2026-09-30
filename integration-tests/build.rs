@@ -189,37 +189,13 @@ fn main() {
     // does NOT honour `-- --locked` (verified: it updated the root Cargo.lock
     // anyway), so without this the nested build could silently re-resolve and the
     // bytecode under test would come from an uncommitted dependency set.
-    // `cargo metadata` is real cargo, so it does honour it, and it touches nothing.
     let lock_path = repo_root.join("Cargo.lock");
     // Not `.ok()`: a `None` here would silently disable the post-build comparison
     // below, which is the only check that observes an actual re-resolve. The
     // lockfile is committed, so failing to read it is a real problem.
     let lock_before = std::fs::read(&lock_path)
         .unwrap_or_else(|e| panic!("read the committed {}: {e}", lock_path.display()));
-    let mut meta = Command::new("cargo");
-    meta.arg("metadata")
-        .arg("--locked")
-        .arg("--format-version")
-        .arg("1")
-        .arg("--manifest-path")
-        .arg(&program_manifest)
-        .current_dir(&repo_root);
-    scrub_env(&mut meta);
-    match meta.output() {
-        Ok(o) if !o.status.success() => panic!(
-            "\n\n\
-             The root Cargo.lock does not resolve the program's dependencies, so the bytecode\n\
-             would be built from an uncommitted dependency set.\n\n\
-             Update and commit the lockfile (`cargo update -p <crate>` or `cargo check`), then\n\
-             re-run.\n\n\
-             --- cargo metadata --locked ---\n{}\n",
-            String::from_utf8_lossy(&o.stderr)
-        ),
-        Ok(_) => {}
-        // Do not fail the build if metadata itself could not run; the post-build
-        // lockfile comparison below still catches a re-resolve.
-        Err(e) => println!("cargo:warning=could not pre-check the lockfile ({e})"),
-    }
+    precheck_lockfile(&repo_root, &program_manifest, &lock_path);
 
     // Build into a directory that is emptied first, so the artifact found there
     // afterwards cannot be a leftover from an earlier run. `cargo build-sbf` copies
@@ -268,8 +244,7 @@ fn main() {
              Could not run `cargo build-sbf` ({e}).\n\n\
              These tests embed the program bytecode at compile time, so the SBF toolchain is\n\
              required. It ships with the Solana CLI:\n\n\
-             \x20   sh -c \"$(curl -sSfL https://release.anza.xyz/stable/install)\"\n\n\
-             To embed an existing artifact instead, set {ESCAPE_HATCH}=1.\n\n"
+             \x20   sh -c \"$(curl -sSfL https://release.anza.xyz/stable/install)\"\n\n"
             ),
         };
 
@@ -317,6 +292,9 @@ fn build_fixture(repo_root: &Path, out_dir: &Path) {
     let lock_path = manifest.with_file_name("Cargo.lock");
     let lock_before = std::fs::read(&lock_path)
         .unwrap_or_else(|e| panic!("read the committed {}: {e}", lock_path.display()));
+    // Without this, a re-resolve that the comparison below refuses still leaves
+    // the rewritten lockfile on disk, and the next run compares against that.
+    precheck_lockfile(repo_root, &manifest, &lock_path);
     let staging = out_dir.join("sbf-out-fixture");
     match std::fs::remove_dir_all(&staging) {
         Ok(()) => {}
@@ -335,9 +313,13 @@ fn build_fixture(repo_root: &Path, out_dir: &Path) {
         .arg("--locked")
         .current_dir(repo_root);
     scrub_env(&mut cmd);
-    let output = cmd
-        .output()
-        .unwrap_or_else(|e| panic!("could not run `cargo build-sbf` for the CPI relay ({e})"));
+    let output = cmd.output().unwrap_or_else(|e| {
+        // Built even under the escape hatch, so the hatch is no way around this.
+        panic!(
+            "\n\nCould not run `cargo build-sbf` for the CPI relay ({e}). The SBF \
+                 toolchain is required, {ESCAPE_HATCH} or not; it ships with the Solana CLI.\n\n"
+        )
+    });
     if !output.status.success() {
         panic!(
             "\n\nThe CPI relay fixture failed to build.\n\n--- cargo build-sbf stderr ---\n{}\n",
@@ -357,6 +339,41 @@ fn build_fixture(repo_root: &Path, out_dir: &Path) {
         &out_dir.join(FIXTURE_ARTIFACT),
     ) {
         panic!("the CPI relay build produced no {FIXTURE_ARTIFACT} ({e})");
+    }
+}
+
+/// Panics unless `lock_path` resolves `manifest` as committed. `cargo build-sbf`
+/// ignores `-- --locked` (verified: it updated the root Cargo.lock anyway), but
+/// `cargo metadata` is real cargo, so it honours it, and it touches nothing.
+fn precheck_lockfile(repo_root: &Path, manifest: &Path, lock_path: &Path) {
+    let mut meta = Command::new("cargo");
+    meta.arg("metadata")
+        .arg("--locked")
+        .arg("--format-version")
+        .arg("1")
+        .arg("--manifest-path")
+        .arg(manifest)
+        .current_dir(repo_root);
+    scrub_env(&mut meta);
+    match meta.output() {
+        Ok(o) if !o.status.success() => panic!(
+            "\n\n\
+             {} does not resolve {}, so the bytecode would be built from an\n\
+             uncommitted dependency set.\n\n\
+             Update and commit the lockfile (`cargo update -p <crate>` or `cargo check`), then\n\
+             re-run.\n\n\
+             --- cargo metadata --locked ---\n{}\n",
+            lock_path.display(),
+            manifest.display(),
+            String::from_utf8_lossy(&o.stderr)
+        ),
+        Ok(_) => {}
+        // Do not fail the build if metadata itself could not run; the post-build
+        // lockfile comparison still catches a re-resolve.
+        Err(e) => println!(
+            "cargo:warning=could not pre-check {} ({e})",
+            lock_path.display()
+        ),
     }
 }
 
