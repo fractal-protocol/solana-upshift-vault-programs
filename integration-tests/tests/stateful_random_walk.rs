@@ -2322,17 +2322,33 @@ impl QueueWalk {
         }
         let (pda, _) = relay_pda();
         let real = signer.pubkey();
+        // A request's address is seeded by its owner, so it moves with the PDA,
+        // or the seed check would refuse the forgery before the role check.
         let mut forged = ix.clone();
         for meta in forged.accounts.iter_mut() {
             if meta.pubkey == real {
                 meta.pubkey = pda;
+                continue;
+            }
+            for id in 0..REQUEST_ID_POOL {
+                if meta.pubkey == self.ctx.request_pda(&real, id) {
+                    meta.pubkey = self.ctx.request_pda(&pda, id);
+                }
             }
         }
+        // Funded, so where the signer also pays (a nomination, a request) the
+        // forgery is not refused for want of lamports.
+        let saved = self.ctx.svm.clone();
+        self.ctx
+            .svm
+            .airdrop(&pda, 10_000_000_000)
+            .expect("fund the relay PDA");
         let payer = self.stranger.insecure_clone();
         let accepted = self
             .ctx
             .send_instructions(&payer, &[relayed(&forged)])
             .is_ok();
+        self.ctx.svm = saved;
         prop_assert!(
             !accepted,
             "{:?} accepted the relay's PDA signing in place of {}",
