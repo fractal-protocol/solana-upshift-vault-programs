@@ -24,7 +24,7 @@ ceremony is recorded under [Previous releases](#previous-releases).
 | Program ID (mainnet and devnet) | `up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt` | `upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW` |
 | Mainnet upgrade authority | `B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM` (Fordefi MPC) | same, after Step 3's handoff |
 | Devnet upgrade authority | `APuzErEVGAbvhyj2hbmo6vp7pacNHRVXbu43UhcAne2i` (team-held keypair) | same |
-| Deployed now | `cb1352a5…`, `Data Length` 605,160 B on both clusters (27 Sep 2026) | not deployed on any cluster |
+| Deployed now (1 Oct 2026) | mainnet `cb1352a5…`, `Data Length` 605,160 B; devnet `v0.2.0` `f258ab09…`, 687,352 B | mainnet not deployed; devnet `v0.2.0` `55bcd7f3…`, 479,144 B |
 | Library name | `august_vault` | `august_withdrawal_queue` |
 
 - **Expected hashes:** the `exec_sha256` / `raw_sha256` / `size` rows in
@@ -38,8 +38,8 @@ ceremony is recorded under [Previous releases](#previous-releases).
   Step 3 comes before Step 4.
 - **Vault ProgramData must be extended first.** The new vault `.so` is larger
   than the current allocation. With `Data Length` from `solana program show`,
-  `additional_bytes = <new .so size> − <Data Length>`; for the current pins,
-  687,352 − 605,160 = 82,192. Re-derive when the pin changes.
+  `additional_bytes = <new .so size> − <Data Length>`; for `v0.2.0`,
+  681,832 − 605,160 = 76,672. Re-derive when the pin changes.
 - **Devnet runs the same ids**, so the released mainnet artifacts deploy to
   devnet unchanged and the rehearsal (Step 2) exercises the exact bytes. The
   older `C8B1Eps…` devnet program is not part of this release.
@@ -85,9 +85,9 @@ Rules for both program keypairs:
   `solana --version`.
 - A **funded ops fee-payer** keypair (about 10 SOL at the current sizes). It is
   NOT the upgrade authority. It pays the queue's ProgramData rent (2.43 SOL,
-  `solana rent 479189`) plus an equal buffer that the deploy refunds, the vault
-  `extend` (0.42 SOL), and the vault buffer (3.49 SOL, refunded to the spill
-  account by the `Upgrade`).
+  `solana rent 478853`) plus an equal buffer that the deploy refunds, the vault
+  `extend` (0.39 SOL), and the vault buffer (3.46 SOL, refunded to the spill
+  account by the `Upgrade`). Figures are for `v0.2.0`.
 - The queue program keypair, checked as above.
 - Fordefi access to the upgrade authority, able to sign a
   `BPFLoaderUpgradeable::Upgrade` instruction and two arbitrary transactions.
@@ -218,11 +218,14 @@ THESE artifacts.
 
 Both ids are the same on devnet and `declare_id!` matches, so rehearse with the
 release artifacts themselves. The devnet authority is a team-held keypair, so
-every step signs directly with the CLI. Use a private RPC if you can: the public
-endpoints throttle a run like this with `429 Too Many Requests`.
+every step signs directly with the CLI. Use a private RPC: the public
+endpoints throttle a run like this with `429 Too Many Requests`, and a
+`program deploy` then dies mid-upload with `Max retries exceeded`. If an upload
+fails, `write-buffer --buffer <keypair.json>` resumes it into the same buffer;
+check `solana-verify get-buffer-hash` against the pin before `program upgrade`.
 
 ```bash
-URL=https://api.devnet.solana.com
+URL=<private devnet RPC URL>               # check: solana genesis-hash -u "$URL" == EtWTRAB…
 DEV=<devnet-authority-keypair.json>        # APuzEr…
 
 # Queue: rehearse Step 3 exactly, with a throwaway ops key standing in for the
@@ -256,8 +259,16 @@ finalize by a key other than the owner, a second request cancelled,
 to mainnet once the rehearsal is clean.
 
 **Rehearsed 28 Sep 2026** with the artifacts pinned at PR #34: every step above
-passed as written. Devnet `up12…` now runs `2f8dc1ac…` and `upQhC7…` runs
+passed as written. Devnet `up12…` then ran `2f8dc1ac…` and `upQhC7…` ran
 `5e7ea878…` under `APuzEr…`.
+
+**Rehearsed 1 Oct 2026** with the `v0.2.0` release artifacts (`c182bf9`). Both
+programs were upgraded in place, with no `extend` needed: the 28 Sep allocations
+already fit. Devnet `upQhC7…` now runs `55bcd7f3…` and `up12…` runs `f258ab09…`,
+both equal to `verified-hashes.txt`. The Step 6 walk on a fresh test vault was
+clean, with the finalize signed by a designated finalizer rather than the owner.
+A deposit and a redeem with `deposit_mint` read-only (AUGUST-8044) also
+succeeded. The public RPC throttled both first uploads; a private RPC fixed it.
 
 ---
 
@@ -349,7 +360,7 @@ sha256sum pre-upgrade-august_vault.so   # archive the file and both hashes
 ```bash
 # Extend ProgramData to fit the larger binary. `Data Length` from `program show`
 # already excludes the 45-byte loader header, so subtract directly:
-#   additional_bytes = <new .so size> - <Data Length>   (82,192 for the current pins)
+#   additional_bytes = <new .so size> - <Data Length>   (76,672 for `v0.2.0`)
 solana program extend up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt <additional_bytes> \
   -u "$URL" -k "$OPS"   # ← Solana 2.x CLI only; see below
 # Afterwards `Data Length` must equal the new .so size exactly.
