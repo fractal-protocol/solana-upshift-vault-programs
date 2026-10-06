@@ -50,6 +50,7 @@ pub struct WithdrawalRequested {
     pub finalizer: Pubkey,
     pub eligible_at: i64,
     pub expires_at: i64,
+    pub min_assets_out: u64,
 }
 
 impl WithdrawalRequested {
@@ -66,6 +67,7 @@ impl WithdrawalRequested {
             finalizer: request.finalizer,
             eligible_at: request.eligible_at,
             expires_at: request.expires_at,
+            min_assets_out: request.min_assets_out,
         }
     }
 }

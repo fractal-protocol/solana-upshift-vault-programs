@@ -209,14 +209,15 @@ so the share escrow that makes cancel always work can never be frozen.
 expiry, else at most 90 days) configure it. Attaching it on the vault is what
 makes it live.
 
-Holders use `request_withdrawal(request_id, shares, finalizer)`:
+Holders use `request_withdrawal(request_id, shares, min_assets_out, finalizer)`:
 their shares move to the queue's escrow and a request account is created at
 `["withdrawal_request", queue, owner, request_id]`, stamped with the cooldown and
 window in force at that moment. It requires the vault's gate to point at the
 queue, a nonzero amount (`ZeroShares`, 6007), and a recipient that holds the deposit mint
 and belongs to neither the queue nor the vault (`InvalidRecipient`, 6008).
-A request's recipient and finalizer are fixed once it is made; to change
-them the owner cancels and requests again.
+A request's floor, recipient and finalizer are fixed once it is made; to change
+them the owner cancels and requests again. `min_assets_out` is the owner's floor
+on the net payout, zero for none.
 
 `finalize_withdrawal(expected_sequence)` pays a request once its cooldown has
 run (`CooldownNotElapsed`, 6012, before then) and while its window is open
@@ -229,7 +230,12 @@ finalized, never by whom. The queue redeems the escrowed shares by CPI into
 `NotEnoughLiquidity` surface as the vault's own codes and
 leave the request pending and untouched. The payout is the asset escrow's
 balance delta, forwarded to the request's recipient, at the shares' value at
-that moment; the request then closes with its rent to the owner.
+that moment; the request then closes with its rent to the owner. A delta below
+the request's `min_assets_out` reverts (`PayoutBelowFloor`, 6019), so an AUM
+mark-down or fee rise after the request cannot push the payout under the
+owner's floor. A fee account owned by the queue is refused
+(`FeeAccountOwnedByQueue`, 6020): the vault's `fee_recipient` must not be the
+queue PDA.
 
 `cancel_withdrawal(expected_sequence)` returns a pending request's shares to any
 share account whose authority is the owner and closes the request with its rent

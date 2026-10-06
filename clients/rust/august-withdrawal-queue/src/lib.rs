@@ -69,7 +69,8 @@ mod tests {
             eligible_at: 0,
             expires_at: 0,
             bump: 0,
-            padding: [0; 9],
+            min_assets_out: 0,
+            padding: [0; 8],
         };
         assert_eq!(request.expires_at, 0, "zero means no deadline");
     }

@@ -1574,6 +1574,7 @@ fn fund_foreign_vault(ctx: &mut VaultCtx, holder: &Depositor, other: &OtherVault
         data: august_withdrawal_queue::instruction::RequestWithdrawal {
             request_id: 0,
             shares: SEED_DEPOSIT,
+            min_assets_out: 0,
             finalizer: Pubkey::default(),
         }
         .data(),
@@ -2481,6 +2482,7 @@ impl QueueWalk {
                     data: august_withdrawal_queue::instruction::RequestWithdrawal {
                         request_id: id,
                         shares,
+                        min_assets_out: 0,
                         finalizer: Pubkey::default(),
                     }
                     .data(),

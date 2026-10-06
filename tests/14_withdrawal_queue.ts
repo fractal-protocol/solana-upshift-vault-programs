@@ -187,7 +187,7 @@ describe("august-withdrawal-queue", () => {
 
     const request = (id: number, shares: number, finalizer: PublicKey = PublicKey.default) =>
         queueProgram.methods
-            .requestWithdrawal(new BN(id), new BN(shares), finalizer)
+            .requestWithdrawal(new BN(id), new BN(shares), new BN(0), finalizer)
             .accountsPartial({
                 queue,
                 vaultState: queued.vaultState,

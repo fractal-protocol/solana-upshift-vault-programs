@@ -62,8 +62,12 @@ pub struct WithdrawalRequest {
     /// Bump of this PDA, for `bump = request.bump` constraints. This account
     /// never signs.
     pub bump: u8,
+    /// The owner's floor on what the recipient receives, net of the withdrawal
+    /// fee; `0` for none. Fixed at request time. Carved out of `padding`, so a
+    /// request opened before the field existed reads as having no floor.
+    pub min_assets_out: u64,
     /// Reserved. Carve new fields **out of** this array so `LEN` stays 265.
-    pub padding: [u64; 9],
+    pub padding: [u64; 8],
 }
 
 pub const WITHDRAWAL_REQUEST_DISCRIMINATOR: [u8; 8] = [242, 88, 147, 173, 182, 62, 229, 193];

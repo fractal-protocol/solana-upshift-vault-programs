@@ -558,6 +558,136 @@ fn a_paused_vault_refuses_finalization_and_the_request_survives() {
         .expect("finalize after unpause");
 }
 
+// ---- the floor ----
+
+/// A mature request with the user's half as request 1, floored at the vault's
+/// net quote when requested. Returns the context, the shares and that quote.
+fn mature_request_floored_at_quote() -> (VaultCtx, u64, u64) {
+    let mut ctx = VaultCtx::fresh();
+    ctx.mint_to_user(DEPOSIT_AMOUNT);
+    ctx.deposit(DEPOSIT_AMOUNT).expect("deposit");
+    ctx.open_queue(DAY);
+    let half = ctx.token_account_amount(&ctx.user_share_ata) / 2;
+    let (_, net) = ctx.quote_redeem(half);
+    ctx.request_withdrawal_with_floor(1, half, net)
+        .expect("request");
+    ctx.warp_forward_seconds(DAY as i64);
+    (ctx, half, net)
+}
+
+/// A payout exactly at the floor is paid; one unit above it is not.
+#[test]
+fn the_floor_is_inclusive() {
+    let (mut ctx, _, net) = mature_request_floored_at_quote();
+    let before = ctx.token_account_amount(&ctx.user_deposit_ata);
+    ctx.finalize_withdrawal(1, 1)
+        .expect("payout equals the floor");
+    assert_eq!(
+        ctx.token_account_amount(&ctx.user_deposit_ata) - before,
+        net
+    );
+
+    let mut ctx = VaultCtx::fresh();
+    ctx.mint_to_user(DEPOSIT_AMOUNT);
+    ctx.deposit(DEPOSIT_AMOUNT).expect("deposit");
+    ctx.open_queue(0);
+    let half = ctx.token_account_amount(&ctx.user_share_ata) / 2;
+    let (_, net) = ctx.quote_redeem(half);
+    ctx.request_withdrawal_with_floor(1, half, net + 1)
+        .expect("request");
+    let user = ctx.user.pubkey();
+    let before = untouched(&ctx, &user, 1);
+    let err = ctx.finalize_withdrawal(1, 1).expect_err("one unit short");
+    assert_queue_err(&err, ErrorCode::PayoutBelowFloor);
+    assert_eq!(untouched(&ctx, &user, 1), before);
+}
+
+/// A fee raised after the request cannot take the payout below the owner's
+/// floor. The request survives and pays once the fee comes back down.
+#[test]
+fn a_fee_rise_below_the_floor_is_refused_and_the_request_survives() {
+    let (mut ctx, _, net) = mature_request_floored_at_quote();
+    let user = ctx.user.pubkey();
+    ctx.set_withdrawal_fee(ONE_PERCENT).expect("fee");
+    let before = untouched(&ctx, &user, 1);
+
+    let err = ctx.finalize_withdrawal(1, 1).expect_err("below the floor");
+    assert_queue_err(&err, ErrorCode::PayoutBelowFloor);
+    assert_eq!(untouched(&ctx, &user, 1), before);
+
+    ctx.set_withdrawal_fee(0).expect("fee back to zero");
+    let before = ctx.token_account_amount(&ctx.user_deposit_ata);
+    ctx.finalize_withdrawal(1, 1).expect("finalize");
+    assert_eq!(
+        ctx.token_account_amount(&ctx.user_deposit_ata) - before,
+        net
+    );
+}
+
+/// Likewise an AUM mark-down, by anyone the request lets finalize.
+#[test]
+fn a_mark_down_below_the_floor_is_refused_for_any_finalizer() {
+    let (mut ctx, _, _) = mature_request_floored_at_quote();
+    let user = ctx.user.pubkey();
+    let deployed = ctx.vault_state_data().local_aum / 4;
+    ctx.operator_withdraw(deployed).expect("deploy");
+    ctx.operator_update_aum(deployed - deployed / 1_000)
+        .expect("a 0.1% loss, inside the decrease limit");
+    let k = keeper(&mut ctx);
+    let before = untouched(&ctx, &user, 1);
+
+    let err = ctx
+        .finalize_withdrawal_as(&k, &user, 1, 1)
+        .expect_err("below the floor");
+    assert_queue_err(&err, ErrorCode::PayoutBelowFloor);
+    assert_eq!(untouched(&ctx, &user, 1), before);
+}
+
+// ---- the fee account ----
+
+/// With `fee_recipient` pointed at the queue PDA, the vault accepts any
+/// queue-owned deposit account as the fee account. The escrow would fold the
+/// fee into the payout; any other would strand it. Both are refused, and
+/// finalization resumes once the admin repoints `fee_recipient`.
+#[test]
+fn a_fee_account_owned_by_the_queue_is_refused() {
+    let (mut ctx, half) = mature_request();
+    ctx.set_withdrawal_fee(ONE_PERCENT).expect("fee");
+    let admin = ctx.admin.insecure_clone();
+    let (user, queue, mint) = (
+        ctx.user.pubkey(),
+        ctx.withdrawal_queue_pda(),
+        ctx.deposit_mint,
+    );
+    ctx.set_fee_recipient_as(&admin, queue)
+        .expect("admin points fee_recipient at the queue");
+    let escrow_assets = ctx.queue_escrow(&mint);
+    let other = ctx.create_token_account_for(&queue, &mint);
+
+    for fee_account in [escrow_assets, other] {
+        let mut accounts = ctx.finalize_withdrawal_accounts(&user, &user, 1);
+        accounts.fee_recipient_account = fee_account;
+        let before = untouched(&ctx, &user, 1);
+        let err = ctx
+            .send_finalize_withdrawal(&ctx.user.insecure_clone(), accounts, 1)
+            .expect_err("queue-owned fee account");
+        assert_queue_err(&err, ErrorCode::FeeAccountOwnedByQueue);
+        assert_eq!(untouched(&ctx, &user, 1), before);
+        assert_eq!(ctx.token_account_amount(&fee_account), 0);
+    }
+
+    let fee_recipient = ctx.fee_recipient.pubkey();
+    ctx.set_fee_recipient_as(&admin, fee_recipient)
+        .expect("repoint");
+    let (_, net) = ctx.quote_redeem(half);
+    let before = ctx.token_account_amount(&ctx.user_deposit_ata);
+    ctx.finalize_withdrawal(1, 1).expect("finalize");
+    assert_eq!(
+        ctx.token_account_amount(&ctx.user_deposit_ata) - before,
+        net
+    );
+}
+
 // ---- the recipient ----
 
 /// Decision 5, at finalize. Classic SPL lets the owner reassign their ATA to

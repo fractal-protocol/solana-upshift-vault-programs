@@ -126,6 +126,7 @@ fn withdrawal_request_every_field_stays_at_its_byte_offset() {
     const SCHEDULED: i64 = 0x6666_6666_6666_6666;
     const ELIGIBLE: i64 = 0x7777_7777_7777_7777;
     const EXPIRES: i64 = 0x0888_8888_8888_8888;
+    const MIN_OUT: u64 = 0x2222_2222_2222_2222;
     const PAD: u64 = 0x9999_9999_9999_9999;
 
     let request = WithdrawalRequest {
@@ -141,7 +142,8 @@ fn withdrawal_request_every_field_stays_at_its_byte_offset() {
         eligible_at: ELIGIBLE,
         expires_at: EXPIRES,
         bump: 0xAA,
-        padding: [PAD; 9],
+        min_assets_out: MIN_OUT,
+        padding: [PAD; 8],
     };
     let mut bytes = Vec::new();
     request.try_serialize(&mut bytes).expect("serialize");
@@ -163,10 +165,11 @@ fn withdrawal_request_every_field_stays_at_its_byte_offset() {
         ("eligible_at", 176, ELIGIBLE.to_le_bytes().to_vec()),
         ("expires_at", 184, EXPIRES.to_le_bytes().to_vec()),
         ("bump", 192, vec![0xAA]),
+        ("min_assets_out", 193, MIN_OUT.to_le_bytes().to_vec()),
         (
             "padding",
-            193,
-            [PAD; 9].iter().flat_map(|w| w.to_le_bytes()).collect(),
+            201,
+            [PAD; 8].iter().flat_map(|w| w.to_le_bytes()).collect(),
         ),
     ];
     // sha256("account:WithdrawalRequest")[..8]
@@ -314,18 +317,31 @@ fn counters_move_together_and_refuse_to_wrap() {
 #[test]
 fn open_writes_every_field_and_the_schedule() {
     let mut request = WithdrawalRequest {
-        padding: [7; 9],
+        padding: [7; 8],
         ..Default::default()
     };
     request
-        .open(pk(1), pk(2), pk(3), pk(4), 500, 9, 3, 0x55, 1_000, 600, 60)
+        .open(
+            pk(1),
+            pk(2),
+            pk(3),
+            pk(4),
+            500,
+            400,
+            9,
+            3,
+            0x55,
+            1_000,
+            600,
+            60,
+        )
         .expect("open");
     assert_eq!((request.queue, request.owner), (pk(1), pk(2)));
     assert_eq!(
         (request.recipient_token_account, request.finalizer),
         (pk(3), pk(4))
     );
-    assert_eq!(request.shares, 500);
+    assert_eq!((request.shares, request.min_assets_out), (500, 400));
     assert_eq!(
         (request.request_id, request.sequence, request.bump),
         (9, 3, 0x55)
@@ -335,7 +351,7 @@ fn open_writes_every_field_and_the_schedule() {
         (1_000, 1_600)
     );
     assert_eq!((request.eligible_at, request.expires_at), (1_600, 1_660));
-    assert_eq!(request.padding, [0; 9]);
+    assert_eq!(request.padding, [0; 8]);
 }
 
 #[test]
