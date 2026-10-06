@@ -1393,7 +1393,13 @@ fn queue_op_strategy(include_yield_ops: bool, config_ops: bool) -> BoxedStrategy
     // Most requests pay their owner; the rest pay another depositor, which
     // the queue allows and which moves the payout away from the share holder.
     let pay_to = prop_oneof![3 => Just(None), 1 => (0..DEPOSITORS).prop_map(Some)];
-    let floor = prop_oneof![Just(None), (990u16..=1010).prop_map(Some)];
+    // An exact-quote floor gets its own weight: it is the boundary, and only
+    // pays when nothing moved the price before the finalize.
+    let floor = prop_oneof![
+        4 => Just(None),
+        1 => Just(Some(1000u16)),
+        3 => (990u16..=1010).prop_map(Some),
+    ];
     let queue = prop_oneof![
         3 => (0..DEPOSITORS, 0..REQUEST_ID_POOL, 0u16..=1000, any::<bool>(), pay_to, floor)
             .prop_map(|(who, id, pm, keeper_only, pay_to, floor)| QueueOp::Request {
@@ -1651,6 +1657,8 @@ struct WalkStats {
     /// Finalizes of requests with a floor, paid and refused by it.
     floor_paid: usize,
     floor_refused: usize,
+    /// Of `floor_paid`, those paying exactly the floor.
+    floor_exact: usize,
 }
 
 /// Compute units an instruction may use: the 200,000 a transaction gets per
@@ -1850,8 +1858,12 @@ impl QueueWalk {
                 } else {
                     Pubkey::default()
                 };
+                let net = self.ctx.quote_redeem(shares).1;
                 let min_assets_out = match floor {
-                    Some(floor_pm) => per_mille(self.ctx.quote_redeem(shares).1, floor_pm),
+                    // Rounded up above the quote, or a small quote would put
+                    // an "above" floor exactly on it.
+                    Some(floor_pm) if floor_pm > 1000 => per_mille(net, floor_pm).max(net + 1),
+                    Some(floor_pm) => per_mille(net, floor_pm),
                     None => 0,
                 };
                 let queue = self.ctx.queue_state_data();
@@ -1959,15 +1971,20 @@ impl QueueWalk {
                 let ok = result.is_ok();
                 // Only the floor stands in the way, so it must be what refused.
                 if payable && below_floor {
-                    let err = result.as_ref().expect_err("payout below the floor");
-                    assert_anchor_framework_err(
-                        err,
-                        QueueError::PayoutBelowFloor as u32 + ANCHOR_USER_ERROR_OFFSET,
-                    );
+                    prop_assert!(!ok, "finalize {:?} paid {} under its floor", pending, net);
+                    if let Err(err) = &result {
+                        assert_anchor_framework_err(
+                            err,
+                            QueueError::PayoutBelowFloor as u32 + ANCHOR_USER_ERROR_OFFSET,
+                        );
+                    }
                     self.stats.floor_refused += 1;
                 }
                 if ok && floored {
                     self.stats.floor_paid += 1;
+                    if net == pending.min_assets_out {
+                        self.stats.floor_exact += 1;
+                    }
                 }
                 prop_assert_eq!(
                     ok,
@@ -2522,6 +2539,13 @@ impl QueueWalk {
                 let id = (0..REQUEST_ID_POOL).find(|id| !self.live.contains_key(&(who, *id)))?;
                 let shares = ctx.token_account_amount(&user.share_ata) / 2;
                 let owner = user.keypair.pubkey();
+                // None, at the quote, or one above it, so the forged, relayed
+                // and bundled requests carry floors too.
+                let min_assets_out = match pick % 3 {
+                    0 => 0,
+                    1 => ctx.quote_redeem(shares).1,
+                    _ => ctx.quote_redeem(shares).1 + 1,
+                };
                 let ix = Instruction {
                     program_id: august_withdrawal_queue::ID,
                     accounts: ctx
@@ -2530,7 +2554,7 @@ impl QueueWalk {
                     data: august_withdrawal_queue::instruction::RequestWithdrawal {
                         request_id: id,
                         shares,
-                        min_assets_out: 0,
+                        min_assets_out,
                         finalizer: Pubkey::default(),
                     }
                     .data(),
@@ -2549,7 +2573,11 @@ impl QueueWalk {
                     .filter(|(_, p)| {
                         let expired = p.expires_at != 0 && now >= p.expires_at;
                         match target {
-                            Target::Finalize => now >= p.eligible_at && !expired,
+                            Target::Finalize => {
+                                now >= p.eligible_at
+                                    && !expired
+                                    && ctx.quote_redeem(p.shares).1 >= p.min_assets_out
+                            }
                             Target::Expedite => now < p.eligible_at && !expired,
                             _ => true,
                         }
@@ -3115,6 +3143,7 @@ fn run_queue_walk(
     let relay_forged_role = AtomicUsize::new(0);
     let floor_paid = AtomicUsize::new(0);
     let floor_refused = AtomicUsize::new(0);
+    let floor_exact = AtomicUsize::new(0);
     let mut runner = TestRunner::new(ProptestConfig {
         cases: queue_walk_cases(cases),
         source_file: Some(file!()),
@@ -3143,6 +3172,7 @@ fn run_queue_walk(
         relay_forged_role.fetch_add(stats.relay_forged_role, Ordering::Relaxed);
         floor_paid.fetch_add(stats.floor_paid, Ordering::Relaxed);
         floor_refused.fetch_add(stats.floor_refused, Ordering::Relaxed);
+        floor_exact.fetch_add(stats.floor_exact, Ordering::Relaxed);
         unwind(&mut walk)
     });
     if let Err(e) = result {
@@ -3159,6 +3189,7 @@ fn run_queue_walk(
         relay_forged_role: relay_forged_role.into_inner(),
         floor_paid: floor_paid.into_inner(),
         floor_refused: floor_refused.into_inner(),
+        floor_exact: floor_exact.into_inner(),
     }
 }
 
@@ -3362,12 +3393,16 @@ fn queue_walk_invariants_hold_over_ten_thousand_steps() {
     // Both sides of the floor, or a dropped check would still pass.
     assert!(stats.floor_paid > 0, "no floored request was paid");
     assert!(stats.floor_refused > 0, "no floor refused a payout");
+    assert!(
+        stats.floor_exact > 0,
+        "no payout landed exactly on its floor"
+    );
     println!("forgeries that tested something: {:?}", stats.forged);
     println!("garbled that tested something: {:?}", stats.garbled);
     println!("bundles that tested something: {}", stats.bundles);
     println!(
-        "floored finalizes: {} paid, {} refused by the floor",
-        stats.floor_paid, stats.floor_refused
+        "floored finalizes: {} paid ({} exactly at the floor), {} refused by the floor",
+        stats.floor_paid, stats.floor_exact, stats.floor_refused
     );
     println!(
         "relayed: {} ({} succeeded); relay PDA refused as signer: {} ({} in a role)",
