@@ -602,6 +602,29 @@ fn the_floor_is_inclusive() {
     assert_eq!(untouched(&ctx, &user, 1), before);
 }
 
+/// The floor is checked against the delta, so a donation sitting in the asset
+/// escrow cannot lift a short payout over it.
+#[test]
+fn a_donation_to_the_asset_escrow_does_not_count_toward_the_floor() {
+    let mut ctx = VaultCtx::fresh();
+    ctx.mint_to_user(DEPOSIT_AMOUNT);
+    ctx.deposit(DEPOSIT_AMOUNT).expect("deposit");
+    ctx.open_queue(0);
+    let half = ctx.token_account_amount(&ctx.user_share_ata) / 2;
+    let (_, net) = ctx.quote_redeem(half);
+    ctx.request_withdrawal_with_floor(1, half, net + 1)
+        .expect("request");
+    let escrow = ctx.queue_escrow(&ctx.deposit_mint);
+    ctx.mint_deposit_to(&escrow, 1_000_000);
+    let user = ctx.user.pubkey();
+    let before = untouched(&ctx, &user, 1);
+
+    let err = ctx.finalize_withdrawal(1, 1).expect_err("one unit short");
+    assert_queue_err(&err, ErrorCode::PayoutBelowFloor);
+    assert_eq!(untouched(&ctx, &user, 1), before);
+    assert_eq!(ctx.token_account_amount(&escrow), 1_000_000);
+}
+
 /// A fee raised after the request cannot take the payout below the owner's
 /// floor. The request survives and pays once the fee comes back down.
 #[test]
