@@ -62,8 +62,9 @@ pub struct WithdrawalRequest {
     /// Bump of this PDA, for `bump = request.bump` constraints. This account
     /// never signs.
     pub bump: u8,
+    pub min_assets_out: u64,
     /// Reserved. Carve new fields **out of** this array so `LEN` stays 265.
-    pub padding: [u64; 9],
+    pub padding: [u64; 8],
 }
 
 const _: () = assert!(
@@ -84,6 +85,7 @@ impl WithdrawalRequest {
         recipient_token_account: Pubkey,
         finalizer: Pubkey,
         shares: u64,
+        min_assets_out: u64,
         request_id: u64,
         sequence: u64,
         bump: u8,
@@ -96,10 +98,11 @@ impl WithdrawalRequest {
         self.recipient_token_account = recipient_token_account;
         self.finalizer = finalizer;
         self.shares = shares;
+        self.min_assets_out = min_assets_out;
         self.request_id = request_id;
         self.sequence = sequence;
         self.bump = bump;
-        self.padding = [0; 9];
+        self.padding = [0; 8];
         self.schedule(now, cooldown_seconds, window_seconds)
     }
 

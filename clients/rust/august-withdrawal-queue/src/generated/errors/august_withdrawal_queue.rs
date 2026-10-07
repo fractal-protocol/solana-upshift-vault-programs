@@ -69,6 +69,9 @@ pub enum AugustWithdrawalQueueError {
     /// 6018 - A sweep's destination may not be an account the queue or the vault owns
     #[error("A sweep's destination may not be an account the queue or the vault owns")]
     InvalidSweepDestination = 0x1782,
+    /// 6019 - The payout is below the request's min_assets_out
+    #[error("The payout is below the request's min_assets_out")]
+    PayoutBelowFloor = 0x1783,
 }
 
 impl From<AugustWithdrawalQueueError> for solana_program_error::ProgramError {

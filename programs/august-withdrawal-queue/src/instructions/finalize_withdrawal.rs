@@ -27,10 +27,11 @@ use august_vault::state::vault::VaultState;
 /// `NotEnoughLiquidity`) propagates as the vault's own code and rolls the
 /// transaction back, so the request stays pending and untouched.
 ///
-/// The payout is the shares' value at this moment, with no floor: there is no
-/// trade, so nothing can slip. It is the `escrow_assets` balance delta across
-/// the redeem rather than the amount the vault computed, so a donation sitting
-/// in the escrow is never paid out.
+/// The payout is the shares' value at this moment, measured as the
+/// `escrow_assets` balance delta across the redeem, so a donation sitting in the
+/// escrow is never paid out. The owner's `min_assets_out` floors that delta: an
+/// AUM mark-down or a fee rise after the request can push it below what they
+/// agreed to, and the floor binds whoever finalizes.
 pub fn handler(ctx: Context<FinalizeWithdrawal>, expected_sequence: u64) -> Result<()> {
     let request = &ctx.accounts.request;
     require!(
@@ -47,6 +48,7 @@ pub fn handler(ctx: Context<FinalizeWithdrawal>, expected_sequence: u64) -> Resu
     require_valid_recipient(&ctx.accounts.recipient_token_account, &ctx.accounts.queue)?;
 
     let shares = request.shares;
+    let min_assets_out = request.min_assets_out;
     let escrow_before = ctx.accounts.escrow_assets.amount;
 
     // Effects before interactions: the counters drop before any CPI.
@@ -80,6 +82,7 @@ pub fn handler(ctx: Context<FinalizeWithdrawal>, expected_sequence: u64) -> Resu
         .amount
         .checked_sub(escrow_before)
         .ok_or(ErrorCode::MathError)?;
+    require!(assets >= min_assets_out, ErrorCode::PayoutBelowFloor);
     transfer_checked(
         CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),

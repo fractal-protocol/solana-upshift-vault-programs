@@ -88,20 +88,28 @@ pub mod august_withdrawal_queue {
 
     /// A holder escrows `shares` and opens a request that becomes finalizable
     /// after the queue's cooldown, paying `recipient_token_account` the shares'
-    /// value at the moment of finalization. Requires the vault's gate to point
-    /// at this queue.
+    /// value at the moment of finalization, and at least `min_assets_out`.
+    /// Requires the vault's gate to point at this queue.
     ///
     /// ### Parameters
     /// - `request_id` - Owner-chosen id, unique per owner while the request exists
     /// - `shares` - Shares to escrow, nonzero
+    /// - `min_assets_out` - Floor on the net payout; zero for none
     /// - `finalizer` - Who may finalize besides the owner; zero for anyone
     pub fn request_withdrawal(
         ctx: Context<RequestWithdrawal>,
         request_id: u64,
         shares: u64,
+        min_assets_out: u64,
         finalizer: Pubkey,
     ) -> Result<()> {
-        return instructions::request_withdrawal::handler(ctx, request_id, shares, finalizer);
+        return instructions::request_withdrawal::handler(
+            ctx,
+            request_id,
+            shares,
+            min_assets_out,
+            finalizer,
+        );
     }
 
     /// Pays out a request whose cooldown has run and whose window is open: the
@@ -110,7 +118,8 @@ pub mod august_withdrawal_queue {
     /// request with its rent to the owner. Anyone the request's `finalizer`
     /// permits may call it, the owner always, and an expedite does not change
     /// who. The vault's `VaultPaused` and `NotEnoughLiquidity` propagate
-    /// unchanged and leave the request pending.
+    /// unchanged and leave the request pending, as does a payout below the
+    /// request's `min_assets_out`.
     ///
     /// ### Parameters
     /// - `expected_sequence` - The request's stamp, so a delayed call cannot land

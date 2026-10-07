@@ -1695,8 +1695,8 @@ impl VaultCtx {
         }
     }
 
-    /// Sends `request_withdrawal` with an explicit account set, signed and paid
-    /// by `owner`.
+    /// Sends `request_withdrawal` with an explicit account set and no floor,
+    /// signed and paid by `owner`.
     pub fn send_request_withdrawal(
         &mut self,
         owner: &Keypair,
@@ -1705,12 +1705,52 @@ impl VaultCtx {
         shares: u64,
         finalizer: Pubkey,
     ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        self.send_request_withdrawal_with_floor(owner, accounts, request_id, shares, 0, finalizer)
+    }
+
+    /// `request_withdrawal` as the user, like [`Self::request_withdrawal`], with
+    /// the given `min_assets_out`.
+    pub fn request_withdrawal_with_floor(
+        &mut self,
+        request_id: u64,
+        shares: u64,
+        min_assets_out: u64,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+        let user = self.user.insecure_clone();
+        let accounts = self.request_withdrawal_accounts(
+            &user.pubkey(),
+            self.user_share_ata,
+            self.user_deposit_ata,
+            request_id,
+        );
+        self.send_request_withdrawal_with_floor(
+            &user,
+            accounts,
+            request_id,
+            shares,
+            min_assets_out,
+            Pubkey::default(),
+        )
+    }
+
+    /// Sends `request_withdrawal` with an explicit account set and floor, signed
+    /// and paid by `owner`.
+    pub fn send_request_withdrawal_with_floor(
+        &mut self,
+        owner: &Keypair,
+        accounts: q_accounts::RequestWithdrawal,
+        request_id: u64,
+        shares: u64,
+        min_assets_out: u64,
+        finalizer: Pubkey,
+    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
         let ix = Instruction {
             program_id: august_withdrawal_queue::ID,
             accounts: accounts.to_account_metas(None),
             data: q_ix::RequestWithdrawal {
                 request_id,
                 shares,
+                min_assets_out,
                 finalizer,
             }
             .data(),
@@ -2079,7 +2119,8 @@ impl VaultCtx {
             eligible_at: now + 3600,
             expires_at: now + 30 * 24 * 3600,
             bump,
-            padding: [0; 9],
+            min_assets_out: 0,
+            padding: [0; 8],
         };
         let mut data = WithdrawalRequest::DISCRIMINATOR.to_vec();
         request.serialize(&mut data).expect("serialize request");

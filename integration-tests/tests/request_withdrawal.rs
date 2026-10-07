@@ -73,6 +73,7 @@ fn assert_full_request_event(
     assert_eq!(e.recipient_token_account, r.recipient_token_account);
     assert_eq!(e.finalizer, r.finalizer);
     assert_eq!((e.eligible_at, e.expires_at), (r.eligible_at, r.expires_at));
+    assert_eq!(e.min_assets_out, r.min_assets_out);
 }
 
 // ---- request_withdrawal ----
@@ -119,6 +120,7 @@ fn a_holder_escrows_shares_and_opens_a_request() {
     assert_eq!(r.scheduled_eligible_at, now + DAY as i64);
     assert_eq!(r.eligible_at, r.scheduled_eligible_at);
     assert_eq!(r.expires_at, 0, "no window configured, so never expires");
+    assert_eq!(r.min_assets_out, 0, "no floor asked for");
     let (_, bump) = Pubkey::find_program_address(
         &[
             WITHDRAWAL_REQUEST_SEED,
@@ -174,6 +176,23 @@ fn a_request_can_name_its_finalizer() {
         Some(ops)
     );
     assert_eq!(events_of::<WithdrawalRequested>(&meta)[0].finalizer, ops);
+}
+
+/// The owner's floor is stored and reported as given.
+#[test]
+fn a_request_can_set_a_floor() {
+    let (mut ctx, shares) = open_vault_with_holder(DAY);
+    let user = ctx.user.pubkey();
+
+    let meta = ctx
+        .request_withdrawal_with_floor(1, shares / 2, 12_345)
+        .expect("request with a floor");
+    assert_eq!(ctx.request_state_data(&user, 1).min_assets_out, 12_345);
+    assert_full_request_event(&meta, &ctx, &user, 1);
+    assert_eq!(
+        events_of::<WithdrawalRequested>(&meta)[0].min_assets_out,
+        12_345
+    );
 }
 
 /// The cooldown and window are stamped at request time; changing them later
