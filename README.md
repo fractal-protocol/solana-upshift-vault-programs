@@ -233,9 +233,7 @@ balance delta, forwarded to the request's recipient, at the shares' value at
 that moment; the request then closes with its rent to the owner. A delta below
 the request's `min_assets_out` reverts (`PayoutBelowFloor`, 6019), so an AUM
 mark-down or fee rise after the request cannot push the payout under the
-owner's floor. A fee account owned by the queue is refused
-(`FeeAccountOwnedByQueue`, 6020): the vault's `fee_recipient` must not be the
-queue PDA.
+owner's floor.
 
 `cancel_withdrawal(expected_sequence)` returns a pending request's shares to any
 share account whose authority is the owner and closes the request with its rent

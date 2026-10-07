@@ -72,9 +72,6 @@ pub enum AugustWithdrawalQueueError {
     /// 6019 - The payout is below the request's min_assets_out
     #[error("The payout is below the request's min_assets_out")]
     PayoutBelowFloor = 0x1783,
-    /// 6020 - The fee account is owned by the queue; point the vault's fee_recipient elsewhere
-    #[error("The fee account is owned by the queue; point the vault's fee_recipient elsewhere")]
-    FeeAccountOwnedByQueue = 0x1784,
 }
 
 impl From<AugustWithdrawalQueueError> for solana_program_error::ProgramError {

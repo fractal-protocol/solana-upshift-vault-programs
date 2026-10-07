@@ -60,8 +60,6 @@ pub enum ErrorCode {
     InvalidSweepDestination,
     #[msg("The payout is below the request's min_assets_out")]
     PayoutBelowFloor,
-    #[msg("The fee account is owned by the queue; point the vault's fee_recipient elsewhere")]
-    FeeAccountOwnedByQueue,
 }
 
 /// Compile-time pin of the ABI above, generated from one list so completeness
@@ -117,7 +115,6 @@ pin_error_abi! {
     NothingToSweep => 17,
     InvalidSweepDestination => 18,
     PayoutBelowFloor => 19,
-    FeeAccountOwnedByQueue => 20,
 }
 
 #[cfg(test)]

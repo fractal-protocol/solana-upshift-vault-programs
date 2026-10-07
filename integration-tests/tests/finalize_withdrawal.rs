@@ -643,51 +643,6 @@ fn a_mark_down_below_the_floor_is_refused_for_any_finalizer() {
     assert_eq!(untouched(&ctx, &user, 1), before);
 }
 
-// ---- the fee account ----
-
-/// With `fee_recipient` pointed at the queue PDA, the vault accepts any
-/// queue-owned deposit account as the fee account. The escrow would fold the
-/// fee into the payout; any other would strand it. Both are refused, and
-/// finalization resumes once the admin repoints `fee_recipient`.
-#[test]
-fn a_fee_account_owned_by_the_queue_is_refused() {
-    let (mut ctx, half) = mature_request();
-    ctx.set_withdrawal_fee(ONE_PERCENT).expect("fee");
-    let admin = ctx.admin.insecure_clone();
-    let (user, queue, mint) = (
-        ctx.user.pubkey(),
-        ctx.withdrawal_queue_pda(),
-        ctx.deposit_mint,
-    );
-    ctx.set_fee_recipient_as(&admin, queue)
-        .expect("admin points fee_recipient at the queue");
-    let escrow_assets = ctx.queue_escrow(&mint);
-    let other = ctx.create_token_account_for(&queue, &mint);
-
-    for fee_account in [escrow_assets, other] {
-        let mut accounts = ctx.finalize_withdrawal_accounts(&user, &user, 1);
-        accounts.fee_recipient_account = fee_account;
-        let before = untouched(&ctx, &user, 1);
-        let err = ctx
-            .send_finalize_withdrawal(&ctx.user.insecure_clone(), accounts, 1)
-            .expect_err("queue-owned fee account");
-        assert_queue_err(&err, ErrorCode::FeeAccountOwnedByQueue);
-        assert_eq!(untouched(&ctx, &user, 1), before);
-        assert_eq!(ctx.token_account_amount(&fee_account), 0);
-    }
-
-    let fee_recipient = ctx.fee_recipient.pubkey();
-    ctx.set_fee_recipient_as(&admin, fee_recipient)
-        .expect("repoint");
-    let (_, net) = ctx.quote_redeem(half);
-    let before = ctx.token_account_amount(&ctx.user_deposit_ata);
-    ctx.finalize_withdrawal(1, 1).expect("finalize");
-    assert_eq!(
-        ctx.token_account_amount(&ctx.user_deposit_ata) - before,
-        net
-    );
-}
-
 // ---- the recipient ----
 
 /// Decision 5, at finalize. Classic SPL lets the owner reassign their ATA to

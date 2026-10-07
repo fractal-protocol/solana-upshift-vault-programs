@@ -32,11 +32,6 @@ use august_vault::state::vault::VaultState;
 /// escrow is never paid out. The owner's `min_assets_out` floors that delta: an
 /// AUM mark-down or a fee rise after the request can push it below what they
 /// agreed to, and the floor binds whoever finalizes.
-///
-/// A fee account owned by the queue is refused. It could be `escrow_assets`
-/// itself, putting the fee in the delta and paying it to the recipient, or any
-/// other queue-owned account, where it would be stuck. Refusing fails every
-/// finalize until the admin repoints `fee_recipient`.
 pub fn handler(ctx: Context<FinalizeWithdrawal>, expected_sequence: u64) -> Result<()> {
     let request = &ctx.accounts.request;
     require!(
@@ -51,11 +46,6 @@ pub fn handler(ctx: Context<FinalizeWithdrawal>, expected_sequence: u64) -> Resu
     require!(request.is_eligible(now), ErrorCode::CooldownNotElapsed);
     require!(!request.is_expired(now), ErrorCode::RequestExpired);
     require_valid_recipient(&ctx.accounts.recipient_token_account, &ctx.accounts.queue)?;
-    require_keys_neq!(
-        ctx.accounts.fee_recipient_account.owner,
-        ctx.accounts.queue.key(),
-        ErrorCode::FeeAccountOwnedByQueue
-    );
 
     let shares = request.shares;
     let min_assets_out = request.min_assets_out;
@@ -123,8 +113,7 @@ pub fn handler(ctx: Context<FinalizeWithdrawal>, expected_sequence: u64) -> Resu
 /// The vault-side accounts the queue stores are bound to the stored keys here.
 /// The two it does not store, the vault's reserve and the fee account, are bound
 /// by the vault's own constraints inside the CPI: the reserve by its seeds, the
-/// fee account by `fee_recipient`'s authority. The handler also refuses a fee
-/// account the queue owns. Nothing is left to the caller.
+/// fee account by `fee_recipient`'s authority. Nothing is left to the caller.
 /// Everything the vault's `Redeem` declares writable, the share mint included, must
 /// arrive writable here; `deposit_mint` stays read-only on both sides.
 #[event_cpi]
