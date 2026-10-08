@@ -19,14 +19,14 @@ pub const WITHDRAWAL_QUEUE_SEED: &[u8] = b"withdrawal_queue";
 pub const MAX_COOLDOWN_SECONDS: u64 = 30 * 24 * 60 * 60;
 
 /// Lower bound on a nonzero `fulfillment_window_seconds`: one day. A shorter
-/// window expires requests before anyone can finalize them, and while the queue
-/// is attached that blocks every exit without pausing the vault.
+/// window can expire requests before a keeper finalizes them, and while the
+/// queue is attached that blocks every exit without pausing the vault.
 pub const MIN_FULFILLMENT_WINDOW_SECONDS: u64 = 24 * 60 * 60;
 
 /// Upper bound on `fulfillment_window_seconds`: 90 days.
 pub const MAX_FULFILLMENT_WINDOW_SECONDS: u64 = 90 * 24 * 60 * 60;
 
-// The design doc states both bounds as literals; pin the arithmetic to them.
+// The docs state the bounds as literals; pin the arithmetic to them.
 const _: () = assert!(MAX_COOLDOWN_SECONDS == 2_592_000);
 const _: () = assert!(MIN_FULFILLMENT_WINDOW_SECONDS == 86_400);
 const _: () = assert!(MAX_FULFILLMENT_WINDOW_SECONDS == 7_776_000);

@@ -475,8 +475,8 @@ finalize keeper must be running for it.
    vault and watch a keeper cycle. It checks the deposit and share mints against
    the queue's extension allow-list and runs once per vault.
 2. **Optional: `set_fulfillment_window(seconds)`.** A new queue starts at `0`
-   (requests never expire); at most 90 days. Both settings apply to new requests
-   only.
+   (requests never expire); otherwise 1 to 90 days. Both settings apply to new
+   requests only.
 3. **`attach_withdrawal_queue`** on the vault, signed by the admin. The queue is
    live at once. Steps 1 and 3 may share one transaction.
 

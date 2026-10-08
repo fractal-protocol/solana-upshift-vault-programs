@@ -349,8 +349,14 @@ fn set_fulfillment_window_is_bounded_with_zero_meaning_never() {
         MAX_FULFILLMENT_WINDOW_SECONDS,
         "a refused value leaves the old one"
     );
-    ctx.set_fulfillment_window(MIN_FULFILLMENT_WINDOW_SECONDS)
+    let meta = ctx
+        .set_fulfillment_window(MIN_FULFILLMENT_WINDOW_SECONDS)
         .expect("the minimum itself is allowed");
+    assert_eq!(
+        ctx.queue_state_data().fulfillment_window_seconds,
+        MIN_FULFILLMENT_WINDOW_SECONDS
+    );
+    assert_config_snapshot(&meta, &ctx);
 
     ctx.set_fulfillment_window(0).expect("zero disables expiry");
     assert_eq!(ctx.queue_state_data().fulfillment_window_seconds, 0);
