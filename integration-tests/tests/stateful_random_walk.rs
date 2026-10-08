@@ -1420,7 +1420,7 @@ fn queue_op_strategy(include_yield_ops: bool, config_ops: bool) -> BoxedStrategy
         1 => (0..DEPOSITORS, 0u16..=50).prop_map(|(who, pm)| QueueOp::Stray { who, pm }),
         1 => (0..DEPOSITORS).prop_map(|to| QueueOp::Sweep { to }),
         1 => (0u64..=DAY).prop_map(QueueOp::SetCooldown),
-        1 => prop_oneof![Just(0u64), 1u64..=3 * DAY].prop_map(QueueOp::SetWindow),
+        1 => prop_oneof![Just(0u64), DAY..=3 * DAY].prop_map(QueueOp::SetWindow),
         1 => Just(QueueOp::Release),
         1 => Just(QueueOp::Attach),
         // Heavier than any one op: it spreads over every target in `TARGETS`.
@@ -1659,6 +1659,8 @@ struct WalkStats {
     floor_refused: usize,
     /// Of `floor_paid`, those paying exactly the floor.
     floor_exact: usize,
+    /// Permitted finalizes refused because the request had expired.
+    expired_refused: usize,
 }
 
 /// Compute units an instruction may use: the 200,000 a transaction gets per
@@ -1979,6 +1981,16 @@ impl QueueWalk {
                         );
                     }
                     self.stats.floor_refused += 1;
+                }
+                // Expiry is checked before the vault is touched, so it is what refused.
+                if permitted && expired {
+                    if let Err(err) = &result {
+                        assert_anchor_framework_err(
+                            err,
+                            QueueError::RequestExpired as u32 + ANCHOR_USER_ERROR_OFFSET,
+                        );
+                    }
+                    self.stats.expired_refused += 1;
                 }
                 if ok && floored {
                     self.stats.floor_paid += 1;
@@ -3144,6 +3156,7 @@ fn run_queue_walk(
     let floor_paid = AtomicUsize::new(0);
     let floor_refused = AtomicUsize::new(0);
     let floor_exact = AtomicUsize::new(0);
+    let expired_refused = AtomicUsize::new(0);
     let mut runner = TestRunner::new(ProptestConfig {
         cases: queue_walk_cases(cases),
         source_file: Some(file!()),
@@ -3173,6 +3186,7 @@ fn run_queue_walk(
         floor_paid.fetch_add(stats.floor_paid, Ordering::Relaxed);
         floor_refused.fetch_add(stats.floor_refused, Ordering::Relaxed);
         floor_exact.fetch_add(stats.floor_exact, Ordering::Relaxed);
+        expired_refused.fetch_add(stats.expired_refused, Ordering::Relaxed);
         unwind(&mut walk)
     });
     if let Err(e) = result {
@@ -3190,6 +3204,7 @@ fn run_queue_walk(
         floor_paid: floor_paid.into_inner(),
         floor_refused: floor_refused.into_inner(),
         floor_exact: floor_exact.into_inner(),
+        expired_refused: expired_refused.into_inner(),
     }
 }
 
@@ -3394,6 +3409,10 @@ fn queue_walk_invariants_hold_over_ten_thousand_steps() {
     assert!(stats.floor_paid > 0, "no floored request was paid");
     assert!(stats.floor_refused > 0, "no floor refused a payout");
     assert!(
+        stats.expired_refused > 0,
+        "no finalize met an expired request"
+    );
+    assert!(
         stats.floor_exact > 0,
         "no payout landed exactly on its floor"
     );
@@ -3404,6 +3423,7 @@ fn queue_walk_invariants_hold_over_ten_thousand_steps() {
         "floored finalizes: {} paid ({} exactly at the floor), {} refused by the floor",
         stats.floor_paid, stats.floor_exact, stats.floor_refused
     );
+    println!("finalizes refused as expired: {}", stats.expired_refused);
     println!(
         "relayed: {} ({} succeeded); relay PDA refused as signer: {} ({} in a role)",
         stats.relayed, stats.relayed_ok, stats.relay_forged, stats.relay_forged_role
