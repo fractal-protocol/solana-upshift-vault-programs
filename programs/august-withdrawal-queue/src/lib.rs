@@ -81,7 +81,7 @@ pub mod august_withdrawal_queue {
     }
 
     /// Admin sets how long after scheduled eligibility a new request may still
-    /// be finalized: zero disables expiry, otherwise at most 90 days.
+    /// be finalized: zero disables expiry, otherwise 1 to 90 days.
     pub fn set_fulfillment_window(ctx: Context<QueueAdmin>, seconds: u64) -> Result<()> {
         return instructions::set_fulfillment_window::handler(ctx, seconds);
     }

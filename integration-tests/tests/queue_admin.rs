@@ -18,7 +18,8 @@ use august_vault::state::vault::VAULT_STATE_SEED;
 use august_withdrawal_queue::errors::{ErrorCode, ANCHOR_USER_ERROR_OFFSET};
 use august_withdrawal_queue::events::{QueueConfigUpdated, QueueInitialized};
 use august_withdrawal_queue::state::{
-    WithdrawalQueue, MAX_COOLDOWN_SECONDS, MAX_FULFILLMENT_WINDOW_SECONDS, WITHDRAWAL_QUEUE_SEED,
+    WithdrawalQueue, MAX_COOLDOWN_SECONDS, MAX_FULFILLMENT_WINDOW_SECONDS,
+    MIN_FULFILLMENT_WINDOW_SECONDS, WITHDRAWAL_QUEUE_SEED,
 };
 use integration_tests::harness::{
     assert_anchor_framework_err, events_of, MintExtension, VaultCtx, VAULT_VERSION,
@@ -334,6 +335,22 @@ fn set_fulfillment_window_is_bounded_with_zero_meaning_never() {
         .expect_err("one over the bound");
     assert_queue_err(&err, ErrorCode::FulfillmentWindowOutOfBounds);
     assert_anchor_framework_err(&err, 6004);
+
+    let err = ctx
+        .set_fulfillment_window(MIN_FULFILLMENT_WINDOW_SECONDS - 1)
+        .expect_err("one under the minimum");
+    assert_queue_err(&err, ErrorCode::FulfillmentWindowOutOfBounds);
+    let err = ctx
+        .set_fulfillment_window(1)
+        .expect_err("a one-second window");
+    assert_queue_err(&err, ErrorCode::FulfillmentWindowOutOfBounds);
+    assert_eq!(
+        ctx.queue_state_data().fulfillment_window_seconds,
+        MAX_FULFILLMENT_WINDOW_SECONDS,
+        "a refused value leaves the old one"
+    );
+    ctx.set_fulfillment_window(MIN_FULFILLMENT_WINDOW_SECONDS)
+        .expect("the minimum itself is allowed");
 
     ctx.set_fulfillment_window(0).expect("zero disables expiry");
     assert_eq!(ctx.queue_state_data().fulfillment_window_seconds, 0);

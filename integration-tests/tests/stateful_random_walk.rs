@@ -1420,7 +1420,7 @@ fn queue_op_strategy(include_yield_ops: bool, config_ops: bool) -> BoxedStrategy
         1 => (0..DEPOSITORS, 0u16..=50).prop_map(|(who, pm)| QueueOp::Stray { who, pm }),
         1 => (0..DEPOSITORS).prop_map(|to| QueueOp::Sweep { to }),
         1 => (0u64..=DAY).prop_map(QueueOp::SetCooldown),
-        1 => prop_oneof![Just(0u64), 1u64..=3 * DAY].prop_map(QueueOp::SetWindow),
+        1 => prop_oneof![Just(0u64), DAY..=3 * DAY].prop_map(QueueOp::SetWindow),
         1 => Just(QueueOp::Release),
         1 => Just(QueueOp::Attach),
         // Heavier than any one op: it spreads over every target in `TARGETS`.

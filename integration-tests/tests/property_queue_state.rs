@@ -17,6 +17,7 @@ use anchor_lang::prelude::*;
 use august_withdrawal_queue::errors::{ErrorCode, ANCHOR_USER_ERROR_OFFSET};
 use august_withdrawal_queue::state::{
     WithdrawalQueue, WithdrawalRequest, MAX_COOLDOWN_SECONDS, MAX_FULFILLMENT_WINDOW_SECONDS,
+    MIN_FULFILLMENT_WINDOW_SECONDS,
 };
 use proptest::prelude::*;
 
@@ -125,21 +126,28 @@ proptest! {
         }
     }
 
-    /// Same for the fulfillment window, where zero (no window) is in range.
+    /// Same for the fulfillment window, where zero (no window) is in range and
+    /// anything else must lie between the two bounds.
     #[test]
     fn set_fulfillment_window_accepts_exactly_the_bounded_range(
-        seconds in around(MAX_FULFILLMENT_WINDOW_SECONDS)
+        seconds in prop_oneof![
+            Just(0u64),
+            around(MIN_FULFILLMENT_WINDOW_SECONDS),
+            around(MAX_FULFILLMENT_WINDOW_SECONDS),
+        ]
     ) {
         let mut queue = queue_with(3, 2, 100);
         let before = counters(&queue);
+        let in_range = seconds == 0
+            || (MIN_FULFILLMENT_WINDOW_SECONDS..=MAX_FULFILLMENT_WINDOW_SECONDS).contains(&seconds);
         match queue.set_fulfillment_window(seconds) {
             Ok(()) => {
-                prop_assert!(seconds <= MAX_FULFILLMENT_WINDOW_SECONDS);
+                prop_assert!(in_range);
                 prop_assert_eq!(queue.fulfillment_window_seconds, seconds);
                 prop_assert_eq!(queue.cooldown_seconds, before.3);
             }
             Err(e) => {
-                prop_assert!(seconds > MAX_FULFILLMENT_WINDOW_SECONDS);
+                prop_assert!(!in_range);
                 prop_assert_eq!(code_of(e), expected(ErrorCode::FulfillmentWindowOutOfBounds));
                 prop_assert_eq!(counters(&queue), before);
             }
