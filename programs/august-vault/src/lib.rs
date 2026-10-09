@@ -187,7 +187,7 @@ pub mod august_vault {
     /// Get tokens out, to the named registered subaccount's ATA once the vault
     /// has any, else the operator's own; the account must already exist. The
     /// subaccount's delegation must cover its outstanding principal plus
-    /// `amount`, else `SubaccountDelegationMissing` (6023). A wrong-party ATA
+    /// `amount`, else `SubaccountDelegationMissing` (6027). A wrong-party ATA
     /// fails `ConstraintTokenOwner` (2015); a non-derived token account, 2009.
     ///
     /// ### Parameters
@@ -200,7 +200,7 @@ pub mod august_vault {
     /// Get tokens in, from the named registered subaccount's ATA once the vault
     /// has any, else the operator's own. From a subaccount the vault PDA — not
     /// the operator — signs against the granted delegation; a missing or short
-    /// allowance fails `SubaccountDelegationMissing` (6023).
+    /// allowance fails `SubaccountDelegationMissing` (6027).
     ///
     /// ### Parameters
     /// - `amount` - The amount of tokens to get in the Vault
@@ -226,7 +226,7 @@ pub mod august_vault {
     /// (`approve(subaccount_ata, vault_state, n)`) — the only on-chain proof it
     /// can return funds. `n` also caps deployments to that destination, is spent
     /// down by returns, and SPL clears it at zero, so it needs re-granting per
-    /// cycle; short or lapsed fails `SubaccountDelegationMissing` (6023). The
+    /// cycle; short or lapsed fails `SubaccountDelegationMissing` (6027). The
     /// first registration adopts the vault's outstanding principal and must
     /// cover it.
     ///
