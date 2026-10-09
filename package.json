@@ -15,7 +15,8 @@
     "meta": "node deploy/helpers/metadata.mjs",
     "meta:devnet": "node deploy/helpers/metadata.mjs --network devnet",
     "meta:mainnet": "node deploy/helpers/metadata.mjs --network mainnet",
-    "init:devnet-vault": "node scripts/init-devnet-vault.mjs"
+    "init:devnet-vault": "node scripts/init-devnet-vault.mjs",
+    "walk:devnet": "node scripts/walk-devnet-queue.mjs"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",
