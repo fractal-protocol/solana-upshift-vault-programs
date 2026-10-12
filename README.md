@@ -338,7 +338,7 @@ can inflate with a donation. `VaultState.deployed_principal` carries the total f
 monitoring only — nothing on-chain trusts it. Size the grant to the cycle you
 intend to deploy: returns spend it down and SPL clears the delegation once it
 reaches zero, so it must be re-granted per cycle, and a lapsed or short one fails
-with `SubaccountDelegationMissing` (6023). The program's check covers the
+with `SubaccountDelegationMissing` (6027). The program's check covers the
 delegation only — a short *balance* or a frozen source ATA still surface as the
 token program's own errors.
 
@@ -348,7 +348,7 @@ from (owner, mint), and an SPL token account has a single delegate slot that
 subaccount address. Give custody a distinct address per vault. Naming an address
 already delegated to another vault is refused at config time, but the reverse
 order is not preventable from here: if custody later approves for a second vault,
-the first vault's next transfer fails with `SubaccountDelegationMissing` (6023),
+the first vault's next transfer fails with `SubaccountDelegationMissing` (6027),
 which is the non-obvious cause of that error. No two live vaults share a deposit
 mint today.
 
