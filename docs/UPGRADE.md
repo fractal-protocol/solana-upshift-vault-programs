@@ -2,8 +2,9 @@
 
 How to ship a release of this repository's two programs: build and attest both,
 upgrade `august_vault`, deploy `august_withdrawal_queue` for the first time,
-register both as **verified** (OtterSec → explorers), and turn the queue on per
-vault.
+and register both as **verified** (OtterSec → explorers). Existing vaults keep
+direct redemption: no queue is attached to them. Only selected new vaults get
+a queue (Step 6). That is policy, not an on-chain rule: see Step 6 for the check.
 
 The release this runbook targets moves the vault from `v0.1.1` (`cb1352a5…`, live
 since 6 Aug 2026) to a build that adds the withdrawal-queue gate and operator
@@ -13,8 +14,9 @@ ceremony is recorded under [Previous releases](#previous-releases).
 > **This changes live mainnet bytecode over real user funds.** Do not deviate
 > from this runbook. **Three** transactions must be signed by the **Fordefi MPC
 > upgrade authority**: the vault `Upgrade` (Step 4) and one verify-PDA upload per
-> program (Step 5). Book three approval ceremonies, plus one per vault in Step 6
-> if the vault admin is a Fordefi key too. Everything else is unprivileged prep.
+> program (Step 5). Book three approval ceremonies for the release; everything
+> else in Steps 0 to 5 is unprivileged prep. Step 6 is separate: each selected
+> new vault needs its own ceremony, signed by that vault's `admin`.
 > Verification is **point-in-time** (both programs stay upgradeable).
 
 ## Key facts
@@ -24,7 +26,7 @@ ceremony is recorded under [Previous releases](#previous-releases).
 | Program ID (mainnet and devnet) | `up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt` | `upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW` |
 | Mainnet upgrade authority | `B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM` (Fordefi MPC) | same, after Step 3's handoff |
 | Devnet upgrade authority | `APuzErEVGAbvhyj2hbmo6vp7pacNHRVXbu43UhcAne2i` (team-held keypair) | same |
-| Deployed now (9 Oct 2026) | mainnet `cb1352a5…`, `Data Length` 605,160 B; devnet `v0.3.0` `f258ab09…`, 687,352 B | mainnet not deployed; devnet `v0.3.0` `72351d59…`, 489,384 B |
+| Deployed now (14 Oct 2026) | mainnet and devnet `v0.3.0` `f258ab09…`; mainnet `Data Length` 681,832 B, devnet 687,352 B | mainnet and devnet `v0.3.0` `72351d59…`; mainnet `Data Length` 480,128 B, devnet 489,384 B |
 | Library name | `august_vault` | `august_withdrawal_queue` |
 
 - **Expected hashes:** the `exec_sha256` / `raw_sha256` / `size` rows in
@@ -259,7 +261,9 @@ fresh test vault and refuses any cluster but devnet: request,
 a finalize refused before eligibility (`CooldownNotElapsed`, 6012), expedite,
 finalize by a key other than the owner, a second request cancelled,
 `release_vault`, a direct redeem that works again, and re-attach. Only proceed
-to mainnet once the rehearsal is clean.
+to mainnet once the rehearsal is clean. The walk still gates the mainnet upgrade
+even though no existing vault gets a queue: it is the only end-to-end exercise
+of the vault's queue gate before that code goes live.
 
 **Rehearsed 28 Sep 2026** with the artifacts pinned at PR #34: every step above
 passed as written. Devnet `up12…` then ran `2f8dc1ac…` and `upQhC7…` ran
@@ -418,6 +422,19 @@ If you paused, **unpause first** (`deposit` and `redeem` are pause-gated), then
 smoke-test one vault with a tiny deposit and redeem. No vault is gated yet, so
 both must behave exactly as before.
 
+**Downstream, in lockstep with this step:**
+
+1. Bump the `solana-upshift-vault-programs` submodule in the private
+   `solana-vaults` repo and re-run `scripts/sync-idl.sh`, so `frontend/idl/`
+   carries both IDLs. List the upgraded program in the admin app's
+   `PROGRAMS_ON_PIN` only now: it moves the app's transactions to the new IDL,
+   which the old binary rejects.
+2. Rebuild Rust consumers of `clients/rust/august-vault` and
+   `clients/rust/august-withdrawal-queue`.
+3. Operator tooling: `operator_withdraw` and `operator_deposit` gain an optional
+   subaccount account. It must be passed exactly when the vault has registered
+   subaccounts, so nothing changes until the first `register_subaccount`.
+
 ---
 
 ## Step 5 — Register on-chain verification for both programs (Fordefi-signed)
@@ -469,16 +486,36 @@ Explorer, SolanaFM and Solscan, and update the status table in
 
 ---
 
-## Step 6 — Turn the queue on, one vault at a time
+## Step 6 — Attach a queue to a selected new vault
 
-Nothing changes for a vault until its admin attaches a queue. Every instruction
-here is signed by the vault's **`admin`** (read it from the `VaultState`); if
-that key is a Fordefi wallet, each is a Fordefi ceremony, with a durable nonce.
+**Not part of the upgrade ceremony.** A vault redeems directly until its admin
+attaches a queue, and only new vaults selected for one get it. Existing vaults
+keep direct `redeem` and `redeem_checked`; for their users, deposit and redeem
+behave as before the upgrade (see [Why this is safe](#why-this-is-safe-for-the-live-vaults)
+for what did change).
+
+**Nothing on-chain enforces that selection.** `attach_withdrawal_queue` accepts
+any vault whose admin signs, and once it runs every holder's direct redeem fails
+with 6021. Before attaching, check that the target is the new vault approved for
+a queue, and that it is not one of the vaults live before `v0.3.0`:
+
+| Vault (`VaultState`) | Deposit mint |
+| --- | --- |
+| `HegTiqVxUvnh3fD9ZA2v7PF3XnoqHgz4ytJRZKdLJ5ra` | USDC |
+| `xxE8UeBpsKQN6njaUkCJfYH1W2QyQus7NAfVMXpcmbF` | USDC (vault version 1) |
+| `2tmMcVv2Ene7wFGebPivhwYhAZyjaJoibMz1GYVaXsB1` | jitoSOL |
+| `EhuUbTe3RcowbE9zp5TeaUpMjX5pEYWj6yEtQ2tAQKH7` | test mint (off par) |
+
+Every instruction here is signed by the vault's **`admin`** (read it from the
+`VaultState`); if that key is a Fordefi wallet, each is a Fordefi ceremony, with
+a durable nonce.
 
 **Lockstep first.** Once a vault is attached, a holder's direct `redeem` fails
 with `WithdrawalQueueRequired` (6021). Before attaching, the frontend and SDK
 must route that vault's redemptions through `request_withdrawal`, and the
-finalize keeper must be running for it.
+finalize keeper must be running for it. Route per vault by reading
+`withdrawal_queue_authority` from its `VaultState` (non-default means queued), as
+the SDK's `vaultRedeem` does; never from a hardcoded list.
 
 1. **`initialize_queue(cooldown_seconds)`**, signed by the admin plus a payer
    for rent. Creates the queue PDA `["withdrawal_queue", vault_state]` and its
@@ -505,23 +542,18 @@ cancelled. Release only when the vault's liquidity comfortably covers what is
 still pending: nothing on-chain checks it. `attach_withdrawal_queue` re-enables
 the same queue with its state intact.
 
-**Downstream in lockstep with Step 4**, whether or not any vault is attached yet:
-
-1. Bump the `solana-upshift-vault-programs` submodule in the private
-   `solana-vaults` repo and re-run `scripts/sync-idl.sh`, so `frontend/idl/`
-   carries both IDLs.
-2. Rebuild Rust consumers of `clients/rust/august-vault` and
-   `clients/rust/august-withdrawal-queue`.
-3. Operator tooling: `operator_withdraw` and `operator_deposit` gain an optional
-   subaccount account. It must be passed exactly when the vault has registered
-   subaccounts, so nothing changes until the first `register_subaccount`.
-
 ---
 
 ## Rollback
 
 Both programs stay upgradeable, so a bad upgrade is recoverable by another
 Fordefi-signed upgrade.
+
+**Find the attached vaults first.** As of 14 Oct 2026 none is attached. To list
+them, read every `VaultState` the vault program owns (`getProgramAccounts` on
+`up12…`, filtered by the `VaultState` discriminator) and keep those whose
+`withdrawal_queue_authority` is not the default key. Run this rather than trusting
+a list: Step 6 can attach a vault at any time.
 
 - **Queue misbehaves:** `release_vault` on every attached vault first. That
   restores direct redemption without touching either binary. Then roll the queue
@@ -550,7 +582,9 @@ Pause user operations while rolling back or forward.
   carved from `padding`, which is zero on the live accounts. So they read "no
   queue", "no subaccounts" and zero principal with no migration.
   `integration-tests/tests/mainnet_fork_compat.rs` runs the new code against the
-  real on-chain vault accounts.
+  real on-chain vault accounts. Its frozen fixtures predate the second USDC vault
+  (`xxE8UeBp…`); the 14 Oct 2026 pre-flight ran the same checks on fresh dumps of
+  all four live vaults, that one included.
 - **User flows are unchanged until an admin acts.** `deposit` and `redeem` behave
   as in `v0.1.1` for an unattached vault, and `operator_withdraw` pays the
   operator's own ATA while no subaccount is registered.
@@ -569,6 +603,33 @@ Pause user operations while rolling back or forward.
 ---
 
 ## Previous releases
+
+**`v0.3.0` (deployed 14 Oct 2026)** moved `up12…` from `cb1352a5…` (605,160 B) to
+`f258ab095f0235e75186dfb1c5cc2d4aaeaa71b4d326549dbdb85fc7da17df31` (681,832 B) and
+brought the queue up at `upQhC7…` with
+`72351d599f81769a98a1facb65f5af852d3aa08018cef8ad3d871a150e41ff01` (480,128 B).
+No vault was attached to a queue.
+
+- Step 3: queue deployed by the ops payer in tx
+  `3Lq4tZuWgmJJC34SWytDzrDDxQ1FsoLbGYzW4nHhC1ZHNmiiSnTkPFDtxd2icW9b12ULeDJorjZP1Q4uZxSFpuYX`
+  (slot 456,903,024); upgrade authority handed to `B75DMr…` in tx
+  `2LeZdbvdvr7DkvsdSVRoZ8eJDjxzrETQ9iaSfnPGkfdeB1vbnR6qvfbD4VQQnEaAvwde687LQgTPGS9FnxBiS4Ce`.
+- Step 4: ProgramData extended 605,160 → 681,832 B by the ops payer alone (tx
+  `5g7rKSV9kJuaLmetwGfjrTnjRjBxa8uBA2Gbu4P2GKqcp5G7budqdMAddkHKSndcLcMLysG33ZufAHKz5zgUqeU`).
+  The extend cost only the fee: ProgramData's existing balance already covered
+  the larger size at the current rent rate. Fordefi `Upgrade` in tx
+  `4LGWLSZdXFC4ttumByoMzYieHfgPC6KUPmq3sU78qPXjaDYqT1Y2e95zeKcwsbr8WB1NdUexjNaZzXdrfZj4w3J3`
+  (slot 456,925,461), from the admin UI's Verified Upgrade panel; it refunded the
+  buffer and ProgramData's excess rent to the spill account.
+- Step 5: vault verify PDA `AUHMtzx…` updated in tx
+  `4BJTv56hUpxcbzCzXq3xr7uA67XHBcDn63Zkj6hggrczNbkFkqARbP9Y1Bd8N8kMne3cXyJRK11FjpHiMcfcjGWT`;
+  OtterSec job `33cba8a5-a630-4920-a083-d672f76a7ad7` verified `f258ab09…` at the
+  tag's own commit `87c0f2d`. The queue's verify PDA is pending.
+- Two RPC reads returned state from before the last write (the buffer hash right
+  after `write-buffer`, its authority right after `set-buffer-authority`). Read
+  back at `finalized` and retry before treating a mismatch as real.
+- Smoke test: `deposit_checked` and direct `redeem_checked`, built as the
+  published SDK builds them, simulated as real holders of all four live vaults.
 
 **`v0.1.1` (deployed 6 Aug 2026)** moved `up12…` from `fca11d73…` (505,216 B) to
 `cb1352a5dc4ab9513c10c1083534837bb4c666ed8ad9c3919f02f752bff52df9` (605,160 B):

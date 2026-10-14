@@ -77,27 +77,21 @@ solana-verify get-program-hash -u https://api.mainnet-beta.solana.com \
 
 ## Current on-chain status
 
-Mainnet, checked 27 Sep 2026:
+Mainnet, checked 14 Oct 2026:
 
-| Program | Mainnet | Executable hash | Release |
-|---|---|---|---|
-| `august_vault` | `up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt` | `cb1352a5dc4ab9513c10c1083534837bb4c666ed8ad9c3919f02f752bff52df9` (605,160 B) | [`v0.1.1`](https://github.com/fractal-protocol/solana-upshift-vault-programs/releases/tag/v0.1.1), deployed 6 Aug 2026 |
-| `august_withdrawal_queue` | `upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW` | not deployed | — |
+| Program | Mainnet | Executable hash | Release | OtterSec |
+|---|---|---|---|---|
+| `august_vault` | `up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt` | `f258ab095f0235e75186dfb1c5cc2d4aaeaa71b4d326549dbdb85fc7da17df31` (681,832 B) | [`v0.3.0`](https://github.com/fractal-protocol/solana-upshift-vault-programs/releases/tag/v0.3.0), deployed 14 Oct 2026 | [verified](https://verify.osec.io/status/up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt) at `87c0f2d` |
+| `august_withdrawal_queue` | `upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW` | `72351d599f81769a98a1facb65f5af852d3aa08018cef8ad3d871a150e41ff01` (480,128 B) | [`v0.3.0`](https://github.com/fractal-protocol/solana-upshift-vault-programs/releases/tag/v0.3.0), deployed 14 Oct 2026 | pending (verify PDA not yet recorded) |
 
-The vault's hash is OtterSec-verified
-([status](https://verify.osec.io/status/up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt)).
-
-Devnet carries the release rehearsal (28 Sep 2026): `up12…` runs `2f8dc1ac…`
-and `upQhC7…` runs `5e7ea878…`, both matching `verified-hashes.txt` at the time.
+Devnet runs the same `v0.3.0` artifacts for both programs (9 Oct 2026).
 
 **`verified-hashes.txt` describes this source tree, not the deployed programs.**
 The `reproducible-build` CI job rebuilds from source and asserts every row, so an
-older record cannot live there. The rows now carry the vault with the withdrawal
-queue gate and operator subaccounts, and the queue program itself; neither is on
-chain until the [release runbook](docs/UPGRADE.md) runs. Until then, check the
-deployed vault against the table above, and this tree against
-`verified-hashes.txt`. After each deployment, update the table so the two agree
-again.
+older record cannot live there. Both programs on mainnet match it as of `v0.3.0`.
+When the tree moves ahead of a release, check the deployed programs against the
+table above, and this tree against `verified-hashes.txt`. After each deployment,
+update the table so the two agree again.
 
 ## On-chain verification
 
