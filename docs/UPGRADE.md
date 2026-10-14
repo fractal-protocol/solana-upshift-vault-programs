@@ -11,12 +11,22 @@ since 6 Aug 2026) to a build that adds the withdrawal-queue gate and operator
 subaccounts, and brings the queue program up at its fixed id. The `v0.1.1`
 ceremony is recorded under [Previous releases](#previous-releases).
 
+> **Executed for `v0.3.0` on 14 Oct 2026** (record under
+> [Previous releases](#previous-releases)). The `v0.1.1` hashes and sizes below
+> are that release's inputs. For the next release, take every baseline from the
+> live chain instead: the predecessor hash (`f258ab09…` for the vault, `72351d59…`
+> for the queue, as of `v0.3.0`), the extend size, and the rollback target. Step 3
+> does not repeat: the queue exists, so a queue release is an upgrade like Step 4.
+
 > **This changes live mainnet bytecode over real user funds.** Do not deviate
 > from this runbook. **Three** transactions must be signed by the **Fordefi MPC
 > upgrade authority**: the vault `Upgrade` (Step 4) and one verify-PDA upload per
 > program (Step 5). Book three approval ceremonies for the release; everything
-> else in Steps 0 to 5 is unprivileged prep. Step 6 is separate: each selected
-> new vault needs its own ceremony, signed by that vault's `admin`.
+> else in Steps 0 to 5 is unprivileged prep. Step 6 is separate and signed by
+> each selected vault's `admin`: one Fordefi ceremony per transaction when that
+> admin is a Fordefi key (at least one per vault, since `initialize_queue` and
+> `attach_withdrawal_queue` can share a transaction; `set_fulfillment_window` is
+> another), none when it is not.
 > Verification is **point-in-time** (both programs stay upgradeable).
 
 ## Key facts
@@ -497,7 +507,9 @@ for what did change).
 **Nothing on-chain enforces that selection.** `attach_withdrawal_queue` accepts
 any vault whose admin signs, and once it runs every holder's direct redeem fails
 with 6021. Before attaching, check that the target is the new vault approved for
-a queue, and that it is not one of the vaults live before `v0.3.0`:
+a queue, and that it is not one of the vaults live before `v0.3.0` (the scan
+under [Rollback](#rollback) lists every vault; any not below was created after
+the release):
 
 | Vault (`VaultState`) | Deposit mint |
 | --- | --- |
@@ -505,6 +517,10 @@ a queue, and that it is not one of the vaults live before `v0.3.0`:
 | `xxE8UeBpsKQN6njaUkCJfYH1W2QyQus7NAfVMXpcmbF` | USDC (vault version 1) |
 | `2tmMcVv2Ene7wFGebPivhwYhAZyjaJoibMz1GYVaXsB1` | jitoSOL |
 | `EhuUbTe3RcowbE9zp5TeaUpMjX5pEYWj6yEtQ2tAQKH7` | test mint (off par) |
+
+`7vQpPzqx7EvP6LsrMHBmkbCusvk6H2H3HBuVHuSTC9xU` is also owned by the program but
+is 454 bytes, one short of `VaultState::LEN`, so every instruction on it fails,
+attach included. It is a written-off test vault, not a fifth live one.
 
 Every instruction here is signed by the vault's **`admin`** (read it from the
 `VaultState`); if that key is a Fordefi wallet, each is a Fordefi ceremony, with
@@ -514,8 +530,10 @@ a durable nonce.
 with `WithdrawalQueueRequired` (6021). Before attaching, the frontend and SDK
 must route that vault's redemptions through `request_withdrawal`, and the
 finalize keeper must be running for it. Route per vault by reading
-`withdrawal_queue_authority` from its `VaultState` (non-default means queued), as
-the SDK's `vaultRedeem` does; never from a hardcoded list.
+`withdrawal_queue_authority` from its `VaultState` (non-default means queued);
+never from a hardcoded list. The SDK does not route for you: `vaultRedeem`
+refuses a queued vault before signing (`INVALID_INPUT`), so the caller chooses
+`vaultRequestRedeem` there, and `vaultRedeem` with `options.request` to claim.
 
 1. **`initialize_queue(cooldown_seconds)`**, signed by the admin plus a payer
    for rent. Creates the queue PDA `["withdrawal_queue", vault_state]` and its
@@ -549,11 +567,21 @@ the same queue with its state intact.
 Both programs stay upgradeable, so a bad upgrade is recoverable by another
 Fordefi-signed upgrade.
 
-**Find the attached vaults first.** As of 14 Oct 2026 none is attached. To list
-them, read every `VaultState` the vault program owns (`getProgramAccounts` on
-`up12…`, filtered by the `VaultState` discriminator) and keep those whose
-`withdrawal_queue_authority` is not the default key. Run this rather than trusting
-a list: Step 6 can attach a vault at any time.
+**Find the attached vaults first.** As of 14 Oct 2026 none is attached. Run this
+rather than trusting a list, since Step 6 can attach a vault at any time. It reads
+`withdrawal_queue_authority` (byte 207) straight from every 455-byte account with
+the `VaultState` discriminator:
+
+```bash
+curl -s "$URL" -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,
+  "method":"getProgramAccounts","params":["up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt",
+  {"encoding":"base64","dataSlice":{"offset":207,"length":32},"filters":[
+    {"dataSize":455},{"memcmp":{"offset":0,"bytes":"fGKsWeCxBaF"}}]}]}'
+# One entry per VaultState. A non-zero 32-byte slice is the attached queue.
+```
+
+Do not use Anchor's `vaultState.all()` for this: the 454-byte `7vQpPzqx…` (see
+Step 6) fails to decode, and the call rejects before listing anything.
 
 - **Queue misbehaves:** `release_vault` on every attached vault first. That
   restores direct redemption without touching either binary. Then roll the queue
@@ -628,8 +656,12 @@ No vault was attached to a queue.
 - Two RPC reads returned state from before the last write (the buffer hash right
   after `write-buffer`, its authority right after `set-buffer-authority`). Read
   back at `finalized` and retry before treating a mismatch as real.
-- Smoke test: `deposit_checked` and direct `redeem_checked`, built as the
-  published SDK builds them, simulated as real holders of all four live vaults.
+- Smoke test, **deviating from Step 4**: `deposit_checked` and direct
+  `redeem_checked`, built as the published SDK builds them, were *simulated* as
+  real holders of all four live vaults, not sent. Each succeeded, with redeems
+  sized within on-hand liquidity (`local_aum`, tiny on every vault; a larger
+  redeem fails `NotEnoughLiquidity`, 6013, as in `v0.1.1`). A live tiny deposit
+  and redeem is still open.
 
 **`v0.1.1` (deployed 6 Aug 2026)** moved `up12…` from `fca11d73…` (505,216 B) to
 `cb1352a5dc4ab9513c10c1083534837bb4c666ed8ad9c3919f02f752bff52df9` (605,160 B):
