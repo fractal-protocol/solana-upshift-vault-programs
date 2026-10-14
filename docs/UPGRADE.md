@@ -660,8 +660,14 @@ No vault was attached to a queue.
   `redeem_checked`, built as the published SDK builds them, were *simulated* as
   real holders of all four live vaults, not sent. Each succeeded, with redeems
   sized within on-hand liquidity (`local_aum`, tiny on every vault; a larger
-  redeem fails `NotEnoughLiquidity`, 6013, as in `v0.1.1`). A live tiny deposit
-  and redeem is still open.
+  redeem fails `NotEnoughLiquidity`, 6013, as in `v0.1.1`). The live test
+  followed on the same day: 0.1 USDC `deposit_checked` into the second USDC
+  vault (`xxE8UeBp…`) minted 99,796 shares (tx
+  `Nb6uhQjC9GaMweogAqQ3XSCsVerdKQU87quwGNcd9NrP5SwZVN4b2kzzywGV1N56745Uw99haKqFPs6dsTx8Jdz`),
+  and a direct `redeem_checked` of exactly those shares returned 99,999 units (tx
+  `4wKbboVYJfZbMe4FXxdsdD4TYqAUJdmGKG3zMBWTQhSiWPDSnc75Kk9dVwx9Zm3zoTAZM746uNgKh6meWipN6B2n`).
+  The 1-unit rounding stayed in the vault, and `local_aum` still equals its token
+  balance.
 
 **`v0.1.1` (deployed 6 Aug 2026)** moved `up12…` from `fca11d73…` (505,216 B) to
 `cb1352a5dc4ab9513c10c1083534837bb4c666ed8ad9c3919f02f752bff52df9` (605,160 B):
