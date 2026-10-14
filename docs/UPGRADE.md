@@ -652,7 +652,10 @@ No vault was attached to a queue.
 - Step 5: vault verify PDA `AUHMtzx…` updated in tx
   `4BJTv56hUpxcbzCzXq3xr7uA67XHBcDn63Zkj6hggrczNbkFkqARbP9Y1Bd8N8kMne3cXyJRK11FjpHiMcfcjGWT`;
   OtterSec job `33cba8a5-a630-4920-a083-d672f76a7ad7` verified `f258ab09…` at the
-  tag's own commit `87c0f2d`. The queue's verify PDA is pending.
+  tag's own commit `87c0f2d`. Queue verify PDA `3onH5Rvj…` created in tx
+  `5pyNqiDjnE9c8aBAwL2fdfBTeFYgQHpF1BwZwgNoaPeh1Kwztr7p91hHvDp6yH3gUBKdSqCig7pVGd44SU4tvzLY`,
+  from the admin UI's Withdrawal Queue Program view; OtterSec job
+  `f1470a79-0545-49ac-8059-7ec078c573b9` verified `72351d59…` at `87c0f2d`.
 - Two RPC reads returned state from before the last write (the buffer hash right
   after `write-buffer`, its authority right after `set-buffer-authority`). Read
   back at `finalized` and retry before treating a mismatch as real.
