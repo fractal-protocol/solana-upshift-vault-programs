@@ -7,7 +7,7 @@ This workspace builds two programs:
 | Crate | Artifact | Status |
 |---|---|---|
 | `programs/august-vault` | `august_vault.so` | Live on mainnet and devnet. Everything below describes this program. |
-| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | `initialize_queue`, two config setters, `request_withdrawal`, `finalize_withdrawal`, `cancel_withdrawal`, `release_vault`, `expedite_request` and `sweep_escrow_shares` over the `WithdrawalQueue` / `WithdrawalRequest` state accounts: the queue's full instruction set. Live on mainnet and devnet since `v0.3.0`. Whether a vault uses it is per vault: read that vault's `withdrawal_queue_authority`. |
+| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | `initialize_queue`, two config setters, `request_withdrawal`, `finalize_withdrawal`, `cancel_withdrawal`, `release_vault`, `expedite_request` and `sweep_escrow_shares` over the `WithdrawalQueue` / `WithdrawalRequest` state accounts: the queue's full instruction set. Live on mainnet since `v0.3.0` (14 Oct 2026), and on devnet since the 28 Sep 2026 rehearsal. Whether a vault uses it is per vault: read that vault's `withdrawal_queue_authority`. |
 
 The queue lets a vault route redemptions through a request-and-cooldown flow
 instead of paying out instantly. A vault opts in when its admin attaches the

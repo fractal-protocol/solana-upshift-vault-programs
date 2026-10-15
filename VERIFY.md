@@ -88,11 +88,9 @@ Devnet runs the same `v0.3.0` artifacts for both programs (9 Oct 2026).
 
 **`verified-hashes.txt` describes this source tree, not the deployed programs.**
 The `reproducible-build` CI job rebuilds from source and asserts every row, so an
-older record cannot live there. As of `v0.3.0` both programs' on-chain hashes match it, and both are
-OtterSec-verified at the release tag's commit.
-When the tree moves ahead of a release, check the deployed programs against the
-table above, and this tree against `verified-hashes.txt`. After each deployment,
-update the table so the two agree again.
+older record cannot live there: the table above is the record of what is deployed
+and verified. Check the deployed programs against that table, and this tree
+against `verified-hashes.txt`. After each deployment, update the table.
 
 ## On-chain verification
 

@@ -6,24 +6,27 @@ and register both as **verified** (OtterSec → explorers). Existing vaults keep
 direct redemption: no queue is attached to them. Only selected new vaults get
 a queue (Step 6). That is policy, not an on-chain rule: see Step 6 for the check.
 
-The release this runbook targets moves the vault from `v0.1.1` (`cb1352a5…`, live
-since 6 Aug 2026) to a build that adds the withdrawal-queue gate and operator
-subaccounts, and brings the queue program up at its fixed id. The `v0.1.1`
-ceremony is recorded under [Previous releases](#previous-releases).
+It was written for `v0.3.0`, which moved the vault from `v0.1.1` (`cb1352a5…`,
+live since 6 Aug 2026) to a build that adds the withdrawal-queue gate and
+operator subaccounts, and brought the queue program up at its fixed id. Both
+ceremonies are recorded under [Previous releases](#previous-releases).
 
 > **Executed for `v0.3.0` on 14 Oct 2026** (record under
-> [Previous releases](#previous-releases)). The `v0.1.1` hashes and sizes below
-> are that release's inputs. For the next release, take every baseline from the
-> live chain instead: the predecessor hash (`f258ab09…` for the vault, `72351d59…`
-> for the queue, as of `v0.3.0`), the extend size, and the rollback target. Step 3
-> does not repeat: the queue exists, so a queue release is an upgrade like Step 4.
+> [Previous releases](#previous-releases)). Every baseline comes from the live
+> chain: the predecessor hash (`<LIVE_HASH>`: `f258ab09…` for the vault and
+> `72351d59…` for the queue, as of `v0.3.0`), the extend size, and the rollback
+> target. Figures shown beside the commands are the `v0.3.0` ceremony's, as
+> examples. Step 3 does not repeat: the queue exists, so a queue release is an
+> upgrade like Step 4.
 
 > **This changes live mainnet bytecode over real user funds.** Do not deviate
-> from this runbook. **Three** transactions must be signed by the **Fordefi MPC
-> upgrade authority**: the vault `Upgrade` (Step 4) and one verify-PDA upload per
-> program (Step 5). Book three approval ceremonies for the release; everything
-> else in Steps 0 to 5 is unprivileged prep. Step 6 is separate and signed by
-> each selected vault's `admin`: one Fordefi ceremony per transaction when that
+> from this runbook. The **Fordefi MPC upgrade authority** signs two
+> transactions per program the release changes: its `Upgrade` (Step 4) and its
+> verify-PDA upload (Step 5). Book one approval ceremony per transaction: four
+> for a release that upgrades both programs. `v0.3.0` needed three, since the
+> ops key deployed the queue and handed it over (Step 3). Everything else in
+> Steps 0 to 5 is unprivileged prep. Step 6 is separate and signed by each
+> selected vault's `admin`: one Fordefi ceremony per transaction when that
 > admin is a Fordefi key (at least one per vault, since `initialize_queue` and
 > `attach_withdrawal_queue` can share a transaction; `set_fulfillment_window` is
 > another), none when it is not.
@@ -48,9 +51,9 @@ ceremony is recorded under [Previous releases](#previous-releases).
   accepts only a queue PDA owned by that program. So the queue must exist at
   `upQhC7…` under the Fordefi authority **before** the vault upgrade. That is why
   Step 3 comes before Step 4.
-- **Vault ProgramData must be extended first.** The new vault `.so` is larger
-  than the current allocation. With `Data Length` from `solana program show`,
-  `additional_bytes = <new .so size> − <Data Length>`; for `v0.3.0` (the
+- **Vault ProgramData must be extended first** when the new vault `.so` is
+  larger than the current allocation. With `Data Length` from
+  `solana program show`, `additional_bytes = <new .so size> − <Data Length>`; for `v0.3.0` (the
   vault binary is unchanged since `v0.2.0`), 681,832 − 605,160 = 76,672.
   Re-derive when the pin changes.
 - **Devnet runs the same ids**, so the released mainnet artifacts deploy to
@@ -103,7 +106,8 @@ Rules for both program keypairs:
   account by the `Upgrade`). Figures are for `v0.3.0`.
 - The queue program keypair, checked as above.
 - Fordefi access to the upgrade authority, able to sign a
-  `BPFLoaderUpgradeable::Upgrade` instruction and two arbitrary transactions.
+  `BPFLoaderUpgradeable::Upgrade` instruction per changed program, and one
+  arbitrary transaction per program (the verify-PDA uploads).
   Use a **durable nonce** for each: a recent blockhash expires in 60 to 90 s,
   well inside a Fordefi review, and the submission then fails with `Blockhash
   not found` after the approvals were collected. The nonce authority must be the
@@ -368,8 +372,10 @@ solana-verify get-executable-hash "rel-$TAG/august_vault_$TAG.so"   # == vault r
 # 5. Preserve the deployed binary for byte-exact rollback.
 solana program dump up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt pre-upgrade-august_vault.so -u "$URL"
 solana-verify get-program-hash -u "$URL" up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt
-#    Expect cb1352a5dc4ab9513c10c1083534837bb4c666ed8ad9c3919f02f752bff52df9 (v0.1.1).
-#    Anything else means an unrecorded upgrade happened: STOP.
+#    Expect <LIVE_HASH>, the vault's "Deployed now" hash under Key facts
+#    (f258ab09… as of v0.3.0; the v0.3.0 upgrade expected cb1352a5…).
+#    Anything else means an unrecorded upgrade happened: STOP. Record the value:
+#    it is the rollback target.
 sha256sum pre-upgrade-august_vault.so   # archive the file and both hashes
 ```
 
@@ -385,7 +391,9 @@ sha256sum pre-upgrade-august_vault.so   # archive the file and both hashes
 ```bash
 # Extend ProgramData to fit the larger binary. `Data Length` from `program show`
 # already excludes the 45-byte loader header, so subtract directly:
-#   additional_bytes = <new .so size> - <Data Length>   (76,672 for `v0.3.0`)
+#   additional_bytes = <new .so size> - <Data Length>
+#   (76,672 for the `v0.3.0` upgrade; recompute it every release, and skip the
+#   extend when the result is zero or negative)
 solana program extend up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt <additional_bytes> \
   -u "$URL" -k "$OPS"   # ← Solana 2.x CLI only; see below
 # Afterwards `Data Length` must equal the new .so size exactly.
@@ -507,9 +515,11 @@ for what did change).
 **Nothing on-chain enforces that selection.** `attach_withdrawal_queue` accepts
 any vault whose admin signs, and once it runs every holder's direct redeem fails
 with 6021. Before attaching, check that the target is the new vault approved for
-a queue, and that it is not one of the vaults live before `v0.3.0` (the scan
-under [Rollback](#rollback) lists every vault; any not below was created after
-the release):
+a queue, and that it is not one of the vaults live before `v0.3.0`, listed
+below. The scan under [Rollback](#rollback) lists the program's 455-byte
+`VaultState` accounts, so it skips the 454-byte vault below. A vault missing from
+this table must have been created after the `v0.3.0` upgrade (slot 456,925,461):
+confirm that from its creation transaction, not from its absence here.
 
 | Vault (`VaultState`) | Deposit mint |
 | --- | --- |
@@ -577,21 +587,27 @@ curl -s "$URL" -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,
   "method":"getProgramAccounts","params":["up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt",
   {"encoding":"base64","dataSlice":{"offset":207,"length":32},"filters":[
     {"dataSize":455},{"memcmp":{"offset":0,"bytes":"fGKsWeCxBaF"}}]}]}'
-# One entry per VaultState. A non-zero 32-byte slice is the attached queue.
+# One entry per VaultState; `data[0]` is the slice in base64. An unattached
+# vault reads AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= (32 zero bytes).
+# Anything else is attached: decode it to get the queue's key.
 ```
 
 Do not use Anchor's `vaultState.all()` for this: the 454-byte `7vQpPzqx…` (see
 Step 6) fails to decode, and the call rejects before listing anything.
 
 - **Queue misbehaves:** `release_vault` on every attached vault first. That
-  restores direct redemption without touching either binary. Then roll the queue
-  forward to a fixed, verified release as in Step 4: extend if the fix is larger
-  (Solana 2.x CLI or loader instruction 6), write-buffer, set-buffer-authority,
-  Fordefi `Upgrade`.
+  restores direct redemption without touching either binary. The vault admin
+  cannot detach alone: `detach_withdrawal_queue` needs the queue PDA's signature,
+  which only `release_vault` provides. If the bug breaks `release_vault` itself,
+  upgrade the queue to a fix first, then release; holders on attached vaults
+  cannot redeem until then. Roll the queue forward to a fixed, verified
+  release as in Step 4: extend if the fix is larger (Solana 2.x CLI or loader
+  instruction 6), write-buffer, set-buffer-authority, Fordefi `Upgrade`.
 - **Vault misbehaves:** release every attached queue first, then roll back
   byte-exact to `pre-upgrade-august_vault.so` from Step 4 (write-buffer →
-  set-buffer-authority → Fordefi `Upgrade`; no extend, it is smaller; confirm `get-program-hash` returns
-  `cb1352a5…`), or forward to a hotfix. Two things to know:
+  set-buffer-authority → Fordefi `Upgrade`; no extend unless the release shrank
+  the binary; confirm `get-program-hash` returns the hash Step 4 recorded,
+  `cb1352a5…` for the `v0.3.0` upgrade), or forward to a hotfix. Two things to know:
   - The old binary does not read `withdrawal_queue_authority`, so a vault left
     attached through a rollback reopens direct redemption while the queue still
     holds escrowed shares. Those still finalize (the old `redeem` accepts the
