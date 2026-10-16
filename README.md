@@ -7,14 +7,14 @@ This workspace builds two programs:
 | Crate | Artifact | Status |
 |---|---|---|
 | `programs/august-vault` | `august_vault.so` | Live on mainnet and devnet. Everything below describes this program. |
-| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | `initialize_queue`, two config setters, `request_withdrawal`, `finalize_withdrawal`, `cancel_withdrawal`, `release_vault`, `expedite_request` and `sweep_escrow_shares` over the `WithdrawalQueue` / `WithdrawalRequest` state accounts: the queue's full instruction set. **Not deployed anywhere.** |
+| `programs/august-withdrawal-queue` | `august_withdrawal_queue.so` | `initialize_queue`, two config setters, `request_withdrawal`, `finalize_withdrawal`, `cancel_withdrawal`, `release_vault`, `expedite_request` and `sweep_escrow_shares` over the `WithdrawalQueue` / `WithdrawalRequest` state accounts: the queue's full instruction set. Live on mainnet since `v0.3.0` (14 Oct 2026), and on devnet since the 28 Sep 2026 rehearsal. Whether a vault uses it is per vault: read that vault's `withdrawal_queue_authority`. |
 
-The queue will let a vault route redemptions through a request-and-cooldown flow
-instead of paying out instantly. The vault side of that is already in place: a
-vault can name a `withdrawal_queue_authority` and will then redeem only for that
-key. No vault names this program, and none is set, so every vault still redeems
-instantly. Until the queue has instructions it builds and deploys but does
-nothing.
+The queue lets a vault route redemptions through a request-and-cooldown flow
+instead of paying out instantly. A vault opts in when its admin attaches the
+queue: its `withdrawal_queue_authority` then names the queue, and the vault
+redeems only for that key. The vaults live before `v0.3.0` stay on direct
+redemption, and only selected new vaults get a queue, so clients must route each
+vault by reading that field rather than assuming one redemption path.
 
 **Both programs are built one crate at a time, never as a whole workspace.** The
 queue depends on the vault with `features = ["cpi"]`, and `cpi` implies
@@ -166,7 +166,7 @@ six-figure opening deposit, where `1000` asks roughly a thousandth of that.
 ### Withdrawal queue (optional, per vault)
 
 `VaultState.withdrawal_queue_authority` decides who may redeem. It is
-**`Pubkey::default()` on every vault today**, which means redemption is instant
+**`Pubkey::default()` on every vault without a queue**, which means redemption is instant
 and open to any share holder — the behaviour described above, and the behaviour
 every vault created before this field existed keeps without a migration, since
 those accounts carry zeroes at that offset.
