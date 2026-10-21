@@ -350,8 +350,8 @@ function buildProgram() {
   logStep(3, 'Building Anchor program');
   
   try {
-    logInfo('Running: anchor build');
-    execSync('anchor build', { 
+    logInfo('Running: scripts/build-programs.sh');
+    execSync('./scripts/build-programs.sh', { 
       cwd: projectRoot,
       stdio: ['inherit', 'pipe', 'pipe'],
       encoding: 'utf-8'

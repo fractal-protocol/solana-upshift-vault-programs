@@ -273,11 +273,14 @@ prepare_local_program() {
 
 # Run `anchor test` against ONLY the given files by rewriting the [scripts].test
 # line (passing files positionally APPENDS to the configured suite). Restored on exit.
+# Built here rather than by `anchor test`, whose build takes the toolchain's
+# default arch (see build-programs.sh).
 run_focused() {
     local files="$1"
     awk -v f="$files" '/^test = /{print "test = \"pnpm exec ts-mocha -p ./tsconfig.json -t 1000000 " f "\""; next} {print}' \
         Anchor.toml > Anchor.toml.tmp && mv Anchor.toml.tmp Anchor.toml
-    anchor test $SKIP_VALIDATOR
+    ./scripts/build-programs.sh
+    anchor test --skip-build $SKIP_VALIDATOR
 }
 
 # Menu — read the choice FIRST, then spin up localnet. Every option runs a

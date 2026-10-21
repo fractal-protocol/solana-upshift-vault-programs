@@ -5,7 +5,7 @@
   "scripts": {
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
-    "build": "anchor build && ./scripts/sync-idl.sh",
+    "build": "./scripts/build-programs.sh && ./scripts/sync-idl.sh",
     "generate-clients": "node scripts/generate-clients.mjs",
     "deploy": "node deploy/new-vault.mjs",
     "deploy:devnet": "node deploy/new-vault.mjs --network devnet",
