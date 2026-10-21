@@ -42,7 +42,16 @@ august-vault = { path = "../programs/august-vault", features = ["no-entrypoint"]
 august-withdrawal-queue = { path = "../programs/august-withdrawal-queue", features = ["no-entrypoint"] }
 anchor-lang = "0.31.1"
 anchor-spl = "0.31.1"
-litesvm = "0.7.1"
+# 0.18 is the first line that runs SBPFv3 bytecode. It speaks the Solana 3/4
+# types, while everything else here (anchor 0.31, spl, solana-sdk) is on 2.x;
+# src/svm.rs converts at that one boundary, which is all the crates below are for.
+litesvm = "0.18.1"
+solana-account-v4 = { package = "solana-account", version = "4.3" }
+solana-address-v2 = { package = "solana-address", version = "2.7" }
+solana-transaction-v4 = { package = "solana-transaction", version = "4.1", features = ["serde"] }
+solana-transaction-error-v3 = { package = "solana-transaction-error", version = "3.4", features = ["serde"] }
+bincode = "1"
+serde = "1"
 # Same major as the program crate's dependency; provides the program ID and
 # account deserializers for the share-token-metadata tests.
 mpl-token-metadata = "5.1.1"

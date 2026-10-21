@@ -24,7 +24,7 @@ use august_withdrawal_queue::state::{
 use integration_tests::harness::{
     assert_anchor_framework_err, events_of, MintExtension, VaultCtx, VAULT_VERSION,
 };
-use litesvm::types::FailedTransactionMetadata;
+use integration_tests::svm::FailedTransactionMetadata;
 use solana_sdk::program_pack::Pack;
 use solana_sdk::{pubkey::Pubkey, signer::Signer};
 
@@ -52,7 +52,7 @@ fn canonical_bump(vault_state: &Pubkey) -> u8 {
     .1
 }
 
-fn assert_config_snapshot(meta: &litesvm::types::TransactionMetadata, ctx: &VaultCtx) {
+fn assert_config_snapshot(meta: &integration_tests::svm::TransactionMetadata, ctx: &VaultCtx) {
     let events = events_of::<QueueConfigUpdated>(meta);
     assert_eq!(events.len(), 1, "exactly one QueueConfigUpdated");
     let q = ctx.queue_state_data();

@@ -6,3 +6,4 @@
 //! taken from `target/deploy`.
 
 pub mod harness;
+pub mod svm;

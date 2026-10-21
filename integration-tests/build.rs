@@ -83,8 +83,8 @@ use std::process::Command;
 /// `no-entrypoint`. Cargo unifies features per dependency across a single build,
 /// so a workspace-wide `cargo build-sbf` compiles the vault ONCE under
 /// `default ∪ cpi ∪ no-entrypoint` — cfg'ing `entrypoint!` out of the only
-/// `august_vault.so` that exists. The result is a ~900-byte artifact that LiteSVM
-/// rejects with `InvalidAccountData`. Confirm with:
+/// `august_vault.so` that exists. The result is a 544-byte artifact that LiteSVM
+/// refuses to load (`invalid file header`). Confirm with:
 ///
 /// ```text
 /// cargo tree -e features -i august-vault --workspace
@@ -102,6 +102,10 @@ const PROGRAMS: &[(&str, &str)] = &[
     ),
 ];
 const ESCAPE_HATCH: &str = "ALLOW_STALE_PROGRAM_SO";
+
+/// Pinned rather than left to the toolchain default, which differs across
+/// Solana releases. Must match the `--arch` of the verifiable build.
+const SBF_ARCH: &str = "v3";
 
 /// A test-only program the walks load beside the real ones: an attacker that
 /// forwards instructions by CPI. Its own workspace and lockfile, so nothing of
@@ -230,6 +234,8 @@ fn main() {
             .arg(repo_root.join(manifest))
             .arg("--sbf-out-dir")
             .arg(&staging)
+            .arg("--arch")
+            .arg(SBF_ARCH)
             // Forwarded in case a future cargo-build-sbf honours it; today it does
             // not, which is why the lockfile is checked separately above and below.
             .arg("--")
@@ -309,6 +315,8 @@ fn build_fixture(repo_root: &Path, out_dir: &Path) {
         .arg(&manifest)
         .arg("--sbf-out-dir")
         .arg(&staging)
+        .arg("--arch")
+        .arg(SBF_ARCH)
         .arg("--")
         .arg("--locked")
         .current_dir(repo_root);
