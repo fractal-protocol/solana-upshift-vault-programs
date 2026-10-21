@@ -185,6 +185,11 @@ describe("august-withdrawal-queue", () => {
             .signers([user])
             .rpc();
 
+    // preflightCommitment must be named: left unset, the preflight runs at
+    // "confirmed" against a blockhash fetched at "processed", which it may not
+    // know yet (`Blockhash not found` on Agave 4.x).
+    const CONFIRMED = { commitment: "confirmed", preflightCommitment: "processed" } as const;
+
     const request = (id: number, shares: number, finalizer: PublicKey = PublicKey.default) =>
         queueProgram.methods
             .requestWithdrawal(new BN(id), new BN(shares), new BN(0), finalizer)
@@ -200,7 +205,7 @@ describe("august-withdrawal-queue", () => {
                 tokenProgram: token.TOKEN_PROGRAM_ID,
             })
             .signers([user])
-            .rpc({ commitment: "confirmed" });
+            .rpc(CONFIRMED);
 
     const finalize = (id: number, sequence: BN, finalizer: Keypair = user) =>
         queueProgram.methods
@@ -222,7 +227,7 @@ describe("august-withdrawal-queue", () => {
                 tokenProgram: token.TOKEN_PROGRAM_ID,
             })
             .signers([finalizer])
-            .rpc({ commitment: "confirmed" });
+            .rpc(CONFIRMED);
 
     const cancel = (id: number, sequence: BN) =>
         queueProgram.methods
