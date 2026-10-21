@@ -16,11 +16,13 @@ anywhere.
 ## Pinned toolchain
 
 - **Builder:** [`solana-verify`](https://github.com/solana-foundation/solana-verifiable-build) **v0.5.1** — the exact version the CI job pins (requires Docker). Use this version; a later CLI could change output/hashing behavior.
-- **Base image:** `solanafoundation/solana-verifiable-build@sha256:695f890e620db8c39afe5112e048599f8ee395a0cab5a2e572f30a72c6366cb4`
-  — Solana **v2.3.0**, container Rust **1.86.0**. The image is selected from the
-  `solana-program` version pinned in the committed `Cargo.lock`; pinning the
-  digest makes the build host-independent (an emulated `linux/amd64` build on
-  Apple Silicon reproduces the same hash).
+- **Base image:** `solanafoundation/solana-verifiable-build@sha256:12fd4c0a0790f0fc41ef74b0cdb6bccc167ba6137eb1adb749bac649481c86bd`
+  — Solana **v4.3.0**, platform-tools **v1.57**. Passed explicitly: auto-selection
+  from `Cargo.lock`'s `solana-program` would pick the Solana 2.3.0 image the
+  v0 builds used. Pinning the digest makes the build host-independent (an emulated
+  `linux/amd64` build on Apple Silicon reproduces the same hash).
+- **Architecture:** `--arch v3` (SBPFv3). `solana-verify` defaults to v0, so
+  every build and verification command passes it.
 
 ## Reproduce the build
 
@@ -32,11 +34,11 @@ git clone https://github.com/fractal-protocol/solana-upshift-vault-programs
 cd solana-upshift-vault-programs
 git checkout <release-commit-or-tag>
 
-IMAGE=solanafoundation/solana-verifiable-build@sha256:695f890e620db8c39afe5112e048599f8ee395a0cab5a2e572f30a72c6366cb4
+IMAGE=solanafoundation/solana-verifiable-build@sha256:12fd4c0a0790f0fc41ef74b0cdb6bccc167ba6137eb1adb749bac649481c86bd
 
 # One build per program. Never build the workspace in one go: the queue depends on
 # the vault with `features = ["cpi"]`, which implies `no-entrypoint`, and cargo
-# unifies features across a single build — producing a ~900-byte, entrypoint-less
+# unifies features across a single build — producing a 544-byte, entrypoint-less
 # `august_vault.so`. See integration-tests/build.rs.
 while read -r pkg _; do
   case "$pkg" in ''|\#*) continue ;; esac
@@ -45,7 +47,7 @@ while read -r pkg _; do
   # conclude the bytecode is unchanged. Removing it means a missing file, not a
   # wrong hash, if the build ever fails to produce one.
   rm -f "target/deploy/${pkg}.so"
-  solana-verify build --library-name "$pkg" --base-image "$IMAGE"
+  solana-verify build --library-name "$pkg" --base-image "$IMAGE" --arch v3
   solana-verify get-executable-hash "target/deploy/${pkg}.so"   # exec_sha256
   shasum -a 256 "target/deploy/${pkg}.so"                       # raw_sha256
   wc -c "target/deploy/${pkg}.so"                               # size (bytes)
@@ -85,6 +87,10 @@ Mainnet, checked 14 Oct 2026:
 | `august_withdrawal_queue` | `upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW` | `72351d599f81769a98a1facb65f5af852d3aa08018cef8ad3d871a150e41ff01` (480,128 B) | [`v0.3.0`](https://github.com/fractal-protocol/solana-upshift-vault-programs/releases/tag/v0.3.0), deployed 14 Oct 2026 | [verified](https://verify.osec.io/status/upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW) at `87c0f2d` |
 
 Devnet runs the same `v0.3.0` artifacts for both programs (9 Oct 2026).
+
+Those are SBPFv0 builds. This tree builds SBPFv3, so its hashes differ from the
+deployed ones until the next upgrade; reproduce a deployed release from that
+tag's own VERIFY.md.
 
 **`verified-hashes.txt` describes this source tree, not the deployed programs.**
 The `reproducible-build` CI job rebuilds from source and asserts every row, so an
