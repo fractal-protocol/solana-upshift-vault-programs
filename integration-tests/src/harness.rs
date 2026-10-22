@@ -3361,12 +3361,15 @@ fn write_program_data(svm: &mut Svm, address: Pubkey, upgrade_authority: Option<
     let header_len = UpgradeableLoaderState::size_of_programdata_metadata();
     // Keep the ELF after the header when `add_program` wrote one: LiteSVM
     // reloads a program from its ProgramData if the program account is rewritten.
-    let mut data = match svm.get_account(&address) {
-        Some(existing) => existing.data,
-        None => vec![0u8; header_len],
-    };
+    // Any other account at `address` is replaced by a fresh header.
+    let mut data = vec![0u8; header_len];
+    if let Some(existing) = svm.get_account(&address) {
+        if existing.owner == bpf_loader_upgradeable::ID && existing.data.len() >= header_len {
+            data = existing.data;
+        }
+    }
     data[0..4].copy_from_slice(&PROGRAM_DATA_VARIANT.to_le_bytes());
-    // data[4..12] is the deployment slot; 0 is fine, nothing reads it.
+    // data[4..12] is the deployment slot (kept from LiteSVM, or 0); nothing reads it.
     data[12..header_len].fill(0);
     if let Some(authority) = upgrade_authority {
         data[12] = 1; // Option::Some

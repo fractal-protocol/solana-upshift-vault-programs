@@ -1,6 +1,6 @@
 # Separate workspace from the program crate — see root Cargo.toml's `exclude`
 # block for context. Run tests with:
-#     anchor build && cargo test --manifest-path integration-tests/Cargo.toml
+#     cargo test --manifest-path integration-tests/Cargo.toml   (build.rs builds the programs)
 [workspace]
 resolver = "2"
 

@@ -232,7 +232,7 @@ jobs:
                   for dir in programs/*/; do
                     prog=$(basename "$dir" | tr '-' '_')
                     SO="target/deploy/${prog}.so"
-                    [ -f "$SO" ] || { echo "::error::$SO was not produced by anchor build"; exit 1; }
+                    [ -f "$SO" ] || { echo "::error::$SO was not produced by build-programs.sh"; exit 1; }
                     SZ=$(wc -c < "$SO")
                     echo "${prog}.so: $((SZ / 1024))KB ($SZ bytes)"
                     # Lower bound, not just upper: a workspace-wide build compiles

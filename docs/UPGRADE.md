@@ -100,6 +100,10 @@ Rules for both program keypairs:
   before `write-buffer` / `deploy` and rejects SBPFv3 with `ELF error: Offset or
   value is out of bounds`. 4.x CLIs also refuse a bare `solana program show` with
   `No default signer found`, hence the `-k` on every `show` below.
+- SBPFv3 enabled on the target cluster. `solana feature status
+  5cC3foj77CWun58pC51ebHFUWavHWKarWyR5UUik7dnC -u "$URL"` must print `active`
+  (mainnet since epoch 993, devnet since 1069). Every local check runs with all
+  features on, so none of them would catch a cluster without it.
 - Only if Step 4 needs an `extend`: a Solana **2.x** CLI for that one command
   (see the note there), installed beside the 4.x one rather than on PATH. An
   SBPFv3 build is smaller than the v0 build it replaces, so the first v3 upgrade
@@ -132,7 +136,7 @@ Rules for both program keypairs:
   carry a recent blockhash. Rebuild each on the nonce before submitting it to
   Fordefi: prepend `AdvanceNonceAccount` and use the nonce value as the
   blockhash.
-- `anchor build` run once in the checkout, and `pnpm install`, if you encode
+- `./scripts/build-programs.sh` run once in the checkout, and `pnpm install`, if you encode
   Step 6's instructions with the generated clients. The deployed bytecode still
   comes from the release artifacts.
 - The repository protections below provisioned. (The workflow fails closed
@@ -346,7 +350,7 @@ solana program set-upgrade-authority upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW
   -u "$URL" -k "$OPS"
 
 # Read back. Do not continue unless both hold.
-solana program show upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW -u "$URL"
+solana program show upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW -u "$URL" -k "$OPS"
 #   Authority: B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM
 solana-verify get-program-hash -u "$URL" upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW
 #   == verified-hashes.txt exec_sha256 for august_withdrawal_queue
@@ -363,7 +367,7 @@ for good, and the vault hardcodes this one.
 
 ```bash
 # 1. The upgrade authority is still the Fordefi key.
-solana program show up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt -u "$URL"
+solana program show up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt -u "$URL" -k "$OPS"
 #    Authority must be B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM
 
 # 2. Step 3 is done: upQhC7… exists under B75DMr… with the pinned hash.
@@ -399,8 +403,9 @@ sha256sum pre-upgrade-august_vault.so   # archive the file and both hashes
 #   additional_bytes = <new .so size> - <Data Length>
 #   (76,672 for the `v0.3.0` upgrade; recompute it every release, and skip the
 #   extend when the result is zero or negative)
-solana program extend up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt <additional_bytes> \
-  -u "$URL" -k "$OPS"   # ← Solana 2.x CLI only; see below
+SOLANA2=<path to the 2.x CLI, e.g. ~/solana-2.1.14/bin/solana>
+"$SOLANA2" program extend up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt <additional_bytes> \
+  -u "$URL" -k "$OPS"   # ← not the 4.x `solana` on PATH; see below
 # Afterwards `Data Length` must equal the new .so size exactly.
 
 solana program write-buffer "rel-$TAG/august_vault_$TAG.so" -u "$URL" -k "$OPS"

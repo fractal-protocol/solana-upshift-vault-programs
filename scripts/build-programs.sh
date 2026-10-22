@@ -20,9 +20,10 @@ for dir in programs/*/; do
     prog=$(basename "$dir" | tr '-' '_')
     anchor idl build -p "$prog" -o "target/idl/${prog}.json" -t "target/types/${prog}.ts"
 
-    # e_flags (ELF offset 0x30) carries the SBPF version.
+    # e_flags (ELF offset 0x30, u32 LE) carries the SBPF version. Read all four
+    # bytes, as embedded_artifacts.rs does.
     so="target/deploy/${prog}.so"
-    version=$(od -An -t u1 -j 48 -N 1 "$so" | tr -d ' ')
+    version=$(od -An -t u4 -j 48 -N 4 "$so" | tr -d ' ')
     if [ "$version" != "${ARCH#v}" ]; then
         echo "❌ $so is SBPF v$version, expected $ARCH" >&2
         exit 1

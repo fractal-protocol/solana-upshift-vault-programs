@@ -182,7 +182,7 @@ solana balance YOUR_WALLET --url mainnet
 **Solution:**
 ```bash
 anchor clean
-anchor build
+pnpm build   # scripts/build-programs.sh: SBPFv3, then IDL and types
 ```
 
 ### Rate Limited (Devnet Only)

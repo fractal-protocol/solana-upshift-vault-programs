@@ -279,7 +279,7 @@ run_focused() {
     local files="$1"
     awk -v f="$files" '/^test = /{print "test = \"pnpm exec ts-mocha -p ./tsconfig.json -t 1000000 " f "\""; next} {print}' \
         Anchor.toml > Anchor.toml.tmp && mv Anchor.toml.tmp Anchor.toml
-    ./scripts/build-programs.sh
+    ./scripts/build-programs.sh || exit 1
     anchor test --skip-build $SKIP_VALIDATOR
 }
 

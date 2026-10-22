@@ -134,7 +134,7 @@ async function main() {
   if (!existsSync(idlPath)) {
     throw new Error(
       `no Anchor IDL at ${idlPath}.\n` +
-      `   Run \`anchor build\` first — \`solana-verify build\` alone does not ` +
+      `   Run \`pnpm build\` first — \`solana-verify build\` alone does not ` +
       `emit one. The IDL is only used to encode the instruction locally; it does ` +
       `not have to come from the verifiable build.`
     );
