@@ -136,7 +136,7 @@ Rules for both program keypairs:
   carry a recent blockhash. Rebuild each on the nonce before submitting it to
   Fordefi: prepend `AdvanceNonceAccount` and use the nonce value as the
   blockhash.
-- `./scripts/build-programs.sh` run once in the checkout, and `pnpm install`, if you encode
+- `pnpm build` run once in the checkout, and `pnpm install`, if you encode
   Step 6's instructions with the generated clients. The deployed bytecode still
   comes from the release artifacts.
 - The repository protections below provisioned. (The workflow fails closed

@@ -2604,7 +2604,7 @@ impl VaultCtx {
     /// Drop the program's upgrade authority, modelling an immutable program.
     /// Mirrors [`BareCtx::make_program_immutable`].
     pub fn make_program_immutable(&mut self) {
-        write_program_data(&mut self.svm, program_data_pda(), None);
+        set_program_data_authority(&mut self.svm, None);
     }
 
     /// `set_config_authority` signed by an arbitrary keypair.
@@ -2934,7 +2934,7 @@ impl BareCtx {
 
     /// Drop the program's upgrade authority, modelling an immutable program.
     pub fn make_program_immutable(&mut self) {
-        write_program_data(&mut self.svm, program_data_pda(), None);
+        set_program_data_authority(&mut self.svm, None);
     }
 
     /// Attempt `initialize` on a program whose config has never been created,
@@ -3345,29 +3345,39 @@ fn program_data_pda() -> Pubkey {
 /// `UpgradeableLoaderState::ProgramData`: a 4-byte enum index (3), an 8-byte
 /// slot, then `Option<Pubkey>` as a 1-byte `Some` tag plus the 32-byte key.
 fn install_program_data(svm: &mut Svm, upgrade_authority: &Pubkey) {
-    install_program_data_at(svm, program_data_pda(), upgrade_authority);
+    set_program_data_authority(svm, Some(upgrade_authority));
 }
 
+/// A fresh, ELF-less `ProgramData` at an arbitrary address, for spoofing tests.
 fn install_program_data_at(svm: &mut Svm, address: Pubkey, upgrade_authority: &Pubkey) {
-    write_program_data(svm, address, Some(upgrade_authority));
+    let data = vec![0u8; UpgradeableLoaderState::size_of_programdata_metadata()];
+    write_program_data(svm, address, data, Some(upgrade_authority));
+}
+
+/// Rewrite the header of the program's own `ProgramData`, keeping the ELF
+/// `add_program` wrote after it: LiteSVM reloads a program from its ProgramData
+/// if the program account is rewritten.
+fn set_program_data_authority(svm: &mut Svm, upgrade_authority: Option<&Pubkey>) {
+    let address = program_data_pda();
+    let data = svm
+        .get_account(&address)
+        .expect("ProgramData missing: call add_program first")
+        .data;
+    write_program_data(svm, address, data, upgrade_authority);
 }
 
 /// `upgrade_authority = None` models an **immutable** program (deployed or set
 /// with `--final`), which is a materially different state from "some other key
 /// holds it": `Some(signer)` can never equal `None`, so no one at all can pass
 /// the `initialize_config` check.
-fn write_program_data(svm: &mut Svm, address: Pubkey, upgrade_authority: Option<&Pubkey>) {
+fn write_program_data(
+    svm: &mut Svm,
+    address: Pubkey,
+    mut data: Vec<u8>,
+    upgrade_authority: Option<&Pubkey>,
+) {
     const PROGRAM_DATA_VARIANT: u32 = 3;
     let header_len = UpgradeableLoaderState::size_of_programdata_metadata();
-    // Keep the ELF after the header when `add_program` wrote one: LiteSVM
-    // reloads a program from its ProgramData if the program account is rewritten.
-    // Any other account at `address` is replaced by a fresh header.
-    let mut data = vec![0u8; header_len];
-    if let Some(existing) = svm.get_account(&address) {
-        if existing.owner == bpf_loader_upgradeable::ID && existing.data.len() >= header_len {
-            data = existing.data;
-        }
-    }
     data[0..4].copy_from_slice(&PROGRAM_DATA_VARIANT.to_le_bytes());
     // data[4..12] is the deployment slot (kept from LiteSVM, or 0); nothing reads it.
     data[12..header_len].fill(0);
