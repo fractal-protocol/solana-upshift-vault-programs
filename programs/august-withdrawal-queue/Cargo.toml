@@ -3,8 +3,9 @@ name = "august-withdrawal-queue"
 version = "0.1.0"
 description = "Delayed redemption queue for august-vault"
 edition = "2021"
-# The SBF build uses platform-tools' bundled rustc, not the host's: Solana 2.1.14
-# (CI) ships v1.43 = rustc 1.79. Declared so clippy flags newer std APIs early.
+# The SBF build uses platform-tools' bundled rustc, not the host's: Solana 4.3.0
+# (CI) ships v1.57 = rustc 1.95. 1.79 is the floor of the old 2.1.14 toolchain,
+# kept as a conservative bound; raise it when a newer std API is wanted.
 rust-version = "1.79"
 
 [lib]

@@ -90,7 +90,7 @@ const artifact = join(repoRoot, 'target', 'deploy', 'august_vault.so');
 if (!existsSync(artifact)) {
   console.error(
     `❌ No build artifact at ${artifact}.\n\n` +
-    '   Run `anchor build` (or `pnpm run build`) first.'
+    '   Run `pnpm run build` (scripts/build-programs.sh, which builds SBPFv3) first.'
   );
   process.exit(1);
 }

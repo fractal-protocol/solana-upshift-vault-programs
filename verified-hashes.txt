@@ -1,8 +1,8 @@
 # Expected hashes of each program's reproducible verifiable build.
 #
-# Toolchain: `solana-verify build` in the pinned base image
-#   solanafoundation/solana-verifiable-build@sha256:695f890e620db8c39afe5112e048599f8ee395a0cab5a2e572f30a72c6366cb4
-#   (Solana v2.3.0, container Rust 1.86.0), driven by the committed Cargo.lock.
+# Toolchain: `solana-verify build --arch v3` in the pinned base image
+#   solanafoundation/solana-verifiable-build@sha256:12fd4c0a0790f0fc41ef74b0cdb6bccc167ba6137eb1adb749bac649481c86bd
+#   (Solana v4.3.0, platform-tools v1.57), driven by the committed Cargo.lock.
 #
 # Columns (whitespace-separated):
 #   program     — the crate/library name passed to `--library-name`.
@@ -28,5 +28,5 @@
 # "Line numbers are part of the bytecode" note in VERIFY.md.
 #
 # program       exec_sha256                                                       raw_sha256                                                        size
-august_vault    f258ab095f0235e75186dfb1c5cc2d4aaeaa71b4d326549dbdb85fc7da17df31  7e6408d246b7944cf420a663396705692c1bdc00f0fc1ab2de67bba74c55e375  681832
-august_withdrawal_queue    72351d599f81769a98a1facb65f5af852d3aa08018cef8ad3d871a150e41ff01 ade3a4d6bb055888f5bd30fd7d2d91ae9dfd76dc6efd48f373590c098d053d36 480128
+august_vault    a3944c9a94691914ed0b3e4565af9cb161bcf9fe7e1b1f8c23984b35aab8649b  4ef0626517651cd5d429580dce3a8afd16fa79234c36926e5496f4ac9b10937f  584248
+august_withdrawal_queue    dec9006f7cd617401d1d6ed9fa8573c8f1203054d569b669dac5f50d0c11fd01 bd98a59ca56a1f6f86b7249c46a2d5a3968e966526a4512c5870c7cf1e7d7488 413272

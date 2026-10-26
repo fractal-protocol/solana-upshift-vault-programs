@@ -16,7 +16,8 @@ concurrency:
     cancel-in-progress: true
 
 env:
-    SOLANA_VERSION: "2.1.14"
+    # 4.x for SBPFv3. Matches the Solana release in the verifiable-build image.
+    SOLANA_VERSION: "4.3.0"
     ANCHOR_VERSION: "0.31.1"
 
 jobs:
@@ -221,7 +222,7 @@ jobs:
               # per-program check below proves only that a build happened once.
               run: |
                   rm -f target/deploy/*.so
-                  anchor build
+                  ./scripts/build-programs.sh
 
             # Checks each program by NAME. The predecessor took `head -1` and so
             # checked whichever artifact the filesystem happened to list first.
@@ -231,12 +232,12 @@ jobs:
                   for dir in programs/*/; do
                     prog=$(basename "$dir" | tr '-' '_')
                     SO="target/deploy/${prog}.so"
-                    [ -f "$SO" ] || { echo "::error::$SO was not produced by anchor build"; exit 1; }
+                    [ -f "$SO" ] || { echo "::error::$SO was not produced by build-programs.sh"; exit 1; }
                     SZ=$(wc -c < "$SO")
                     echo "${prog}.so: $((SZ / 1024))KB ($SZ bytes)"
                     # Lower bound, not just upper: a workspace-wide build compiles
                     # the vault under the queue's `cpi` feature (which implies
-                    # `no-entrypoint`) and emits a ~900-byte artifact with nothing
+                    # `no-entrypoint`) and emits a 544-byte artifact with nothing
                     # to dispatch to. See integration-tests/build.rs.
                     [ "$SZ" -ge 51200 ] || { echo "::error::${prog}.so is only $SZ bytes — built with no-entrypoint?"; exit 1; }
                     [ "$SZ" -le 1400000 ] || echo "::warning::${prog}.so exceeds 1.4MB ($SZ bytes)"
@@ -270,7 +271,7 @@ jobs:
 
             - name: Sync program key for localnet
               run: |
-                  rm -rf target/deploy/*.so target/sbpf-solana-solana target/sbf-solana-solana target/idl target/types
+                  rm -rf target/deploy/*.so target/sbpfv3-solana-solana target/sbpf-solana-solana target/sbf-solana-solana target/idl target/types
                   anchor keys sync
                   for dir in programs/*/; do
                     prog=$(basename "$dir" | tr '-' '_')
@@ -290,7 +291,7 @@ jobs:
                     || { echo "::error::WITHDRAWAL_QUEUE_PROGRAM_ID in state/vault.rs was not synced to the localnet queue id"; exit 1; }
 
             - name: Rebuild with localnet program ID
-              run: anchor build
+              run: ./scripts/build-programs.sh
 
             # The validator is started HERE rather than by `anchor test`, and the
             # run uses --skip-local-validator. This is load-bearing, not a
@@ -347,7 +348,7 @@ jobs:
             - name: Rebuild and assert verified-hashes.txt
               run: |
                   set -euo pipefail
-                  IMAGE="solanafoundation/solana-verifiable-build@sha256:695f890e620db8c39afe5112e048599f8ee395a0cab5a2e572f30a72c6366cb4"
+                  IMAGE="solanafoundation/solana-verifiable-build@sha256:12fd4c0a0790f0fc41ef74b0cdb6bccc167ba6137eb1adb749bac649481c86bd"
                   fail=0
                   # Record what we actually verified. Without this the loop can
                   # complete having compared NOTHING — a truncated or
@@ -361,7 +362,7 @@ jobs:
                     case "$pkg" in ''|\#*) continue ;; esac
                     seen="$seen $pkg"
                     echo "::group::build $pkg"
-                    solana-verify build --library-name "$pkg" --base-image "$IMAGE"
+                    solana-verify build --library-name "$pkg" --base-image "$IMAGE" --arch v3
                     echo "::endgroup::"
                     so="target/deploy/${pkg}.so"
                     got=$(solana-verify get-executable-hash "$so")

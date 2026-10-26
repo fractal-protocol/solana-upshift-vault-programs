@@ -1,6 +1,7 @@
 //! Test harness: fresh LiteSVM + initialized vault + helper functions for
 //! every instruction the pilot tests need.
 
+use crate::svm::{FailedTransactionMetadata, Svm, TransactionMetadata};
 use anchor_lang::{
     AccountDeserialize, AnchorDeserialize, AnchorSerialize, Discriminator, InstructionData,
     ToAccountMetas,
@@ -20,7 +21,6 @@ use august_withdrawal_queue::{
     accounts as q_accounts, instruction as q_ix,
     state::{WithdrawalQueue, WithdrawalRequest, WITHDRAWAL_REQUEST_SEED},
 };
-use litesvm::{types::FailedTransactionMetadata, LiteSVM};
 // `solana_sdk::bpf_loader_upgradeable` is deprecated in favour of the
 // `solana-loader-v3-interface` crate. We keep it rather than add a dependency
 // for two constants used only by the ProgramData test fixture below.
@@ -100,7 +100,7 @@ pub enum MintExtension {
 
 /// A live vault + every key the tests need to interact with it.
 pub struct VaultCtx {
-    pub svm: LiteSVM,
+    pub svm: Svm,
     /// Token program the vault was initialized against. **Crate-private**: the
     /// four ATA fields were derived from this value at construction time, so
     /// mutating it post-`fresh_*` would silently desync the derivations from
@@ -189,7 +189,7 @@ impl VaultCtx {
     ) -> Self {
         // The production 10 KB log cap stays: a test that read past it would
         // pass here and fail on a cluster.
-        let mut svm = LiteSVM::new();
+        let mut svm = Svm::new();
         let mut clock: solana_sdk::clock::Clock = svm.get_sysvar();
         clock.unix_timestamp = HARNESS_EPOCH;
         svm.set_sysvar(&clock);
@@ -212,8 +212,8 @@ impl VaultCtx {
         let payer = airdrop_keypair(&mut svm, 100_000_000_000);
         // Vault creation is gated on the ProgramConfig authority, and the config
         // itself can only be bootstrapped by the program's upgrade authority.
-        // LiteSVM loads programs under the non-upgradeable loader, so there is
-        // no real ProgramData account — we install one naming this keypair.
+        // LiteSVM installs a ProgramData with no upgrade authority, so we
+        // rewrite its header to name this keypair.
         let protocol_authority = airdrop_keypair(&mut svm, 10_000_000_000);
         install_program_data(&mut svm, &protocol_authority.pubkey());
         initialize_program_config(&mut svm, &protocol_authority);
@@ -396,7 +396,7 @@ impl VaultCtx {
         );
 
         VaultCtx {
-            svm: LiteSVM::new(),
+            svm: Svm::new(),
             token_program,
             decimals,
             vault_version,
@@ -1301,7 +1301,7 @@ impl VaultCtx {
     pub fn attach_withdrawal_queue(
         &mut self,
         queue: Pubkey,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let admin = self.admin.insecure_clone();
         self.attach_withdrawal_queue_as(&admin, queue)
     }
@@ -1312,7 +1312,7 @@ impl VaultCtx {
         &mut self,
         signer: &Keypair,
         queue: Pubkey,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let accounts = ix_accounts::AttachWithdrawalQueue {
             vault_state: self.vault_state,
             deposit_mint: self.deposit_mint,
@@ -1333,7 +1333,7 @@ impl VaultCtx {
     pub fn detach_withdrawal_queue(
         &mut self,
         queue: QueueCoSigner<'_>,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let admin = self.admin.insecure_clone();
         self.detach_withdrawal_queue_as(&admin, queue)
     }
@@ -1344,7 +1344,7 @@ impl VaultCtx {
         &mut self,
         signer: &Keypair,
         queue: QueueCoSigner<'_>,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let mut accounts = ix_accounts::DetachWithdrawalQueue {
             vault_state: self.vault_state,
             deposit_mint: self.deposit_mint,
@@ -1403,7 +1403,7 @@ impl VaultCtx {
     pub fn initialize_queue(
         &mut self,
         cooldown_seconds: u64,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let admin = self.admin.insecure_clone();
         let payer = self.payer.insecure_clone();
         self.initialize_queue_as(&admin, &payer, cooldown_seconds)
@@ -1415,7 +1415,7 @@ impl VaultCtx {
         admin: &Keypair,
         payer: &Keypair,
         cooldown_seconds: u64,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let (vault_state, deposit_mint, share_mint) =
             (self.vault_state, self.deposit_mint, self.share_mint);
         self.initialize_queue_for_vault_as(
@@ -1438,7 +1438,7 @@ impl VaultCtx {
         deposit_mint: Pubkey,
         share_mint: Pubkey,
         cooldown_seconds: u64,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let queue = withdrawal_queue_pda(&vault_state);
         let token_program = self.token_program.id();
         let accounts = q_accounts::InitializeQueue {
@@ -1478,7 +1478,7 @@ impl VaultCtx {
     pub fn set_cooldown(
         &mut self,
         seconds: u64,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let admin = self.admin.insecure_clone();
         self.set_cooldown_as(&admin, seconds)
     }
@@ -1487,14 +1487,14 @@ impl VaultCtx {
         &mut self,
         admin: &Keypair,
         seconds: u64,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         self.queue_admin_call_as(admin, q_ix::SetCooldown { seconds }.data())
     }
 
     pub fn set_fulfillment_window(
         &mut self,
         seconds: u64,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let admin = self.admin.insecure_clone();
         self.set_fulfillment_window_as(&admin, seconds)
     }
@@ -1503,7 +1503,7 @@ impl VaultCtx {
         &mut self,
         admin: &Keypair,
         seconds: u64,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         self.queue_admin_call_as(admin, q_ix::SetFulfillmentWindow { seconds }.data())
     }
 
@@ -1512,7 +1512,7 @@ impl VaultCtx {
         &mut self,
         admin: &Keypair,
         data: Vec<u8>,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let (queue, vault_state) = (self.withdrawal_queue_pda(), self.vault_state);
         self.queue_admin_call_with_accounts_as(admin, queue, vault_state, data)
     }
@@ -1525,7 +1525,7 @@ impl VaultCtx {
         queue: Pubkey,
         vault_state: Pubkey,
         data: Vec<u8>,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let accounts = q_accounts::QueueAdmin {
             queue,
             vault_state,
@@ -1636,7 +1636,7 @@ impl VaultCtx {
         &mut self,
         request_id: u64,
         shares: u64,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let user = self.user.insecure_clone();
         let (share_account, recipient) = (self.user_share_ata, self.user_deposit_ata);
         self.request_withdrawal_as(
@@ -1660,7 +1660,7 @@ impl VaultCtx {
         request_id: u64,
         shares: u64,
         finalizer: Pubkey,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let accounts = self.request_withdrawal_accounts(
             &owner.pubkey(),
             owner_share_account,
@@ -1704,7 +1704,7 @@ impl VaultCtx {
         request_id: u64,
         shares: u64,
         finalizer: Pubkey,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         self.send_request_withdrawal_with_floor(owner, accounts, request_id, shares, 0, finalizer)
     }
 
@@ -1715,7 +1715,7 @@ impl VaultCtx {
         request_id: u64,
         shares: u64,
         min_assets_out: u64,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let user = self.user.insecure_clone();
         let accounts = self.request_withdrawal_accounts(
             &user.pubkey(),
@@ -1743,7 +1743,7 @@ impl VaultCtx {
         shares: u64,
         min_assets_out: u64,
         finalizer: Pubkey,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let ix = Instruction {
             program_id: august_withdrawal_queue::ID,
             accounts: accounts.to_account_metas(None),
@@ -1763,7 +1763,7 @@ impl VaultCtx {
         &mut self,
         request_id: u64,
         expected_sequence: u64,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let user = self.user.insecure_clone();
         let owner = user.pubkey();
         self.finalize_withdrawal_as(&user, &owner, request_id, expected_sequence)
@@ -1777,7 +1777,7 @@ impl VaultCtx {
         request_owner: &Pubkey,
         request_id: u64,
         expected_sequence: u64,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let accounts =
             self.finalize_withdrawal_accounts(&finalizer.pubkey(), request_owner, request_id);
         self.send_finalize_withdrawal(finalizer, accounts, expected_sequence)
@@ -1820,7 +1820,7 @@ impl VaultCtx {
         finalizer: &Keypair,
         accounts: q_accounts::FinalizeWithdrawal,
         expected_sequence: u64,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let ix = Instruction {
             program_id: august_withdrawal_queue::ID,
             accounts: accounts.to_account_metas(None),
@@ -1852,7 +1852,7 @@ impl VaultCtx {
         &mut self,
         signer: &Keypair,
         ixs: &[Instruction],
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         send_tx(&mut self.svm, signer, ixs, &[signer])
     }
 
@@ -1936,7 +1936,7 @@ impl VaultCtx {
         &mut self,
         request_id: u64,
         expected_sequence: u64,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let user = self.user.insecure_clone();
         let (owner, destination) = (user.pubkey(), self.user_share_ata);
         self.cancel_withdrawal_as(&user, &owner, request_id, expected_sequence, destination)
@@ -1952,7 +1952,7 @@ impl VaultCtx {
         request_id: u64,
         expected_sequence: u64,
         destination: Pubkey,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let accounts = self.cancel_withdrawal_accounts(
             &signer.pubkey(),
             request_owner,
@@ -1991,7 +1991,7 @@ impl VaultCtx {
         signer: &Keypair,
         accounts: q_accounts::CancelWithdrawal,
         expected_sequence: u64,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let ix = Instruction {
             program_id: august_withdrawal_queue::ID,
             accounts: accounts.to_account_metas(None),
@@ -2001,9 +2001,7 @@ impl VaultCtx {
     }
 
     /// `release_vault` as the admin.
-    pub fn release_vault(
-        &mut self,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    pub fn release_vault(&mut self) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let admin = self.admin.insecure_clone();
         self.release_vault_as(&admin)
     }
@@ -2012,7 +2010,7 @@ impl VaultCtx {
     pub fn release_vault_as(
         &mut self,
         admin: &Keypair,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let accounts = self.release_vault_accounts(&admin.pubkey());
         self.send_release_vault(admin, accounts)
     }
@@ -2035,7 +2033,7 @@ impl VaultCtx {
         &mut self,
         admin: &Keypair,
         accounts: q_accounts::ReleaseVault,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let ix = Instruction {
             program_id: august_withdrawal_queue::ID,
             accounts: accounts.to_account_metas(None),
@@ -2145,7 +2143,7 @@ impl VaultCtx {
     pub fn sweep_escrow_shares(
         &mut self,
         destination: Pubkey,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let admin = self.admin.insecure_clone();
         self.sweep_escrow_shares_as(&admin, destination)
     }
@@ -2155,7 +2153,7 @@ impl VaultCtx {
         &mut self,
         signer: &Keypair,
         destination: Pubkey,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let accounts = self.sweep_escrow_shares_accounts(&signer.pubkey(), destination);
         self.send_sweep_escrow_shares(signer, accounts)
     }
@@ -2184,7 +2182,7 @@ impl VaultCtx {
         &mut self,
         signer: &Keypair,
         accounts: q_accounts::SweepEscrowShares,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let ix = Instruction {
             program_id: august_withdrawal_queue::ID,
             accounts: accounts.to_account_metas(None),
@@ -2201,7 +2199,7 @@ impl VaultCtx {
         request_owner: &Pubkey,
         request_id: u64,
         expected_sequence: u64,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let admin = self.admin.insecure_clone();
         self.expedite_request_as(&admin, request_owner, request_id, expected_sequence)
     }
@@ -2212,7 +2210,7 @@ impl VaultCtx {
         request_owner: &Pubkey,
         request_id: u64,
         expected_sequence: u64,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let accounts =
             self.expedite_request_accounts(&authority.pubkey(), request_owner, request_id);
         self.send_expedite_request(authority, accounts, expected_sequence)
@@ -2257,7 +2255,7 @@ impl VaultCtx {
         authority: &Keypair,
         accounts: q_accounts::ExpediteRequest,
         expected_sequence: u64,
-    ) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
         let ix = Instruction {
             program_id: august_withdrawal_queue::ID,
             accounts: accounts.to_account_metas(None),
@@ -2606,7 +2604,7 @@ impl VaultCtx {
     /// Drop the program's upgrade authority, modelling an immutable program.
     /// Mirrors [`BareCtx::make_program_immutable`].
     pub fn make_program_immutable(&mut self) {
-        write_program_data(&mut self.svm, program_data_pda(), None);
+        set_program_data_authority(&mut self.svm, None);
     }
 
     /// `set_config_authority` signed by an arbitrary keypair.
@@ -2873,14 +2871,14 @@ impl Subaccount {
 /// the authorization check on `initialize_config` behind an "account already in
 /// use" failure. Tests that exercise the bootstrap itself start from here.
 pub struct BareCtx {
-    pub svm: LiteSVM,
+    pub svm: Svm,
     /// The key named as upgrade authority by the installed `ProgramData`.
     pub upgrade_authority: Keypair,
 }
 
 impl BareCtx {
     pub fn new() -> Self {
-        let mut svm = LiteSVM::new();
+        let mut svm = Svm::new();
         svm.add_program(
             august_vault::ID,
             include_bytes!(concat!(env!("OUT_DIR"), "/august_vault.so")),
@@ -2936,7 +2934,7 @@ impl BareCtx {
 
     /// Drop the program's upgrade authority, modelling an immutable program.
     pub fn make_program_immutable(&mut self) {
-        write_program_data(&mut self.svm, program_data_pda(), None);
+        set_program_data_authority(&mut self.svm, None);
     }
 
     /// Attempt `initialize` on a program whose config has never been created,
@@ -3040,9 +3038,7 @@ pub fn expected_withdrawal_fee(assets: u64, fee_rate: u32) -> u64 {
 /// Every `E` the transaction emitted, in order. The vault logs its events as
 /// `Program data:` lines; the queue sends its own as self-CPI instructions
 /// (design decision 17), which the log cap cannot cut. Both sources are read.
-pub fn events_of<E: AnchorDeserialize + Discriminator>(
-    meta: &litesvm::types::TransactionMetadata,
-) -> Vec<E> {
+pub fn events_of<E: AnchorDeserialize + Discriminator>(meta: &TransactionMetadata) -> Vec<E> {
     use base64::Engine;
     let disc = E::DISCRIMINATOR;
     let logged = meta
@@ -3055,15 +3051,9 @@ pub fn events_of<E: AnchorDeserialize + Discriminator>(
                 .expect("Program data line is base64")
         });
     let sent = meta
-        .inner_instructions
+        .inner_instruction_data
         .iter()
-        .flatten()
-        .filter_map(|inner| {
-            inner
-                .instruction
-                .data
-                .strip_prefix(anchor_lang::event::EVENT_IX_TAG_LE)
-        })
+        .filter_map(|data| data.strip_prefix(anchor_lang::event::EVENT_IX_TAG_LE))
         .map(<[u8]>::to_vec);
     logged
         .chain(sent)
@@ -3117,14 +3107,14 @@ fn assert_custom_code(err: &FailedTransactionMetadata, expected_code: u32, label
 
 // ---- low-level helpers ----
 
-fn airdrop_keypair(svm: &mut LiteSVM, lamports: u64) -> Keypair {
+fn airdrop_keypair(svm: &mut Svm, lamports: u64) -> Keypair {
     let kp = Keypair::new();
     svm.airdrop(&kp.pubkey(), lamports).expect("airdrop");
     kp
 }
 
 fn create_mint(
-    svm: &mut LiteSVM,
+    svm: &mut Svm,
     payer: &Keypair,
     mint_kp: &Keypair,
     mint_authority: &Pubkey,
@@ -3169,7 +3159,7 @@ fn create_mint(
 /// A Token-2022 mint carrying `extensions`, initialized in the order the token
 /// program requires: account, extension initializers, then the mint itself.
 fn create_mint_2022_with_extensions(
-    svm: &mut LiteSVM,
+    svm: &mut Svm,
     payer: &Keypair,
     mint_kp: &Keypair,
     mint_authority: &Pubkey,
@@ -3234,7 +3224,7 @@ fn create_mint_2022_with_extensions(
 }
 
 fn create_ata(
-    svm: &mut LiteSVM,
+    svm: &mut Svm,
     payer: &Keypair,
     owner: &Pubkey,
     mint: &Pubkey,
@@ -3317,11 +3307,11 @@ fn mint_to_ix(
 }
 
 fn send_tx(
-    svm: &mut LiteSVM,
+    svm: &mut Svm,
     payer: &Keypair,
     instructions: &[Instruction],
     signers: &[&Keypair],
-) -> Result<litesvm::types::TransactionMetadata, FailedTransactionMetadata> {
+) -> Result<TransactionMetadata, FailedTransactionMetadata> {
     // Rotate the blockhash before every send. LiteSVM rejects a byte-identical
     // transaction replayed under the same blockhash with `AlreadyProcessed`,
     // which surfaces as an opaque failure in any test that intentionally
@@ -3349,28 +3339,48 @@ fn program_data_pda() -> Pubkey {
 
 /// Install a `ProgramData` account naming `upgrade_authority`.
 ///
-/// LiteSVM's `add_program` installs programs under the non-upgradeable loader,
-/// so no real `ProgramData` exists and `initialize_config` (which authenticates
-/// against it) could not otherwise be exercised. The bytes are the bincode form
-/// of `UpgradeableLoaderState::ProgramData`: a 4-byte enum index (3), an 8-byte
+/// LiteSVM's `add_program` writes a `ProgramData` with no upgrade authority, so
+/// `initialize_config` (which authenticates against it) could not otherwise be
+/// exercised. The header is the bincode form of
+/// `UpgradeableLoaderState::ProgramData`: a 4-byte enum index (3), an 8-byte
 /// slot, then `Option<Pubkey>` as a 1-byte `Some` tag plus the 32-byte key.
-fn install_program_data(svm: &mut LiteSVM, upgrade_authority: &Pubkey) {
-    install_program_data_at(svm, program_data_pda(), upgrade_authority);
+fn install_program_data(svm: &mut Svm, upgrade_authority: &Pubkey) {
+    set_program_data_authority(svm, Some(upgrade_authority));
 }
 
-fn install_program_data_at(svm: &mut LiteSVM, address: Pubkey, upgrade_authority: &Pubkey) {
-    write_program_data(svm, address, Some(upgrade_authority));
+/// A fresh, ELF-less `ProgramData` at an arbitrary address, for spoofing tests.
+fn install_program_data_at(svm: &mut Svm, address: Pubkey, upgrade_authority: &Pubkey) {
+    let data = vec![0u8; UpgradeableLoaderState::size_of_programdata_metadata()];
+    write_program_data(svm, address, data, Some(upgrade_authority));
+}
+
+/// Rewrite the header of the program's own `ProgramData`, keeping the ELF
+/// `add_program` wrote after it: LiteSVM reloads a program from its ProgramData
+/// if the program account is rewritten.
+fn set_program_data_authority(svm: &mut Svm, upgrade_authority: Option<&Pubkey>) {
+    let address = program_data_pda();
+    let data = svm
+        .get_account(&address)
+        .expect("ProgramData missing: call add_program first")
+        .data;
+    write_program_data(svm, address, data, upgrade_authority);
 }
 
 /// `upgrade_authority = None` models an **immutable** program (deployed or set
 /// with `--final`), which is a materially different state from "some other key
 /// holds it": `Some(signer)` can never equal `None`, so no one at all can pass
 /// the `initialize_config` check.
-fn write_program_data(svm: &mut LiteSVM, address: Pubkey, upgrade_authority: Option<&Pubkey>) {
+fn write_program_data(
+    svm: &mut Svm,
+    address: Pubkey,
+    mut data: Vec<u8>,
+    upgrade_authority: Option<&Pubkey>,
+) {
     const PROGRAM_DATA_VARIANT: u32 = 3;
-    let mut data = vec![0u8; UpgradeableLoaderState::size_of_programdata_metadata()];
+    let header_len = UpgradeableLoaderState::size_of_programdata_metadata();
     data[0..4].copy_from_slice(&PROGRAM_DATA_VARIANT.to_le_bytes());
-    // data[4..12] is the deployment slot; 0 is fine, nothing reads it.
+    // data[4..12] is the deployment slot (kept from LiteSVM, or 0); nothing reads it.
+    data[12..header_len].fill(0);
     if let Some(authority) = upgrade_authority {
         data[12] = 1; // Option::Some
         data[13..45].copy_from_slice(authority.as_ref());
@@ -3415,7 +3425,7 @@ fn initialize_config_ix(
 
 /// Bootstrap the config with `authority` as both the upgrade authority (per the
 /// installed `ProgramData`) and the resulting vault-creation authority.
-fn initialize_program_config(svm: &mut LiteSVM, authority: &Keypair) {
+fn initialize_program_config(svm: &mut Svm, authority: &Keypair) {
     let ix = initialize_config_ix(&authority.pubkey(), authority.pubkey(), program_data_pda());
     send_tx(svm, authority, &[ix], &[authority]).expect("initialize program config");
 }

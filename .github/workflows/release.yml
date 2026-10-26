@@ -37,7 +37,7 @@ concurrency:
 
 env:
     SOLANA_VERIFY_VERSION: "0.5.1"
-    VERIFIABLE_IMAGE: "solanafoundation/solana-verifiable-build@sha256:695f890e620db8c39afe5112e048599f8ee395a0cab5a2e572f30a72c6366cb4"
+    VERIFIABLE_IMAGE: "solanafoundation/solana-verifiable-build@sha256:12fd4c0a0790f0fc41ef74b0cdb6bccc167ba6137eb1adb749bac649481c86bd"
 
 jobs:
     guard:
@@ -129,7 +129,7 @@ jobs:
             - name: Reproducible build + assert verified-hashes.txt
               run: |
                   set -euo pipefail
-                  solana-verify build --library-name "$PACKAGE" --base-image "$VERIFIABLE_IMAGE"
+                  solana-verify build --library-name "$PACKAGE" --base-image "$VERIFIABLE_IMAGE" --arch v3
                   so="target/deploy/${PACKAGE}.so"
                   exec_got=$(solana-verify get-executable-hash "$so")
                   raw_got=$(sha256sum "$so" | cut -d' ' -f1)

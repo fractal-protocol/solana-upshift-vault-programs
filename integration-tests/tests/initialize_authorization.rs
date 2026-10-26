@@ -22,7 +22,7 @@ use august_vault::errors::ErrorCode;
 use integration_tests::harness::{
     assert_anchor_err, assert_anchor_framework_err, BareCtx, VaultCtx,
 };
-use litesvm::types::FailedTransactionMetadata;
+use integration_tests::svm::FailedTransactionMetadata;
 use solana_sdk::{
     instruction::InstructionError, pubkey::Pubkey, signature::Keypair, signature::Signer,
     transaction::TransactionError,

@@ -182,7 +182,7 @@ solana balance YOUR_WALLET --url mainnet
 **Solution:**
 ```bash
 anchor clean
-anchor build
+pnpm build
 ```
 
 ### Rate Limited (Devnet Only)

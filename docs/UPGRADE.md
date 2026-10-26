@@ -44,8 +44,9 @@ ceremonies are recorded under [Previous releases](#previous-releases).
 
 - **Expected hashes:** the `exec_sha256` / `raw_sha256` / `size` rows in
   [`verified-hashes.txt`](../verified-hashes.txt), built with `solana-verify`
-  0.5.1 in `solanafoundation/solana-verifiable-build@sha256:695f890e…`
-  (Solana 2.3.0). The release asserts both.
+  0.5.1 with `--arch v3` in
+  `solanafoundation/solana-verifiable-build@sha256:12fd4c0a…` (Solana 4.3.0).
+  The release asserts both.
 - **The vault binary hardcodes the queue's id** (`WITHDRAWAL_QUEUE_PROGRAM_ID`
   in `programs/august-vault/src/state/vault.rs`), and `attach_withdrawal_queue`
   accepts only a queue PDA owned by that program. So the queue must exist at
@@ -93,12 +94,20 @@ Rules for both program keypairs:
 ## Prerequisites
 
 - `solana-verify` 0.5.1 + Docker (to reproduce the build).
-- Solana CLI **2.x**, the version `ci.yml` pins as `SOLANA_VERSION`. Agave 3.x
-  and later break the permissionless `extend` in Step 4 (see the note there), and
-  newer CLIs also refuse a bare `solana program show` with `No default signer
-  found`. Put 2.x on PATH and check before starting:
-  `sh -c "$(curl -sSfL https://release.anza.xyz/v2.1.14/install)"`, then
-  `solana --version`.
+- Solana CLI **4.x**, the version `ci.yml` pins as `SOLANA_VERSION`
+  (`sh -c "$(curl -sSfL https://release.anza.xyz/v4.3.0/install)"`, then
+  `solana --version`). A 2.x CLI cannot upload these programs: it checks the ELF
+  before `write-buffer` / `deploy` and rejects SBPFv3 with `ELF error: Offset or
+  value is out of bounds`. 4.x CLIs also refuse a bare `solana program show` with
+  `No default signer found`, hence the `-k` on every `show` below.
+- SBPFv3 enabled on the target cluster. `solana feature status
+  5cC3foj77CWun58pC51ebHFUWavHWKarWyR5UUik7dnC -u "$URL"` must print `active`
+  (mainnet since epoch 993, devnet since 1069). Every local check runs with all
+  features on, so none of them would catch a cluster without it.
+- Only if Step 4 needs an `extend`: a Solana **2.x** CLI for that one command
+  (see the note there), installed beside the 4.x one rather than on PATH. An
+  SBPFv3 build is smaller than the v0 build it replaces, so the first v3 upgrade
+  needs none.
 - A **funded ops fee-payer** keypair (about 10 SOL at the current sizes). It is
   NOT the upgrade authority. It pays the queue's ProgramData rent (2.44 SOL,
   `solana rent 480173`) plus an equal buffer that the deploy refunds, the vault
@@ -127,7 +136,7 @@ Rules for both program keypairs:
   carry a recent blockhash. Rebuild each on the nonce before submitting it to
   Fordefi: prepend `AdvanceNonceAccount` and use the nonce value as the
   blockhash.
-- `anchor build` run once in the checkout, and `pnpm install`, if you encode
+- `pnpm build` run once in the checkout, and `pnpm install`, if you encode
   Step 6's instructions with the generated clients. The deployed bytecode still
   comes from the release artifacts.
 - The repository protections below provisioned. (The workflow fails closed
@@ -341,7 +350,7 @@ solana program set-upgrade-authority upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW
   -u "$URL" -k "$OPS"
 
 # Read back. Do not continue unless both hold.
-solana program show upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW -u "$URL"
+solana program show upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW -u "$URL" -k "$OPS"
 #   Authority: B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM
 solana-verify get-program-hash -u "$URL" upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW
 #   == verified-hashes.txt exec_sha256 for august_withdrawal_queue
@@ -358,7 +367,7 @@ for good, and the vault hardcodes this one.
 
 ```bash
 # 1. The upgrade authority is still the Fordefi key.
-solana program show up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt -u "$URL"
+solana program show up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt -u "$URL" -k "$OPS"
 #    Authority must be B75DMrVVhSgjjFQyVrYdDWMw9nCHLBU8UnsSXBGHkfYM
 
 # 2. Step 3 is done: upQhC7… exists under B75DMr… with the pinned hash.
@@ -394,8 +403,9 @@ sha256sum pre-upgrade-august_vault.so   # archive the file and both hashes
 #   additional_bytes = <new .so size> - <Data Length>
 #   (76,672 for the `v0.3.0` upgrade; recompute it every release, and skip the
 #   extend when the result is zero or negative)
-solana program extend up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt <additional_bytes> \
-  -u "$URL" -k "$OPS"   # ← Solana 2.x CLI only; see below
+SOLANA2=<path to the 2.x CLI, e.g. ~/solana-2.1.14/bin/solana>
+"$SOLANA2" program extend up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt <additional_bytes> \
+  -u "$URL" -k "$OPS"   # ← not the 4.x `solana` on PATH; see below
 # Afterwards `Data Length` must equal the new .so size exactly.
 
 solana program write-buffer "rel-$TAG/august_vault_$TAG.so" -u "$URL" -k "$OPS"
@@ -405,8 +415,8 @@ solana program set-buffer-authority <BUFFER_ADDRESS> \
   -u "$URL" -k "$OPS"
 ```
 
-> **The extend fails on an Agave 3.x CLI** with `Upgrade authority B75DM… does
-> not match <ops-payer>`. Agave 3.x sends `ExtendProgramChecked`, which needs the
+> **The extend fails on an Agave 3.x or later CLI** with `Upgrade authority B75DM… does
+> not match <ops-payer>`. Agave 3.x and later send `ExtendProgramChecked`, which needs the
 > upgrade authority's signature, and `solana program extend` signs with `-k`.
 > The on-chain `ExtendProgram` (loader instruction 6) is still permissionless: it
 > needs only a payer. That was executed on mainnet on 6 Aug 2026 with the ops
@@ -416,6 +426,11 @@ solana program set-buffer-authority <BUFFER_ADDRESS> \
 > LE 6, then u32 LE `additional_bytes`), accounts programdata (w), program (w),
 > system program, payer (signer, w). Simulate first and look for `Extended
 > ProgramData account by <n> bytes`.
+>
+> Newer loaders also set a floor: on a 4.3 test validator (every feature active)
+> an extend under 10,240 bytes is refused on-chain, with either instruction, unless
+> it reaches the maximum size. Check the target cluster before planning a
+> smaller one.
 
 **(Optional) pause user operations** via the admin key during the window (pause
 does not stop operator withdrawals).
@@ -469,7 +484,7 @@ tag itself.)
 
 ```bash
 COMMIT=$(git rev-list -n1 "$TAG")
-IMAGE=solanafoundation/solana-verifiable-build@sha256:695f890e620db8c39afe5112e048599f8ee395a0cab5a2e572f30a72c6366cb4
+IMAGE=solanafoundation/solana-verifiable-build@sha256:12fd4c0a0790f0fc41ef74b0cdb6bccc167ba6137eb1adb749bac649481c86bd
 
 for pair in up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt:august_vault \
             upQhC7mgYwmHLVaatRWoGAu394piLT9th9FiQZHnPrW:august_withdrawal_queue; do
@@ -480,9 +495,13 @@ for pair in up12bytoZBmwofqsySf2uqKQ7zpfeKiAWwfvqzJjtRt:august_vault \
     --commit-hash "$COMMIT" \
     --library-name "${pair##*:}" \
     --base-image "$IMAGE" \
+    --arch v3 \
     -u "$URL" --encoding base58
 done
 ```
+
+`--arch v3` is recorded in the PDA and OtterSec rebuilds with it. Leave it out
+and the rebuild is v0 (the default), which can never match the deployed program.
 
 Sign and submit each via **Fordefi**. **Then submit the OtterSec remote job for
 each.** This is a required step: the PDA only records *what to build*, and until

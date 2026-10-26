@@ -19,7 +19,8 @@ concurrency:
     cancel-in-progress: false
 
 env:
-    SOLANA_VERSION: "2.1.14"
+    # Keep in step with ci.yml.
+    SOLANA_VERSION: "4.3.0"
     # The `proptest!` macro lets PROPTEST_CASES override an in-file
     # `with_cases`, in both directions, so this must stay at or above the
     # largest in-file count (2048, property_arithmetic.rs). The queue walks

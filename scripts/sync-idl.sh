@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script to sync IDL files from contract build to app directory
-# Run this after 'anchor build' to update the app with latest IDL
+# Run this after ./scripts/build-programs.sh to update the app with latest IDL
 
 echo "🔄 Syncing IDL files to app directory..."
 
@@ -14,7 +14,7 @@ for program in august_vault august_withdrawal_queue; do
         cp "target/idl/${program}.json" frontend/idl/
         echo "✅ Copied ${program}.json"
     else
-        echo "❌ target/idl/${program}.json not found. Run 'anchor build' first."
+        echo "❌ target/idl/${program}.json not found. Run ./scripts/build-programs.sh first."
         exit 1
     fi
 done
@@ -24,7 +24,7 @@ for program in august_vault august_withdrawal_queue; do
         cp "target/types/${program}.ts" frontend/idl/
         echo "✅ Copied ${program}.ts"
     else
-        echo "❌ target/types/${program}.ts not found. Run 'anchor build' first."
+        echo "❌ target/types/${program}.ts not found. Run ./scripts/build-programs.sh first."
         exit 1
     fi
 done

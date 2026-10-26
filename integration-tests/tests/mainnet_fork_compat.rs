@@ -52,7 +52,7 @@ use august_vault::{
     accounts as ix_accounts, instruction as ix_data,
     state::vault::{VaultState, EXTRA_SHARES, VIRTUAL_ASSETS},
 };
-use litesvm::LiteSVM;
+use integration_tests::svm::Svm;
 use solana_sdk::{
     account::Account,
     instruction::Instruction,
@@ -84,8 +84,8 @@ fn pk(s: &str) -> Pubkey {
     Pubkey::from_str(s).unwrap()
 }
 
-fn new_svm() -> LiteSVM {
-    let mut svm = LiteSVM::new();
+fn new_svm() -> Svm {
+    let mut svm = Svm::new();
     let prog = include_bytes!(concat!(env!("OUT_DIR"), "/august_vault.so")).to_vec();
     svm.add_program(august_vault::ID, &prog)
         .expect("load august_vault.so — built by build.rs into OUT_DIR");
@@ -93,7 +93,7 @@ fn new_svm() -> LiteSVM {
 }
 
 /// Inject a raw account at `addr` with the given owner + data (rent-exempt).
-fn inject(svm: &mut LiteSVM, addr: Pubkey, owner: Pubkey, data: Vec<u8>) {
+fn inject(svm: &mut Svm, addr: Pubkey, owner: Pubkey, data: Vec<u8>) {
     let lamports = Rent::default().minimum_balance(data.len()).max(1);
     svm.set_account(
         addr,
@@ -125,13 +125,13 @@ fn packed_token(mint: Pubkey, owner: Pubkey, amount: u64) -> Vec<u8> {
     buf
 }
 
-fn token_amount(svm: &LiteSVM, addr: &Pubkey) -> u64 {
+fn token_amount(svm: &Svm, addr: &Pubkey) -> u64 {
     SplAccount::unpack(&svm.get_account(addr).unwrap().data[..SplAccount::LEN])
         .unwrap()
         .amount
 }
 
-fn read_vault_state(svm: &LiteSVM, addr: &Pubkey) -> VaultState {
+fn read_vault_state(svm: &Svm, addr: &Pubkey) -> VaultState {
     let acct = svm.get_account(addr).unwrap();
     let state = VaultState::try_deserialize(&mut acct.data.as_slice())
         .expect("current code must deserialize the real on-chain VaultState");
@@ -249,7 +249,7 @@ fn ref_assets(supply: u64, total_assets: u64, shares: u64) -> u64 {
 
 /// Re-serialize a (possibly modified) VaultState back into its account, keeping
 /// the original 455-byte allocation. Used to engineer a non-1:1 snapshot.
-fn overwrite_vault_state(svm: &mut LiteSVM, addr: Pubkey, vs: &VaultState) {
+fn overwrite_vault_state(svm: &mut Svm, addr: Pubkey, vs: &VaultState) {
     use anchor_lang::AccountSerialize;
     let mut data = Vec::new();
     vs.try_serialize(&mut data).unwrap();

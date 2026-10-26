@@ -20,10 +20,10 @@ vault by reading that field rather than assuming one redemption path.
 queue depends on the vault with `features = ["cpi"]`, and `cpi` implies
 `no-entrypoint`. Cargo unifies a dependency's features across a single build, so a
 workspace-wide `cargo build-sbf` compiles the vault once under
-`default ∪ cpi ∪ no-entrypoint` and emits a ~900-byte `august_vault.so` with no
+`default ∪ cpi ∪ no-entrypoint` and emits a 544-byte `august_vault.so` with no
 entrypoint for the loader to dispatch to. `integration-tests/build.rs` builds per
-manifest for this reason; CI uses `anchor build`, which already builds each program
-separately. Two guards catch a regression: `integration-tests/tests/embedded_artifacts.rs`
+manifest for this reason; `scripts/build-programs.sh` uses `anchor build`, which
+already builds each program separately. Two guards catch a regression: `integration-tests/tests/embedded_artifacts.rs`
 and the size floor in CI's program-size step.
 
 ## Features
@@ -90,8 +90,9 @@ so each deposit mint has a finite number of vault lifecycles.
 # it only ever sees committed state.
 ./scripts/install-hooks.sh
 
-# Build
-anchor build
+# Build (SBPFv3). Not a bare `anchor build`: that takes the toolchain's
+# default arch, which is v0 on Solana 4.3.
+./scripts/build-programs.sh
 
 # Test
 ./scripts/run-tests.sh
@@ -479,7 +480,7 @@ the first time; a PR body can be edited, a commit message effectively cannot.
 
 ## Reproducible Builds & Verification
 
-Both programs build reproducibly: `solana-verify build` in a pinned Docker image (Solana 2.3.0) yields a byte-identical `.so` per program, whose SHA-256 is recorded in [`verified-hashes.txt`](verified-hashes.txt) and asserted in CI and at release, and each embeds a `security_txt!` contact + source-repo pointer in its bytecode. Because both are **upgradeable**, on-chain verification is point-in-time. See **[VERIFY.md](VERIFY.md)** for the pinned toolchain, exact commands, expected hashes, and how to verify the live on-chain programs.
+Both programs build reproducibly: `solana-verify build --arch v3` in a pinned Docker image (Solana 4.3.0) yields a byte-identical `.so` per program, whose SHA-256 is recorded in [`verified-hashes.txt`](verified-hashes.txt) and asserted in CI and at release, and each embeds a `security_txt!` contact + source-repo pointer in its bytecode. Because both are **upgradeable**, on-chain verification is point-in-time. See **[VERIFY.md](VERIFY.md)** for the pinned toolchain, exact commands, expected hashes, and how to verify the live on-chain programs.
 
 ## License
 

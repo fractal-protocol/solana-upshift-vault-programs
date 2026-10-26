@@ -17,7 +17,7 @@ use august_withdrawal_queue::events::EscrowSwept;
 use integration_tests::harness::{
     assert_anchor_err, assert_anchor_framework_err, events_of, VaultCtx, DEPOSIT_DECIMALS,
 };
-use litesvm::types::FailedTransactionMetadata;
+use integration_tests::svm::FailedTransactionMetadata;
 use solana_sdk::{pubkey::Pubkey, signer::Signer};
 
 const DEPOSIT_AMOUNT: u64 = 10 * 10u64.pow(DEPOSIT_DECIMALS as u32);
