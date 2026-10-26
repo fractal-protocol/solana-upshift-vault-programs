@@ -64,4 +64,6 @@ base64 = "0.21"
 
 [dev-dependencies]
 proptest = "1"
+# Only for svm.rs's BorshIoError recode test.
+solana-instruction-error = "2.5"
 test-case = "3.3.1"

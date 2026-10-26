@@ -4,7 +4,7 @@
 //! crates, while the programs, Anchor 0.31 and spl are on 2.x. Rather than
 //! convert at every call site, this wrapper exposes the handful of LiteSVM
 //! methods the tests use in 2.x terms. Transactions and errors cross by their
-//! bincode wire form, which both lines keep identical; accounts, keys and hashes
+//! bincode wire form, which both lines keep compatible; accounts, keys and hashes
 //! cross field by field.
 
 use litesvm::{error::LiteSVMError, LiteSVM};
@@ -152,5 +152,28 @@ fn convert_result(result: litesvm::types::TransactionResult) -> TransactionResul
                 meta: meta(f.meta),
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use solana_instruction_error::InstructionError as InstructionErrorV3;
+    use solana_sdk::instruction::InstructionError;
+
+    // The one variant whose shape differs: `BorshIoError` is a unit variant on
+    // the newer line and carries a `String` on 2.x. 2.x's hand-written
+    // `Deserialize` accepts the missing string; this pins that across bumps.
+    #[test]
+    fn borsh_io_error_recodes() {
+        let err = solana_transaction_error_v3::TransactionError::InstructionError(
+            2,
+            InstructionErrorV3::BorshIoError,
+        );
+        let recoded: TransactionError = recode(&err);
+        assert_eq!(
+            recoded,
+            TransactionError::InstructionError(2, InstructionError::BorshIoError(String::new()))
+        );
     }
 }

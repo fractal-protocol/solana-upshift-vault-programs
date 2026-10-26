@@ -626,7 +626,14 @@ Step 6) fails to decode, and the call rejects before listing anything.
   byte-exact to `pre-upgrade-august_vault.so` from Step 4 (write-buffer →
   set-buffer-authority → Fordefi `Upgrade`; no extend unless the release shrank
   the binary; confirm `get-program-hash` returns the hash Step 4 recorded,
-  `cb1352a5…` for the `v0.3.0` upgrade), or forward to a hotfix. Two things to know:
+  `cb1352a5…` for the `v0.3.0` upgrade), or forward to a hotfix. Three things to know:
+  - From the first SBPFv3 upgrade on, `pre-upgrade-august_vault.so` from that upgrade is
+    an SBPFv0 binary. SIMD-0500 (`B8JJXCy5amZyWG9r7EnUYLwzXSXTxG7GZ1qZ1qggo83g`,
+    inactive on mainnet and devnet as of 26 Oct 2026) refuses v0 deployments once
+    active, so check `solana feature status B8JJXCy5amZyWG9r7EnUYLwzXSXTxG7GZ1qZ1qggo83g
+    -u "$URL"` first. If it is active, the byte-exact rollback is gone: roll forward
+    to a hotfix, or to the previous release's source rebuilt with `--arch v3` (a new
+    hash, so verify it like any release).
   - The old binary does not read `withdrawal_queue_authority`, so a vault left
     attached through a rollback reopens direct redemption while the queue still
     holds escrowed shares. Those still finalize (the old `redeem` accepts the
