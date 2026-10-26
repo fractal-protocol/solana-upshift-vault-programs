@@ -1772,6 +1772,7 @@ dependencies = [
  "serde",
  "solana-account 4.7.0",
  "solana-address 2.7.0",
+ "solana-instruction-error",
  "solana-sdk",
  "solana-transaction 4.3.0",
  "solana-transaction-error 3.4.0",
