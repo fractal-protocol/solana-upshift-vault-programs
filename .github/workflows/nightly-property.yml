@@ -35,16 +35,20 @@ jobs:
         permissions:
             contents: read
         steps:
-            - uses: actions/checkout@v4
-            - uses: dtolnay/rust-toolchain@stable
+            - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+              with:
+                  persist-credentials: false
+            - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+              with:
+                  toolchain: stable
 
             - name: Cache Solana CLI
               id: cache-solana
-              uses: actions/cache@v4
+              uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
               with:
                   path: ~/.local/share/solana/install
                   key: ${{ runner.os }}-solana-${{ env.SOLANA_VERSION }}
-            - uses: actions/cache@v4
+            - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
               with:
                   path: |
                       ~/.cargo/registry/index/
@@ -81,7 +85,7 @@ jobs:
             # it so the failure can be replayed locally by dropping the file in.
             - name: Upload failing seeds
               if: failure()
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
               with:
                   name: proptest-regressions
                   path: integration-tests/tests/*.proptest-regressions

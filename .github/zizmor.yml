@@ -1,0 +1,5 @@
+rules:
+    # Suggests `$/...` for local reusable workflows. `./...` already resolves to
+    # this repository at the calling commit; nothing to harden.
+    self-repository:
+        disable: true

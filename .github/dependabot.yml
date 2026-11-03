@@ -1,0 +1,48 @@
+version: 2
+
+# A week's cooldown on new releases, so a compromised or yanked version has time
+# to be caught upstream before it reaches a PR here.
+updates:
+    - package-ecosystem: github-actions
+      directory: /
+      schedule:
+          interval: weekly
+      cooldown:
+          default-days: 7
+      groups:
+          actions:
+              patterns: ["*"]
+
+    - package-ecosystem: npm
+      directory: /
+      schedule:
+          interval: weekly
+      cooldown:
+          default-days: 7
+      groups:
+          npm:
+              patterns: ["*"]
+
+    # Host-side workspaces only. Nothing here reaches the on-chain bytecode.
+    - package-ecosystem: cargo
+      directories:
+          - /integration-tests
+          - /clients/rust/august-vault
+          - /clients/rust/august-withdrawal-queue
+      schedule:
+          interval: weekly
+      cooldown:
+          default-days: 7
+      groups:
+          cargo-host:
+              patterns: ["*"]
+
+    # The programs. Any lockfile change alters the bytecode, invalidates
+    # verified-hashes.txt and needs an upgrade ceremony, so routine version
+    # bumps are off (limit 0). Security updates still open PRs when Dependabot
+    # security updates are enabled in the repo settings.
+    - package-ecosystem: cargo
+      directory: /
+      schedule:
+          interval: weekly
+      open-pull-requests-limit: 0

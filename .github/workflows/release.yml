@@ -240,6 +240,7 @@ jobs:
                   HASHES=""
                   for pkg in $pkgs; do
                     exec=$(grep -o 'exec_sha256=.*' "dist/${pkg}_${TAG}.hashes.txt" | cut -d= -f2)
+                    # shellcheck disable=SC2016 # backticks are Markdown, not command substitution
                     HASHES=$(printf '%s\n- `%s`: `%s`' "$HASHES" "$pkg" "$exec")
                   done
                   NOTES=$(printf 'Reproducible builds at commit %s (solana-verify %s, image %s).\n\nExecutable hashes (get-program-hash / get-executable-hash):\n%s\n\nReproduce: check out this tag and follow VERIFY.md.\n\nDeploying on-chain: these artifacts are NOT auto-deployed. The mainnet upgrade authority is a Fordefi MPC key; perform the upgrade, deployment and OtterSec registration per docs/UPGRADE.md. Verification is point-in-time (the programs are upgradeable).' \
