@@ -104,6 +104,7 @@ fn keeper(ctx: &mut VaultCtx) -> Keypair {
     ctx.new_funded_keypair(1_000_000_000)
 }
 
+#[allow(clippy::too_many_arguments)] // one argument per event field
 fn assert_full_finalized_event(
     meta: &integration_tests::svm::TransactionMetadata,
     ctx: &VaultCtx,

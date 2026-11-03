@@ -23,16 +23,6 @@ env:
     # 4.x for SBPFv3. Matches the Solana release in the verifiable-build image.
     SOLANA_VERSION: "4.3.0"
     ANCHOR_VERSION: "0.31.1"
-    # Lints allowed in every clippy run over program code (root workspace and
-    # integration-tests). One list, so the two runs cannot drift apart.
-    CLIPPY_ALLOW: >-
-        -A unexpected_cfgs
-        -A clippy::too_many_arguments
-        -A clippy::useless_asref
-        -A clippy::needless_return
-        -A clippy::legacy_numeric_constants
-        -A clippy::unnecessary_cast
-        -A deprecated
 
 jobs:
     # Detect whether any non-docs files changed, to gate the expensive jobs.
@@ -130,11 +120,16 @@ jobs:
                   restore-keys: ${{ runner.os }}-cargo-clippy-
             - name: Run Clippy
               run: |
-                  read -ra allow <<< "$CLIPPY_ALLOW"
-                  cargo clippy --all-targets --all-features -- "${allow[@]}" -D warnings
+                  cargo clippy --all-targets --all-features -- \
+                    -A unexpected_cfgs \
+                    -A clippy::too_many_arguments \
+                    -A clippy::useless_asref \
+                    -A clippy::needless_return \
+                    -A clippy::legacy_numeric_constants \
+                    -A clippy::unnecessary_cast \
+                    -A deprecated \
+                    -D warnings
 
-    # cargo-audit over all four lockfiles plus pnpm audit. Shared with the daily
-    # scheduled run in audit.yml.
     security:
         name: Security Audit
         uses: ./.github/workflows/audit.yml
@@ -216,14 +211,15 @@ jobs:
             # guarantee as soon as it has a test to dodge.
             - name: cargo test (all features)
               run: |
-                  cargo test --all-features --locked --manifest-path clients/rust/august-vault/Cargo.toml
-                  cargo test --all-features --locked --manifest-path clients/rust/august-withdrawal-queue/Cargo.toml
-            # Generated code: each crate's [lints] table allows the unused imports
-            # Codama emits, so anything clippy still raises is real.
+                  for m in clients/rust/*/Cargo.toml; do
+                    cargo test --all-features --locked --manifest-path "$m"
+                  done
+            # No allow flags: each crate's [lints] table already allows what Codama emits.
             - name: Clippy (all features)
               run: |
-                  cargo clippy --all-targets --all-features --locked --manifest-path clients/rust/august-vault/Cargo.toml -- -D warnings
-                  cargo clippy --all-targets --all-features --locked --manifest-path clients/rust/august-withdrawal-queue/Cargo.toml -- -D warnings
+                  for m in clients/rust/*/Cargo.toml; do
+                    cargo clippy --all-targets --all-features --locked --manifest-path "$m" -- -D warnings
+                  done
 
     test:
         name: Build & Test
@@ -311,6 +307,22 @@ jobs:
                     [ "$SZ" -le 1400000 ] || echo "::warning::${prog}.so exceeds 1.4MB ($SZ bytes)"
                   done
 
+            # Phase 1 only: the IDL embeds the program id, which phase 2 rewrites.
+            - name: Generated clients match the IDL
+              run: |
+                  set -euo pipefail
+                  pnpm generate-clients
+                  if [ -n "$(git status --porcelain -- clients/)" ]; then
+                    git status --short -- clients/
+                    git diff --stat -- clients/
+                    echo "::error::clients/ is stale. Run 'pnpm generate-clients' after the build and commit the result."
+                    exit 1
+                  fi
+
+            # Needs target/types from the build above.
+            - name: Typecheck TS tests
+              run: pnpm typecheck
+
             - name: Rust unit tests (program-side math)
               # --workspace so a new program's unit tests are picked up without
               # editing this step.
@@ -325,29 +337,9 @@ jobs:
             - name: LiteSVM integration tests (incl. mainnet-fork layout guard)
               run: cargo test --manifest-path integration-tests/Cargo.toml --tests --locked
 
-            # CLIPPY_ALLOW is shared with the root clippy job. Runs here, not there: build.rs
-            # needs cargo-build-sbf, and phase 2 below rewrites program sources.
+            # Before phase 2, which rewrites program sources.
             - name: Clippy (integration-tests)
-              run: |
-                  read -ra allow <<< "$CLIPPY_ALLOW"
-                  cargo clippy --manifest-path integration-tests/Cargo.toml --all-targets --all-features --locked -- "${allow[@]}" -D warnings
-
-            # Must run in phase 1: the IDL embeds the program id, so after the
-            # localnet rewrite below the regenerated clients would differ.
-            - name: Generated clients match the IDL
-              run: |
-                  set -euo pipefail
-                  node scripts/generate-clients.mjs
-                  if [ -n "$(git status --porcelain -- clients/)" ]; then
-                    git status --short -- clients/
-                    git diff --stat -- clients/
-                    echo "::error::clients/ is stale. Run 'pnpm generate-clients' after the build and commit the result."
-                    exit 1
-                  fi
-
-            # Needs target/types from the build above.
-            - name: Typecheck TS tests
-              run: pnpm typecheck
+              run: cargo clippy --manifest-path integration-tests/Cargo.toml --all-targets --all-features --locked -- -D warnings
 
             # Phase 2 — the real mainnet program keypair isn't in the repo, so
             # rewrite declare_id! to a fresh localnet keypair and rebuild before

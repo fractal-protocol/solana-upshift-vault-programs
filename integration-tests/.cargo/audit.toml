@@ -1,12 +1,9 @@
-# cargo-audit configuration for the LiteSVM test workspace. Run from this
-# directory so it is picked up; the root .cargo/audit.toml covers the on-chain
-# programs and stays stricter.
+# cargo-audit ignore list for the LiteSVM test workspace.
 #
 # Test-only code: nothing here ships. Every entry comes in through litesvm and
 # the Solana runtime crates it embeds. Re-evaluate when litesvm is bumped.
 #
-# Enforced by the `cargo` job in .github/workflows/audit.yml (run by ci.yml
-# and on a daily schedule), which runs cargo-audit from this directory.
+# Read by .github/workflows/audit.yml.
 
 [advisories]
 ignore = [

@@ -1,13 +1,10 @@
-# cargo-audit configuration for the generated client crates. Run from this
-# directory (`cargo audit --file <crate>/Cargo.lock`) so it is picked up; the
-# root .cargo/audit.toml covers the on-chain programs and stays stricter.
+# cargo-audit ignore list for the generated client crates.
 #
 # Every entry is reached only through the optional `solana-sdk` feature
 # (solana-sdk 2.x -> solana-keypair -> ed25519-dalek 1.x). The default build
 # does not compile any of them. Re-evaluate when the solana-sdk pin moves.
 #
-# Enforced by the `cargo` job in .github/workflows/audit.yml (run by ci.yml
-# and on a daily schedule), which runs cargo-audit from this directory.
+# Read by .github/workflows/audit.yml.
 
 [advisories]
 ignore = [

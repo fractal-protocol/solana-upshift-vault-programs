@@ -23,19 +23,20 @@ jobs:
             - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
               with:
                   tool: cargo-audit
-            # Each workspace has its own lockfile and its own ignore list, read
-            # from .cargo/audit.toml in the directory audit runs from. The root
-            # list covers the on-chain programs and is the strictest.
+            # cargo-audit reads .cargo/audit.toml from the directory it runs in, so each
+            # workspace keeps its own ignore list; the root one (programs) is strictest.
+            # The first run fetches the advisory DB; the rest reuse it.
             - name: Programs (root workspace)
               run: cargo audit
             - name: Integration tests
               working-directory: integration-tests
-              run: cargo audit
+              run: cargo audit --no-fetch
             - name: Generated clients
               working-directory: clients/rust
               run: |
-                  cargo audit --file august-vault/Cargo.lock
-                  cargo audit --file august-withdrawal-queue/Cargo.lock
+                  for lock in */Cargo.lock; do
+                    cargo audit --no-fetch --file "$lock"
+                  done
 
     npm:
         name: pnpm audit
@@ -48,12 +49,12 @@ jobs:
             - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
               with:
                   node-version: "20"
-            # Runtime deps only: devDependencies (mocha, codama, prettier) never
-            # see untrusted input. Ignored GHSAs live in package.json
-            # (pnpm.auditConfig). toml only parses our own Anchor.toml inside
-            # @coral-xyz/anchor. bigint-buffer IS reachable: spl-token decodes RPC
-            # account data with it, deploy scripts included. It has no patched
-            # release, so it stays ignored until spl-token drops it; use a
-            # trusted RPC endpoint for deploys.
+            # Runtime deps only: devDependencies never see untrusted input.
+            # Ignored in package.json (pnpm.auditConfig.ignoreGhsas), none with an in-major fix:
+            #   GHSA-3gc7-fjrx-p6mg  bigint-buffer, via spl-token. Reachable from RPC account
+            #                        decoding (deploy scripts too); no patched release exists.
+            #   GHSA-82x6-q7mm-w9cf, GHSA-v5mp-jgw5-2x6j, GHSA-4qx8-w7c3-pj3p,
+            #   GHSA-9j65-hcg3-gc64, GHSA-9qmh-m7c6-f92p
+            #                        toml 3.x, via @coral-xyz/anchor. Parses only our Anchor.toml.
             - name: pnpm audit (prod, high+)
               run: pnpm audit --prod --audit-level=high

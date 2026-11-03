@@ -37,6 +37,11 @@ publish = false
 [lib]
 path = "src/lib.rs"
 
+# solana_sdk::system_instruction is deprecated in favour of
+# solana-system-interface; moving needs a version that matches the SDK 2.x types.
+[lints.rust]
+deprecated = "allow"
+
 [dependencies]
 august-vault = { path = "../programs/august-vault", features = ["no-entrypoint"] }
 august-withdrawal-queue = { path = "../programs/august-withdrawal-queue", features = ["no-entrypoint"] }

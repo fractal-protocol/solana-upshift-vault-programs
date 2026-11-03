@@ -9,8 +9,7 @@
 # Solana, and remove any entry whose underlying crate version is no longer in
 # Cargo.lock.
 #
-# Enforced by the `cargo` job in .github/workflows/audit.yml (run by ci.yml
-# and on a daily schedule), which runs cargo-audit from this directory.
+# Read by .github/workflows/audit.yml.
 
 [advisories]
 ignore = [
