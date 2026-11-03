@@ -7,25 +7,25 @@
 // governed by version 2.0 of the Apache License.
 
 import * as anchor from "@coral-xyz/anchor";
-import * as token from "@solana/spl-token"
+import * as token from "@solana/spl-token";
 import * as assert from "assert";
-import {VaultContext} from "./helper/context";
-import {PublicKey} from "@solana/web3.js";
+import { VaultContext } from "./helper/context";
+import { PublicKey } from "@solana/web3.js";
 import { MIN_FIRST_DEPOSIT } from "./helper/config";
 import BN from "bn.js";
-import {expect} from "chai";
+import { expect } from "chai";
 
 describe("august-vault-operator", () => {
     anchor.setProvider(anchor.AnchorProvider.env());
-    let vaultContext: VaultContext
+    let vaultContext: VaultContext;
     // Must clear the opening floor, which is now MIN_SUPPLY_MULTIPLE * share_offset
     // (10^8) rather than the 9-decimal mint's 10^6 — see MIN_FIRST_DEPOSIT.
-    let amount = MIN_FIRST_DEPOSIT
-    let deployCapital = 80 * amount / 100;
+    let amount = MIN_FIRST_DEPOSIT;
+    let deployCapital = (80 * amount) / 100;
 
     before(async () => {
-        vaultContext = new VaultContext
-        await vaultContext.init()
+        vaultContext = new VaultContext();
+        await vaultContext.init();
 
         await vaultContext.vaultProgram.methods
             .deposit(new BN(amount))
@@ -44,43 +44,34 @@ describe("august-vault-operator", () => {
     });
 
     it("Operator should be able to withdraw funds from the vault", async () => {
-        const operatorBalanceBefore = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.operatorUsdgAta
-        )).amount
+        const operatorBalanceBefore = (await token.getAccount(vaultContext.connection, vaultContext.operatorUsdgAta))
+            .amount;
 
-        const vaultBalanceBefore = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.vaultUsdgAta
-        )).amount
+        const vaultBalanceBefore = (await token.getAccount(vaultContext.connection, vaultContext.vaultUsdgAta)).amount;
 
         const vaultBefore = await vaultContext.vaultProgram.account.vaultState.fetch(vaultContext.vaultStatePda);
 
-        await vaultContext.vaultProgram.methods.operatorWithdraw(new BN(amount))
-            .accounts({
+        await vaultContext.vaultProgram.methods
+            .operatorWithdraw(new BN(amount))
+            .accountsPartial({
                 vaultState: vaultContext.vaultStatePda,
                 vaultDepositAta: vaultContext.vaultUsdgAta,
                 operatorTokenAccount: vaultContext.operatorUsdgAta,
                 subaccount: null,
                 depositMint: vaultContext.usdgTokenMint,
                 operator: vaultContext.operator.publicKey,
-                tokenProgram: token.TOKEN_PROGRAM_ID
+                tokenProgram: token.TOKEN_PROGRAM_ID,
             })
             .signers([vaultContext.operator])
             .rpc();
 
-        const operatorBalanceAfter = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.operatorUsdgAta
-        )).amount
+        const operatorBalanceAfter = (await token.getAccount(vaultContext.connection, vaultContext.operatorUsdgAta))
+            .amount;
 
-        const vaultBalanceAfter = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.vaultUsdgAta
-        )).amount
+        const vaultBalanceAfter = (await token.getAccount(vaultContext.connection, vaultContext.vaultUsdgAta)).amount;
 
-        assert.equal(Number(vaultBalanceBefore), Number(vaultBalanceAfter) + amount)
-        assert.equal(Number(operatorBalanceBefore) + amount, Number(operatorBalanceAfter))
+        assert.equal(Number(vaultBalanceBefore), Number(vaultBalanceAfter) + amount);
+        assert.equal(Number(operatorBalanceBefore) + amount, Number(operatorBalanceAfter));
 
         const vault = await vaultContext.vaultProgram.account.vaultState.fetch(vaultContext.vaultStatePda);
 
@@ -92,62 +83,55 @@ describe("august-vault-operator", () => {
         const vault = await vaultContext.vaultProgram.account.vaultState.fetch(vaultContext.vaultStatePda);
         const localAum = vault.localAum;
 
-        await assert.rejects(vaultContext.vaultProgram.methods
-            .redeem(new BN(localAum).add(new BN(1)))
-            .accounts({
-                vaultState: vaultContext.vaultStatePda,
-                vaultDepositAta: vaultContext.vaultUsdgAta,
-                senderTokenAccount: vaultContext.senderUsdgAta,
-                senderShareAccount: vaultContext.senderShareAta,
-                feeRecipientAccount: vaultContext.feeRecipientUsdgAta,
-                shareMint: vaultContext.shareMint,
-                depositMint: vaultContext.usdgTokenMint,
-                signer: vaultContext.deployer.publicKey,
-                tokenProgram: token.TOKEN_PROGRAM_ID
-            })
-            .signers([vaultContext.deployer])
-            .rpc());
-        /Not Enough Liquidity/
+        await assert.rejects(
+            vaultContext.vaultProgram.methods
+                .redeem(new BN(localAum).add(new BN(1)))
+                .accounts({
+                    vaultState: vaultContext.vaultStatePda,
+                    vaultDepositAta: vaultContext.vaultUsdgAta,
+                    senderTokenAccount: vaultContext.senderUsdgAta,
+                    senderShareAccount: vaultContext.senderShareAta,
+                    feeRecipientAccount: vaultContext.feeRecipientUsdgAta,
+                    shareMint: vaultContext.shareMint,
+                    depositMint: vaultContext.usdgTokenMint,
+                    signer: vaultContext.deployer.publicKey,
+                    tokenProgram: token.TOKEN_PROGRAM_ID,
+                })
+                .signers([vaultContext.deployer])
+                .rpc()
+        );
+        /Not Enough Liquidity/;
     });
 
     it("Operator should be able to deposit funds back on the vault", async () => {
-        const operatorBalanceBefore = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.operatorUsdgAta
-        )).amount
+        const operatorBalanceBefore = (await token.getAccount(vaultContext.connection, vaultContext.operatorUsdgAta))
+            .amount;
 
-        const vaultBalanceBefore = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.vaultUsdgAta
-        )).amount
+        const vaultBalanceBefore = (await token.getAccount(vaultContext.connection, vaultContext.vaultUsdgAta)).amount;
 
         const vaultBefore = await vaultContext.vaultProgram.account.vaultState.fetch(vaultContext.vaultStatePda);
 
-        await vaultContext.vaultProgram.methods.operatorDeposit(new BN(amount))
-            .accounts({
+        await vaultContext.vaultProgram.methods
+            .operatorDeposit(new BN(amount))
+            .accountsPartial({
                 vaultState: vaultContext.vaultStatePda,
                 vaultDepositAta: vaultContext.vaultUsdgAta,
                 operatorTokenAccount: vaultContext.operatorUsdgAta,
                 subaccount: null,
                 depositMint: vaultContext.usdgTokenMint,
                 operator: vaultContext.operator.publicKey,
-                tokenProgram: token.TOKEN_PROGRAM_ID
+                tokenProgram: token.TOKEN_PROGRAM_ID,
             })
             .signers([vaultContext.operator])
             .rpc();
 
-        const operatorBalanceAfter = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.operatorUsdgAta
-        )).amount
+        const operatorBalanceAfter = (await token.getAccount(vaultContext.connection, vaultContext.operatorUsdgAta))
+            .amount;
 
-        const vaultBalanceAfter = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.vaultUsdgAta
-        )).amount
+        const vaultBalanceAfter = (await token.getAccount(vaultContext.connection, vaultContext.vaultUsdgAta)).amount;
 
-        assert.equal(Number(vaultBalanceBefore) + amount, Number(vaultBalanceAfter))
-        assert.equal(Number(operatorBalanceBefore), Number(operatorBalanceAfter) + amount)
+        assert.equal(Number(vaultBalanceBefore) + amount, Number(vaultBalanceAfter));
+        assert.equal(Number(operatorBalanceBefore), Number(operatorBalanceAfter) + amount);
 
         const vault = await vaultContext.vaultProgram.account.vaultState.fetch(vaultContext.vaultStatePda);
 
@@ -155,16 +139,17 @@ describe("august-vault-operator", () => {
         assert.equal(vault.localAum.toNumber(), new BN(vaultBefore.localAum).add(new BN(amount)));
     });
 
-    it('Should be possible for the operator to update the aum of the vault', async () => {
-        await vaultContext.vaultProgram.methods.operatorWithdraw(new BN(deployCapital))
-            .accounts({
+    it("Should be possible for the operator to update the aum of the vault", async () => {
+        await vaultContext.vaultProgram.methods
+            .operatorWithdraw(new BN(deployCapital))
+            .accountsPartial({
                 vaultState: vaultContext.vaultStatePda,
                 vaultDepositAta: vaultContext.vaultUsdgAta,
                 operatorTokenAccount: vaultContext.operatorUsdgAta,
                 subaccount: null,
                 depositMint: vaultContext.usdgTokenMint,
                 operator: vaultContext.operator.publicKey,
-                tokenProgram: token.TOKEN_PROGRAM_ID
+                tokenProgram: token.TOKEN_PROGRAM_ID,
             })
             .signers([vaultContext.operator])
             .rpc();
@@ -172,10 +157,10 @@ describe("august-vault-operator", () => {
         let vault = await vaultContext.vaultProgram.account.vaultState.fetch(vaultContext.vaultStatePda);
         const deployedAumBefore = vault.deployedAum;
 
-
         // Vault limit is 0.2% (20 basis points), so use 0.1% increase to stay within limits
-        const updatedAum = Math.floor(1001 * deployedAumBefore.toNumber() / 1000);
-        await vaultContext.vaultProgram.methods.operatorUpdateAum(new BN(updatedAum))
+        const updatedAum = Math.floor((1001 * deployedAumBefore.toNumber()) / 1000);
+        await vaultContext.vaultProgram.methods
+            .operatorUpdateAum(new BN(updatedAum))
             .accounts({
                 vaultState: vaultContext.vaultStatePda,
                 operator: vaultContext.operator.publicKey,
@@ -191,34 +176,30 @@ describe("august-vault-operator", () => {
         assert.equal(deployedAumAfter.toNumber(), updatedAum);
     });
 
-    it('User should benefit from aum increase', async () => {
-        const operatorBalance = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.operatorUsdgAta
-        )).amount
+    it("User should benefit from aum increase", async () => {
+        const operatorBalance = (await token.getAccount(vaultContext.connection, vaultContext.operatorUsdgAta)).amount;
 
-        await vaultContext.vaultProgram.methods.operatorDeposit(new BN(operatorBalance))
-            .accounts({
+        await vaultContext.vaultProgram.methods
+            .operatorDeposit(new BN(operatorBalance))
+            .accountsPartial({
                 vaultState: vaultContext.vaultStatePda,
                 vaultDepositAta: vaultContext.vaultUsdgAta,
                 operatorTokenAccount: vaultContext.operatorUsdgAta,
                 subaccount: null,
                 depositMint: vaultContext.usdgTokenMint,
                 operator: vaultContext.operator.publicKey,
-                tokenProgram: token.TOKEN_PROGRAM_ID
+                tokenProgram: token.TOKEN_PROGRAM_ID,
             })
             .signers([vaultContext.operator])
             .rpc();
 
-        const senderSharesBeforeAumIncrease = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.senderShareAta
-        )).amount
+        const senderSharesBeforeAumIncrease = (
+            await token.getAccount(vaultContext.connection, vaultContext.senderShareAta)
+        ).amount;
 
-        const senderBalanceBeforeAumIncrease = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.senderUsdgAta
-        )).amount
+        const senderBalanceBeforeAumIncrease = (
+            await token.getAccount(vaultContext.connection, vaultContext.senderUsdgAta)
+        ).amount;
 
         await vaultContext.vaultProgram.methods
             .redeem(new BN(senderSharesBeforeAumIncrease).div(new BN(2)))
@@ -231,15 +212,14 @@ describe("august-vault-operator", () => {
                 shareMint: vaultContext.shareMint,
                 depositMint: vaultContext.usdgTokenMint,
                 signer: vaultContext.deployer.publicKey,
-                tokenProgram: token.TOKEN_PROGRAM_ID
+                tokenProgram: token.TOKEN_PROGRAM_ID,
             })
             .signers([vaultContext.deployer])
             .rpc();
 
-        const senderBalanceAfterFirstRedeem = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.senderUsdgAta
-        )).amount
+        const senderBalanceAfterFirstRedeem = (
+            await token.getAccount(vaultContext.connection, vaultContext.senderUsdgAta)
+        ).amount;
 
         const delta = new BN(senderBalanceAfterFirstRedeem).sub(new BN(senderBalanceBeforeAumIncrease));
 
@@ -250,17 +230,18 @@ describe("august-vault-operator", () => {
             vaultContext.operatorUsdgAta,
             vaultContext.deployer.publicKey,
             10 * amount
-        )
+        );
 
-        await vaultContext.vaultProgram.methods.operatorDeposit(new BN(10 * amount))
-            .accounts({
+        await vaultContext.vaultProgram.methods
+            .operatorDeposit(new BN(10 * amount))
+            .accountsPartial({
                 vaultState: vaultContext.vaultStatePda,
                 vaultDepositAta: vaultContext.vaultUsdgAta,
                 operatorTokenAccount: vaultContext.operatorUsdgAta,
                 subaccount: null,
                 depositMint: vaultContext.usdgTokenMint,
                 operator: vaultContext.operator.publicKey,
-                tokenProgram: token.TOKEN_PROGRAM_ID
+                tokenProgram: token.TOKEN_PROGRAM_ID,
             })
             .signers([vaultContext.operator])
             .rpc();
@@ -281,10 +262,9 @@ describe("august-vault-operator", () => {
             .signers([vaultContext.deployer])
             .rpc();
 
-        const senderSharesAfterAumIncrease = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.senderShareAta
-        )).amount
+        const senderSharesAfterAumIncrease = (
+            await token.getAccount(vaultContext.connection, vaultContext.senderShareAta)
+        ).amount;
 
         await vaultContext.vaultProgram.methods
             .redeem(new BN(senderSharesAfterAumIncrease))
@@ -297,15 +277,14 @@ describe("august-vault-operator", () => {
                 shareMint: vaultContext.shareMint,
                 depositMint: vaultContext.usdgTokenMint,
                 signer: vaultContext.deployer.publicKey,
-                tokenProgram: token.TOKEN_PROGRAM_ID
+                tokenProgram: token.TOKEN_PROGRAM_ID,
             })
             .signers([vaultContext.deployer])
             .rpc();
 
-        const senderBalanceAfterAumIncrease = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.senderUsdgAta
-        )).amount
+        const senderBalanceAfterAumIncrease = (
+            await token.getAccount(vaultContext.connection, vaultContext.senderUsdgAta)
+        ).amount;
 
         expect(Number(senderBalanceAfterAumIncrease)).to.be.greaterThan(Number(senderBalanceAfterFirstRedeem));
     });

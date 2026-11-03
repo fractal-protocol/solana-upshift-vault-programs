@@ -739,7 +739,8 @@ fn substituted_accounts_are_refused_and_a_finalizer_cannot_redirect_the_payout()
 
     // (what, substitution, expected code)
     const HAS_ONE: u32 = 2001;
-    let cases: Vec<(&str, Box<dyn Fn(&mut Finalize)>, u32)> = vec![
+    type Substitution = Box<dyn Fn(&mut Finalize)>;
+    let cases: Vec<(&str, Substitution, u32)> = vec![
         (
             "the finalizer's own account as recipient",
             Box::new(move |a: &mut Finalize| a.recipient_token_account = keeper_assets),

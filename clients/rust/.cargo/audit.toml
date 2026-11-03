@@ -1,0 +1,21 @@
+# cargo-audit configuration for the generated client crates. Run from this
+# directory (`cargo audit --file <crate>/Cargo.lock`) so it is picked up; the
+# root .cargo/audit.toml covers the on-chain programs and stays stricter.
+#
+# Every entry is reached only through the optional `solana-sdk` feature
+# (solana-sdk 2.x -> solana-keypair -> ed25519-dalek 1.x). The default build
+# does not compile any of them. Re-evaluate when the solana-sdk pin moves.
+#
+# Enforced by the `cargo` job in .github/workflows/audit.yml (run by ci.yml
+# and on a daily schedule), which runs cargo-audit from this directory.
+
+[advisories]
+ignore = [
+    # curve25519-dalek 3.2.1: timing variability in Scalar subtraction.
+    # Fix is 4.x; solana-sdk 2.x pins 3.x through ed25519-dalek 1.x.
+    "RUSTSEC-2024-0344",
+
+    # ed25519-dalek 1.0.1: double public key signing oracle. Needs a caller
+    # that signs with a mismatched public key; the client never signs.
+    "RUSTSEC-2022-0093",
+]

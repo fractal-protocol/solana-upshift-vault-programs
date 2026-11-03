@@ -7,25 +7,25 @@
 // governed by version 2.0 of the Apache License.
 
 import * as anchor from "@coral-xyz/anchor";
-import * as token from "@solana/spl-token"
+import * as token from "@solana/spl-token";
 import * as assert from "assert";
-import {VaultContext} from "./helper/context";
-import {PublicKey} from "@solana/web3.js";
+import { VaultContext } from "./helper/context";
+import { PublicKey } from "@solana/web3.js";
 import { MIN_FIRST_DEPOSIT } from "./helper/config";
 import BN from "bn.js";
-import {expect} from "chai";
+import { expect } from "chai";
 
 describe("august-vault-users", () => {
     anchor.setProvider(anchor.AnchorProvider.env());
-    let vaultContext: VaultContext
+    let vaultContext: VaultContext;
 
     // Must clear the opening floor, which is now MIN_SUPPLY_MULTIPLE * share_offset
     // (10^8) rather than the 9-decimal mint's 10^6 — see MIN_FIRST_DEPOSIT.
-    let amount = MIN_FIRST_DEPOSIT
+    let amount = MIN_FIRST_DEPOSIT;
 
     before(async () => {
-        vaultContext = new VaultContext
-        await vaultContext.init()
+        vaultContext = new VaultContext();
+        await vaultContext.init();
 
         await token.mintTo(
             vaultContext.connection,
@@ -34,17 +34,15 @@ describe("august-vault-users", () => {
             vaultContext.senderUsdgAta,
             vaultContext.deployer.publicKey,
             2 * amount
-        )
+        );
     });
 
     after(async () => {
         //Burn all shares and get users funds back
-        const senderSharesBefore = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.senderShareAta
-        )).amount
+        const senderSharesBefore = (await token.getAccount(vaultContext.connection, vaultContext.senderShareAta))
+            .amount;
 
-        if(senderSharesBefore > 0) {
+        if (senderSharesBefore > 0) {
             await vaultContext.vaultProgram.methods
                 .redeem(new BN(senderSharesBefore))
                 .accounts({
@@ -56,23 +54,18 @@ describe("august-vault-users", () => {
                     shareMint: vaultContext.shareMint,
                     depositMint: vaultContext.usdgTokenMint,
                     signer: vaultContext.deployer.publicKey,
-                    tokenProgram: token.TOKEN_PROGRAM_ID
+                    tokenProgram: token.TOKEN_PROGRAM_ID,
                 })
                 .signers([vaultContext.deployer])
                 .rpc();
         }
-    })
+    });
 
     it("It should be possible to deposit tokens in the vault", async () => {
-        const senderBalanceBefore = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.senderUsdgAta
-        )).amount
+        const senderBalanceBefore = (await token.getAccount(vaultContext.connection, vaultContext.senderUsdgAta))
+            .amount;
 
-        const vaultBalanceBefore = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.vaultUsdgAta
-        )).amount
+        const vaultBalanceBefore = (await token.getAccount(vaultContext.connection, vaultContext.vaultUsdgAta)).amount;
 
         await vaultContext.vaultProgram.methods
             .deposit(new BN(amount))
@@ -89,18 +82,12 @@ describe("august-vault-users", () => {
             .signers([vaultContext.deployer])
             .rpc();
 
-        const senderBalanceAfter = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.senderUsdgAta
-        )).amount
+        const senderBalanceAfter = (await token.getAccount(vaultContext.connection, vaultContext.senderUsdgAta)).amount;
 
-        const vaultBalanceAfter =  (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.vaultUsdgAta
-        )).amount
+        const vaultBalanceAfter = (await token.getAccount(vaultContext.connection, vaultContext.vaultUsdgAta)).amount;
 
-        assert.equal(Number(senderBalanceBefore), Number(senderBalanceAfter) + amount)
-        assert.equal(Number(vaultBalanceBefore) + amount, Number(vaultBalanceAfter))
+        assert.equal(Number(senderBalanceBefore), Number(senderBalanceAfter) + amount);
+        assert.equal(Number(vaultBalanceBefore) + amount, Number(vaultBalanceAfter));
     });
 
     it("It should increase local_aum on deposits", async () => {
@@ -109,10 +96,8 @@ describe("august-vault-users", () => {
     });
 
     it("It should mint shares on deposits", async () => {
-        const senderSharesBefore = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.senderShareAta
-        )).amount
+        const senderSharesBefore = (await token.getAccount(vaultContext.connection, vaultContext.senderShareAta))
+            .amount;
 
         await vaultContext.vaultProgram.methods
             .deposit(new BN(amount))
@@ -129,31 +114,20 @@ describe("august-vault-users", () => {
             .signers([vaultContext.deployer])
             .rpc();
 
-        const senderSharesAfter = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.senderShareAta
-        )).amount
+        const senderSharesAfter = (await token.getAccount(vaultContext.connection, vaultContext.senderShareAta)).amount;
 
         //Same amount of token deposited
-        assert.equal(new BN(senderSharesAfter).toNumber(), new BN(senderSharesBefore).mul(new BN(2)).toNumber())
-    })
+        assert.equal(new BN(senderSharesAfter).toNumber(), new BN(senderSharesBefore).mul(new BN(2)).toNumber());
+    });
 
     it("It should be possible to redeem tokens from the vault", async () => {
-        const senderSharesBefore = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.senderShareAta
-        )).amount
+        const senderSharesBefore = (await token.getAccount(vaultContext.connection, vaultContext.senderShareAta))
+            .amount;
 
-        const senderBalanceBefore = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.senderUsdgAta
-        )).amount
+        const senderBalanceBefore = (await token.getAccount(vaultContext.connection, vaultContext.senderUsdgAta))
+            .amount;
 
-        const vaultBalanceBefore = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.vaultUsdgAta
-        )).amount
-
+        const vaultBalanceBefore = (await token.getAccount(vaultContext.connection, vaultContext.vaultUsdgAta)).amount;
 
         await vaultContext.vaultProgram.methods
             .redeem(new BN(senderSharesBefore).div(new BN(2)))
@@ -166,20 +140,14 @@ describe("august-vault-users", () => {
                 shareMint: vaultContext.shareMint,
                 depositMint: vaultContext.usdgTokenMint,
                 signer: vaultContext.deployer.publicKey,
-                tokenProgram: token.TOKEN_PROGRAM_ID
+                tokenProgram: token.TOKEN_PROGRAM_ID,
             })
             .signers([vaultContext.deployer])
             .rpc();
 
-        const senderBalanceAfter = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.senderUsdgAta
-        )).amount
+        const senderBalanceAfter = (await token.getAccount(vaultContext.connection, vaultContext.senderUsdgAta)).amount;
 
-        const vaultBalanceAfter =  (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.vaultUsdgAta
-        )).amount
+        const vaultBalanceAfter = (await token.getAccount(vaultContext.connection, vaultContext.vaultUsdgAta)).amount;
 
         expect(Number(senderBalanceAfter)).to.be.greaterThan(Number(senderBalanceBefore));
         expect(Number(vaultBalanceBefore)).to.be.greaterThan(Number(vaultBalanceAfter));
@@ -191,12 +159,9 @@ describe("august-vault-users", () => {
         assert.equal(vault.localAum, 2 * amount - amount);
     });
 
-
     it("It should burn shares on redeem", async () => {
-        const senderSharesBefore = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.senderShareAta
-        )).amount
+        const senderSharesBefore = (await token.getAccount(vaultContext.connection, vaultContext.senderShareAta))
+            .amount;
 
         await vaultContext.vaultProgram.methods
             .redeem(new BN(senderSharesBefore))
@@ -209,21 +174,19 @@ describe("august-vault-users", () => {
                 shareMint: vaultContext.shareMint,
                 depositMint: vaultContext.usdgTokenMint,
                 signer: vaultContext.deployer.publicKey,
-                tokenProgram: token.TOKEN_PROGRAM_ID
+                tokenProgram: token.TOKEN_PROGRAM_ID,
             })
             .signers([vaultContext.deployer])
             .rpc();
 
-        const senderSharesAfter = (await token.getAccount(
-            vaultContext.connection,
-            vaultContext.senderShareAta
-        )).amount
+        const senderSharesAfter = (await token.getAccount(vaultContext.connection, vaultContext.senderShareAta)).amount;
 
-        assert.equal(Number(senderSharesAfter), 0)
-    })
+        assert.equal(Number(senderSharesAfter), 0);
+    });
 
     it("It should not be possible to deposit when the vault is paused", async () => {
-        await vaultContext.vaultProgram.methods.pause()
+        await vaultContext.vaultProgram.methods
+            .pause()
             .accounts({
                 vaultState: vaultContext.vaultStatePda,
                 admin: vaultContext.admin.publicKey,
@@ -232,22 +195,26 @@ describe("august-vault-users", () => {
             .signers([vaultContext.admin])
             .rpc();
 
-        await assert.rejects(vaultContext.vaultProgram.methods.deposit(new BN(amount))
-            .accounts({
-                vaultState: vaultContext.vaultStatePda,
-                vaultTokenAta: vaultContext.vaultUsdgAta,
-                senderTokenAccount: vaultContext.senderUsdgAta,
-                senderShareAccount: vaultContext.senderShareAta,
-                shareMint: vaultContext.shareMint,
-                depositMint: vaultContext.usdgTokenMint,
-                signer: vaultContext.deployer.publicKey,
-                tokenProgram: token.TOKEN_PROGRAM_ID,
-            })
-            .signers([vaultContext.deployer])
-            .rpc());
+        await assert.rejects(
+            vaultContext.vaultProgram.methods
+                .deposit(new BN(amount))
+                .accounts({
+                    vaultState: vaultContext.vaultStatePda,
+                    vaultTokenAta: vaultContext.vaultUsdgAta,
+                    senderTokenAccount: vaultContext.senderUsdgAta,
+                    senderShareAccount: vaultContext.senderShareAta,
+                    shareMint: vaultContext.shareMint,
+                    depositMint: vaultContext.usdgTokenMint,
+                    signer: vaultContext.deployer.publicKey,
+                    tokenProgram: token.TOKEN_PROGRAM_ID,
+                })
+                .signers([vaultContext.deployer])
+                .rpc()
+        );
 
         //reset to unpause
-        await vaultContext.vaultProgram.methods.unpause()
+        await vaultContext.vaultProgram.methods
+            .unpause()
             .accounts({
                 vaultState: vaultContext.vaultStatePda,
                 admin: vaultContext.admin.publicKey,

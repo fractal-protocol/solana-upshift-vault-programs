@@ -179,7 +179,13 @@ describe("multi-vault", () => {
         it("Can initialize Vault 1 (USDC)", async () => {
             const vaultVersion = 0;
             await vaultProgram.methods
-                .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, vaultVersion, DEFAULT_SHARE_OFFSET)
+                .initialize(
+                    admin.publicKey,
+                    operator.publicKey,
+                    feeRecipient.publicKey,
+                    vaultVersion,
+                    DEFAULT_SHARE_OFFSET
+                )
                 .accounts({
                     vaultState: vault1StatePda,
                     shareMint: vault1ShareMint,
@@ -202,7 +208,13 @@ describe("multi-vault", () => {
         it("Can initialize Vault 2 (USDT) - same program, different deposit token", async () => {
             const vaultVersion = 0;
             await vaultProgram.methods
-                .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, vaultVersion, DEFAULT_SHARE_OFFSET)
+                .initialize(
+                    admin.publicKey,
+                    operator.publicKey,
+                    feeRecipient.publicKey,
+                    vaultVersion,
+                    DEFAULT_SHARE_OFFSET
+                )
                 .accounts({
                     vaultState: vault2StatePda,
                     shareMint: vault2ShareMint,
@@ -224,7 +236,13 @@ describe("multi-vault", () => {
         it("Can initialize Vault 3 (WSOL) - third vault with 9 decimals", async () => {
             const vaultVersion = 0;
             await vaultProgram.methods
-                .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, vaultVersion, DEFAULT_SHARE_OFFSET)
+                .initialize(
+                    admin.publicKey,
+                    operator.publicKey,
+                    feeRecipient.publicKey,
+                    vaultVersion,
+                    DEFAULT_SHARE_OFFSET
+                )
                 .accounts({
                     vaultState: vault3StatePda,
                     shareMint: vault3ShareMint,
@@ -255,7 +273,13 @@ describe("multi-vault", () => {
             const vaultVersion = 0;
             await assert.rejects(
                 vaultProgram.methods
-                    .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, vaultVersion, DEFAULT_SHARE_OFFSET)
+                    .initialize(
+                        admin.publicKey,
+                        operator.publicKey,
+                        feeRecipient.publicKey,
+                        vaultVersion,
+                        DEFAULT_SHARE_OFFSET
+                    )
                     .accounts({
                         vaultState: vault1StatePda,
                         shareMint: vault1ShareMint,
@@ -285,28 +309,52 @@ describe("multi-vault", () => {
         before(async () => {
             // Create ATAs for depositing (deposit mints for deployer)
             [deployerUsdcAta, deployerUsdtAta, deployerWsolAta] = await createAtasForOwner(
-                connection, deployer, [usdcMint, usdtMint, wsolMint], deployer.publicKey
+                connection,
+                deployer,
+                [usdcMint, usdtMint, wsolMint],
+                deployer.publicKey
             );
 
             // Create ATAs for share tokens (share mints for deployer)
             [deployerVault1ShareAta, deployerVault2ShareAta, deployerVault3ShareAta] = await createAtasForOwner(
-                connection, deployer, [vault1ShareMint, vault2ShareMint, vault3ShareMint], deployer.publicKey
+                connection,
+                deployer,
+                [vault1ShareMint, vault2ShareMint, vault3ShareMint],
+                deployer.publicKey
             );
 
             // Create fee recipient ATAs (deposit mints for fee recipient)
             [feeRecipientUsdcAta, feeRecipientUsdtAta, feeRecipientWsolAta] = await createAtasForOwner(
-                connection, deployer, [usdcMint, usdtMint, wsolMint], feeRecipient.publicKey
+                connection,
+                deployer,
+                [usdcMint, usdtMint, wsolMint],
+                feeRecipient.publicKey
             );
 
             // Mint tokens to deployer for deposits
             await token.mintTo(
-                connection, deployer, usdcMint, deployerUsdcAta, deployer, 10_000_000_000 // 10,000 USDC
+                connection,
+                deployer,
+                usdcMint,
+                deployerUsdcAta,
+                deployer,
+                10_000_000_000 // 10,000 USDC
             );
             await token.mintTo(
-                connection, deployer, usdtMint, deployerUsdtAta, deployer, 10_000_000_000 // 10,000 USDT
+                connection,
+                deployer,
+                usdtMint,
+                deployerUsdtAta,
+                deployer,
+                10_000_000_000 // 10,000 USDT
             );
             await token.mintTo(
-                connection, deployer, wsolMint, deployerWsolAta, deployer, 10_000_000_000_000 // 10,000 WSOL
+                connection,
+                deployer,
+                wsolMint,
+                deployerWsolAta,
+                deployer,
+                10_000_000_000_000 // 10,000 WSOL
             );
         });
 
@@ -555,18 +603,25 @@ describe("multi-vault", () => {
         before(async () => {
             // Deployer ATAs for deposit mints and share mints
             [deployerUsdcAta, deployerUsdtAta] = await createAtasForOwner(
-                connection, deployer, [usdcMint, usdtMint], deployer.publicKey
+                connection,
+                deployer,
+                [usdcMint, usdtMint],
+                deployer.publicKey
             );
             [deployerVault1ShareAta, deployerVault2ShareAta] = await createAtasForOwner(
-                connection, deployer, [vault1ShareMint, vault2ShareMint], deployer.publicKey
+                connection,
+                deployer,
+                [vault1ShareMint, vault2ShareMint],
+                deployer.publicKey
             );
 
             // Fee recipient and operator ATAs
-            [feeRecipientUsdtAta] = await createAtasForOwner(
-                connection, deployer, [usdtMint], feeRecipient.publicKey
-            );
+            [feeRecipientUsdtAta] = await createAtasForOwner(connection, deployer, [usdtMint], feeRecipient.publicKey);
             [operatorUsdcAta, operatorUsdtAta] = await createAtasForOwner(
-                connection, deployer, [usdcMint, usdtMint], operator.publicKey
+                connection,
+                deployer,
+                [usdcMint, usdtMint],
+                operator.publicKey
             );
         });
 
@@ -752,7 +807,7 @@ describe("multi-vault", () => {
             await assert.rejects(
                 vaultProgram.methods
                     .operatorWithdraw(new anchor.BN(1_000))
-                    .accounts({
+                    .accountsPartial({
                         vaultState: vault1StatePda,
                         vaultDepositAta: vault1TokenAta,
                         operatorTokenAccount: operatorUsdtAta, // Wrong token
@@ -769,14 +824,12 @@ describe("multi-vault", () => {
 
         it("Cannot operatorDeposit to Vault 1 with wrong deposit_mint", async () => {
             // Mint some tokens to operator for this test
-            await token.mintTo(
-                connection, deployer, usdtMint, operatorUsdtAta, deployer, 1_000_000
-            );
+            await token.mintTo(connection, deployer, usdtMint, operatorUsdtAta, deployer, 1_000_000);
 
             await assert.rejects(
                 vaultProgram.methods
                     .operatorDeposit(new anchor.BN(1_000))
-                    .accounts({
+                    .accountsPartial({
                         vaultState: vault1StatePda,
                         vaultDepositAta: vault1TokenAta,
                         operatorTokenAccount: operatorUsdtAta, // Wrong token
@@ -843,20 +896,16 @@ describe("multi-vault", () => {
         let operatorUsdtAta: PublicKey;
 
         before(async () => {
-            operatorUsdcAta = (await getOrCreateAssociatedTokenAccount(
-                connection, deployer, usdcMint, operator.publicKey
-            )).address;
-            operatorUsdtAta = (await getOrCreateAssociatedTokenAccount(
-                connection, deployer, usdtMint, operator.publicKey
-            )).address;
+            operatorUsdcAta = (
+                await getOrCreateAssociatedTokenAccount(connection, deployer, usdcMint, operator.publicKey)
+            ).address;
+            operatorUsdtAta = (
+                await getOrCreateAssociatedTokenAccount(connection, deployer, usdtMint, operator.publicKey)
+            ).address;
 
             // Mint tokens to operator for deposit tests
-            await token.mintTo(
-                connection, deployer, usdcMint, operatorUsdcAta, deployer, 10_000_000
-            );
-            await token.mintTo(
-                connection, deployer, usdtMint, operatorUsdtAta, deployer, 10_000_000
-            );
+            await token.mintTo(connection, deployer, usdcMint, operatorUsdcAta, deployer, 10_000_000);
+            await token.mintTo(connection, deployer, usdtMint, operatorUsdtAta, deployer, 10_000_000);
         });
 
         it("Can operatorWithdraw from Vault 1", async () => {
@@ -866,7 +915,7 @@ describe("multi-vault", () => {
             if (withdrawAmount > 0) {
                 await vaultProgram.methods
                     .operatorWithdraw(new anchor.BN(withdrawAmount))
-                    .accounts({
+                    .accountsPartial({
                         vaultState: vault1StatePda,
                         vaultDepositAta: vault1TokenAta,
                         operatorTokenAccount: operatorUsdcAta,
@@ -891,7 +940,7 @@ describe("multi-vault", () => {
 
             await vaultProgram.methods
                 .operatorDeposit(new anchor.BN(depositAmount))
-                .accounts({
+                .accountsPartial({
                     vaultState: vault1StatePda,
                     vaultDepositAta: vault1TokenAta,
                     operatorTokenAccount: operatorUsdcAta,
@@ -904,10 +953,7 @@ describe("multi-vault", () => {
                 .rpc();
 
             const vault1After = await vaultProgram.account.vaultState.fetch(vault1StatePda);
-            assert.equal(
-                vault1After.localAum.toNumber(),
-                vault1Before.localAum.toNumber() + depositAmount
-            );
+            assert.equal(vault1After.localAum.toNumber(), vault1Before.localAum.toNumber() + depositAmount);
         });
 
         it("Can operatorUpdateAum on Vault 1 without affecting Vault 2", async () => {
@@ -939,7 +985,7 @@ describe("multi-vault", () => {
             // Do operator withdraw on Vault 1
             await vaultProgram.methods
                 .operatorWithdraw(new anchor.BN(10_000))
-                .accounts({
+                .accountsPartial({
                     vaultState: vault1StatePda,
                     vaultDepositAta: vault1TokenAta,
                     operatorTokenAccount: operatorUsdcAta,
@@ -1110,9 +1156,9 @@ describe("multi-vault", () => {
                 signature: sig,
             });
 
-            vault2OperatorUsdtAta = (await getOrCreateAssociatedTokenAccount(
-                connection, deployer, usdtMint, vault2Operator.publicKey
-            )).address;
+            vault2OperatorUsdtAta = (
+                await getOrCreateAssociatedTokenAccount(connection, deployer, usdtMint, vault2Operator.publicKey)
+            ).address;
         });
 
         it("Can set different operator for Vault 2", async () => {

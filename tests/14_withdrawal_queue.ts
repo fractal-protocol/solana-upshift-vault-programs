@@ -63,8 +63,7 @@ describe("august-withdrawal-queue", () => {
     let escrowShares: PublicKey;
     let escrowAssets: PublicKey;
 
-    const balance = async (account: PublicKey): Promise<bigint> =>
-        (await token.getAccount(connection, account)).amount;
+    const balance = async (account: PublicKey): Promise<bigint> => (await token.getAccount(connection, account)).amount;
 
     const requestPda = (owner: PublicKey, id: number): PublicKey =>
         PublicKey.findProgramAddressSync(
@@ -258,8 +257,7 @@ describe("august-withdrawal-queue", () => {
             .signers([operator])
             .rpc();
 
-    const fetchRequest = (id: number) =>
-        queueProgram.account.withdrawalRequest.fetch(requestPda(user.publicKey, id));
+    const fetchRequest = (id: number) => queueProgram.account.withdrawalRequest.fetch(requestPda(user.publicKey, id));
     const fetchQueue = () => queueProgram.account.withdrawalQueue.fetch(queue);
 
     before(async () => {

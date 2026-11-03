@@ -1,0 +1,24 @@
+# cargo-audit configuration for the LiteSVM test workspace. Run from this
+# directory so it is picked up; the root .cargo/audit.toml covers the on-chain
+# programs and stays stricter.
+#
+# Test-only code: nothing here ships. Every entry comes in through litesvm and
+# the Solana runtime crates it embeds. Re-evaluate when litesvm is bumped.
+#
+# Enforced by the `cargo` job in .github/workflows/audit.yml (run by ci.yml
+# and on a daily schedule), which runs cargo-audit from this directory.
+
+[advisories]
+ignore = [
+    # curve25519-dalek 3.2.0: timing variability in Scalar subtraction.
+    # Via solana-zk-sdk and ed25519-dalek 1.x (solana-ed25519-program).
+    "RUSTSEC-2024-0344",
+
+    # ed25519-dalek 1.0.1: double public key signing oracle. Via
+    # solana-precompiles; the tests sign only with matching keypairs.
+    "RUSTSEC-2022-0093",
+
+    # crypto-bigint 0.5.5: timing variability. Via k256 (secp256k1
+    # precompile); fix is 0.7, which k256 0.13 does not accept.
+    "RUSTSEC-2026-0387",
+]
