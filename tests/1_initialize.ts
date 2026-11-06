@@ -9,20 +9,20 @@
 import * as anchor from "@coral-xyz/anchor";
 import { DEFAULT_SHARE_OFFSET } from "./helper/config";
 import * as assert from "assert";
-import {VaultContext} from "./helper/context";
+import { VaultContext } from "./helper/context";
 import * as token from "@solana/spl-token";
-import {protocolAuthority, ensureProgramConfig} from "./helper/program-config";
+import { protocolAuthority, ensureProgramConfig } from "./helper/program-config";
 
 describe("august-vault-initialize", () => {
     anchor.setProvider(anchor.AnchorProvider.env());
-    let vaultContext: VaultContext
+    let vaultContext: VaultContext;
 
     before(async () => {
-        vaultContext = new VaultContext
+        vaultContext = new VaultContext();
     });
 
     it("It should be possible to initialize the vault", async () => {
-        await vaultContext.init()
+        await vaultContext.init();
         const vault = await vaultContext.vaultProgram.account.vaultState.fetch(vaultContext.vaultStatePda);
         assert.deepEqual(vault.shareMint, vaultContext.shareMint);
         assert.deepEqual(vault.operator, vaultContext.operator.publicKey);
@@ -42,17 +42,24 @@ describe("august-vault-initialize", () => {
         const vaultVersion = 0;
         await assert.rejects(
             vaultContext.vaultProgram.methods
-                .initialize(vaultContext.admin.publicKey, vaultContext.operator.publicKey, vaultContext.feeRecipient.publicKey, vaultVersion, DEFAULT_SHARE_OFFSET)
+                .initialize(
+                    vaultContext.admin.publicKey,
+                    vaultContext.operator.publicKey,
+                    vaultContext.feeRecipient.publicKey,
+                    vaultVersion,
+                    DEFAULT_SHARE_OFFSET
+                )
                 .accounts({
                     vaultState: vaultContext.vaultStatePda,
                     shareMint: vaultContext.shareMint,
                     vaultTokenAta: vaultContext.vaultUsdgAta,
                     depositMint: vaultContext.usdgTokenMint,
                     signer: protocolAuthority.publicKey,
-                    tokenProgram: token.TOKEN_PROGRAM_ID
+                    tokenProgram: token.TOKEN_PROGRAM_ID,
                 })
                 .signers([protocolAuthority])
                 .rpc(),
-            /0x0/) // already initialized
+            /0x0/
+        ); // already initialized
     });
 });

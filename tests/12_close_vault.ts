@@ -56,7 +56,7 @@ describe("august-vault-close-vault", () => {
 
     async function initializeVault(mintDecimals: number = 9, vaultVersion: number = 0): Promise<void> {
         currentVaultVersion = vaultVersion;
-        
+
         // Create a unique deposit mint for this test
         depositMintKeypair = Keypair.generate();
         depositMint = await token.createMint(
@@ -229,7 +229,7 @@ describe("august-vault-close-vault", () => {
             // Mint tokens directly to the vault token account (simulating direct transfer)
             // First need to get the vault token account address
             const vaultTokenAccount = await token.getAccount(connection, vaultTokenAta);
-            
+
             // We need a user account to transfer from
             const userDepositAta = await token.createAssociatedTokenAccount(
                 connection,
@@ -239,24 +239,10 @@ describe("august-vault-close-vault", () => {
             );
 
             // Mint tokens to user
-            await token.mintTo(
-                connection,
-                deployer,
-                depositMint,
-                userDepositAta,
-                deployer,
-                1_000_000_000
-            );
+            await token.mintTo(connection, deployer, depositMint, userDepositAta, deployer, 1_000_000_000);
 
             // Transfer directly to vault (bypassing deposit instruction)
-            await token.transfer(
-                connection,
-                deployer,
-                userDepositAta,
-                vaultTokenAta,
-                deployer,
-                1_000_000_000
-            );
+            await token.transfer(connection, deployer, userDepositAta, vaultTokenAta, deployer, 1_000_000_000);
 
             // Verify vault has tokens
             const vaultTokenAccountAfter = await token.getAccount(connection, vaultTokenAta);
@@ -320,7 +306,13 @@ describe("august-vault-close-vault", () => {
             );
 
             await vaultProgram.methods
-                .initialize(admin.publicKey, operator.publicKey, feeRecipient.publicKey, newVersion, DEFAULT_SHARE_OFFSET)
+                .initialize(
+                    admin.publicKey,
+                    operator.publicKey,
+                    feeRecipient.publicKey,
+                    newVersion,
+                    DEFAULT_SHARE_OFFSET
+                )
                 .accounts({
                     vaultState: newVaultStatePda,
                     shareMint: newShareMint,
@@ -428,14 +420,7 @@ describe("august-vault-close-vault", () => {
 
             // Mint deposit tokens
             const depositAmount = 1_000_000_000n; // 1 token with 9 decimals
-            await token.mintTo(
-                connection,
-                deployer,
-                depositMint,
-                userDepositAta,
-                deployer,
-                depositAmount
-            );
+            await token.mintTo(connection, deployer, depositMint, userDepositAta, deployer, depositAmount);
 
             // Deposit
             await vaultProgram.methods
@@ -455,16 +440,16 @@ describe("august-vault-close-vault", () => {
 
             // Check share balance - should be approximately equal to deposit (1:1 for first deposit)
             const shareBalance = (await token.getAccount(connection, userShareAta)).amount;
-            
+
             // With matching decimals, the raw amounts should be very close
             // (there's a small difference due to the EXTRA_SHARES constant in the formula)
             const ratio = Number(shareBalance) / Number(depositAmount);
             assert.ok(ratio > 0.99 && ratio < 1.01, `Share ratio should be ~1:1, got ${ratio}`);
 
             // The display values should now match
-            const displayDeposit = Number(depositAmount) / (10 ** decimals);
-            const displayShares = Number(shareBalance) / (10 ** decimals);
-            
+            const displayDeposit = Number(depositAmount) / 10 ** decimals;
+            const displayShares = Number(shareBalance) / 10 ** decimals;
+
             assert.ok(
                 Math.abs(displayDeposit - displayShares) < 0.01,
                 `Display values should match: deposit=${displayDeposit}, shares=${displayShares}`

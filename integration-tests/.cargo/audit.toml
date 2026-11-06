@@ -1,0 +1,21 @@
+# cargo-audit ignore list for the LiteSVM test workspace.
+#
+# Test-only code: nothing here ships. Every entry comes in through litesvm and
+# the Solana runtime crates it embeds. Re-evaluate when litesvm is bumped.
+#
+# Read by .github/workflows/audit.yml.
+
+[advisories]
+ignore = [
+    # curve25519-dalek 3.2.0: timing variability in Scalar subtraction.
+    # Via solana-zk-sdk and ed25519-dalek 1.x (solana-ed25519-program).
+    "RUSTSEC-2024-0344",
+
+    # ed25519-dalek 1.0.1: double public key signing oracle. Via
+    # solana-precompiles; the tests sign only with matching keypairs.
+    "RUSTSEC-2022-0093",
+
+    # crypto-bigint 0.5.5: timing variability. Via k256 (secp256k1
+    # precompile); fix is 0.7, which k256 0.13 does not accept.
+    "RUSTSEC-2026-0387",
+]

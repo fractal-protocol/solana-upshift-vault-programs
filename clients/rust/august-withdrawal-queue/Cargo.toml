@@ -45,4 +45,4 @@ thiserror = "2.0"
 # cfgs as expected values and allow the unused warnings so `-D warnings`
 # checks stay green without hand-editing generated code.
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("serde", "fetch", "anchor", "anchor-idl-build"))'] }
-unused = "allow"
+unused = { level = "allow", priority = -1 }

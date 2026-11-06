@@ -475,14 +475,7 @@ describe("version-security", () => {
             );
 
             // Mint tokens to user
-            await token.mintTo(
-                connection,
-                deployer,
-                depositMint,
-                userDepositAta,
-                deployer,
-                10_000_000_000
-            );
+            await token.mintTo(connection, deployer, depositMint, userDepositAta, deployer, 10_000_000_000);
 
             // Create fee recipient ATA
             feeRecipientDepositAta = await token.createAssociatedTokenAccount(
@@ -698,7 +691,7 @@ describe("version-security", () => {
             await assert.rejects(
                 vaultProgram.methods
                     .operatorWithdraw(new BN(1_000))
-                    .accounts({
+                    .accountsPartial({
                         vaultState: v1StatePda, // Wrong version PDA
                         vaultDepositAta: v1TokenAta, // Wrong version
                         operatorTokenAccount: operatorDepositAta,
@@ -715,19 +708,12 @@ describe("version-security", () => {
 
         it("Cannot operatorDeposit to version 0 using version 1 state PDA", async () => {
             // Mint tokens to operator
-            await token.mintTo(
-                connection,
-                deployer,
-                depositMint,
-                operatorDepositAta,
-                deployer,
-                1_000_000
-            );
+            await token.mintTo(connection, deployer, depositMint, operatorDepositAta, deployer, 1_000_000);
 
             await assert.rejects(
                 vaultProgram.methods
                     .operatorDeposit(new BN(1_000))
-                    .accounts({
+                    .accountsPartial({
                         vaultState: v1StatePda, // Wrong version PDA
                         vaultDepositAta: v1TokenAta, // Wrong version
                         operatorTokenAccount: operatorDepositAta,
@@ -1000,14 +986,7 @@ describe("version-security", () => {
                 );
 
                 // Mint tokens
-                await token.mintTo(
-                    connection,
-                    deployer,
-                    depositMint,
-                    userDepositAta,
-                    deployer,
-                    10_000_000_000
-                );
+                await token.mintTo(connection, deployer, depositMint, userDepositAta, deployer, 10_000_000_000);
 
                 // Create fee recipient ATA
                 feeRecipientAta = await token.createAssociatedTokenAccount(

@@ -1,0 +1,18 @@
+# cargo-audit ignore list for the generated client crates.
+#
+# Every entry is reached only through the optional `solana-sdk` feature
+# (solana-sdk 2.x -> solana-keypair -> ed25519-dalek 1.x). The default build
+# does not compile any of them. Re-evaluate when the solana-sdk pin moves.
+#
+# Read by .github/workflows/audit.yml.
+
+[advisories]
+ignore = [
+    # curve25519-dalek 3.2.1: timing variability in Scalar subtraction.
+    # Fix is 4.x; solana-sdk 2.x pins 3.x through ed25519-dalek 1.x.
+    "RUSTSEC-2024-0344",
+
+    # ed25519-dalek 1.0.1: double public key signing oracle. Needs a caller
+    # that signs with a mismatched public key; the client never signs.
+    "RUSTSEC-2022-0093",
+]

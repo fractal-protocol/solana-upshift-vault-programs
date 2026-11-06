@@ -15,6 +15,10 @@ concurrency:
     group: ${{ github.workflow }}-${{ github.ref }}
     cancel-in-progress: true
 
+# Jobs that need more (the `changes` filter) widen it themselves.
+permissions:
+    contents: read
+
 env:
     # 4.x for SBPFv3. Matches the Solana release in the verifiable-build image.
     SOLANA_VERSION: "4.3.0"
@@ -31,8 +35,10 @@ jobs:
         outputs:
             code: ${{ steps.filter.outputs.code }}
         steps:
-            - uses: actions/checkout@v4
-            - uses: dorny/paths-filter@v3
+            - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+              with:
+                  persist-credentials: false
+            - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3.0.4
               id: filter
               with:
                   filters: |
@@ -46,9 +52,12 @@ jobs:
         name: Rustfmt
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v4
-            - uses: dtolnay/rust-toolchain@stable
+            - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
               with:
+                  persist-credentials: false
+            - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+              with:
+                  toolchain: stable
                   components: rustfmt
             # `--all` only covers the root workspace (programs/*). The
             # integration-tests and clients/rust workspaces are excluded from it,
@@ -76,24 +85,31 @@ jobs:
         name: References resolve
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v4
-            - uses: actions/setup-node@v4
+            - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+              with:
+                  persist-credentials: false
+            - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
               with:
                   node-version: 20
             - name: Assert imports and documented script paths resolve
               run: node scripts/check-references.mjs
 
+    # Root workspace only. The client crates are linted in `client-check`, and
+    # integration-tests in `test` (its build.rs needs the SBF toolchain).
     clippy:
         name: Clippy
         runs-on: ubuntu-latest
         needs: changes
         if: needs.changes.outputs.code == 'true'
         steps:
-            - uses: actions/checkout@v4
-            - uses: dtolnay/rust-toolchain@stable
+            - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
               with:
+                  persist-credentials: false
+            - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+              with:
+                  toolchain: stable
                   components: clippy
-            - uses: actions/cache@v4
+            - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
               with:
                   path: |
                       ~/.cargo/registry/index/
@@ -116,14 +132,51 @@ jobs:
 
     security:
         name: Security Audit
+        uses: ./.github/workflows/audit.yml
+
+    js:
+        name: JS/TS format
+        runs-on: ubuntu-latest
+        needs: changes
+        if: needs.changes.outputs.code == 'true'
+        steps:
+            - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+              with:
+                  persist-credentials: false
+            - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+            - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+              with:
+                  node-version: "20"
+                  cache: pnpm
+            - run: pnpm install --frozen-lockfile
+            # Typechecking needs target/types from the SBF build, so it runs in `test`.
+            - name: Prettier
+              run: pnpm lint
+
+    workflow-lint:
+        name: Workflow lint
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v4
-            # Reads the ignore-list in .cargo/audit.toml (known unmaintained/
-            # unsound transitive advisories from the Solana/SPL stack).
-            - uses: rustsec/audit-check@v2
+            - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
               with:
-                  token: ${{ secrets.GITHUB_TOKEN }}
+                  persist-credentials: false
+            - name: actionlint
+              # Pinned version and a digest hard-coded here: a checksums file from
+              # the same release would be replaced along with the tarball.
+              run: |
+                  set -euo pipefail
+                  v=1.7.12
+                  curl -sSfL -o actionlint.tgz "https://github.com/rhysd/actionlint/releases/download/v${v}/actionlint_${v}_linux_amd64.tar.gz"
+                  echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  actionlint.tgz" | sha256sum -c -
+                  tar xzf actionlint.tgz actionlint
+                  ./actionlint -color
+            - name: zizmor
+              uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
+              with:
+                  version: 1.32.0
+                  # Plain findings in the log; SARIF upload would need
+                  # security-events: write on every PR.
+                  advanced-security: false
 
     client-check:
         name: Generated Client Check
@@ -131,9 +184,13 @@ jobs:
         needs: changes
         if: needs.changes.outputs.code == 'true'
         steps:
-            - uses: actions/checkout@v4
-            - uses: dtolnay/rust-toolchain@stable
-            - uses: actions/cache@v4
+            - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+              with:
+                  persist-credentials: false
+            - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+              with:
+                  toolchain: stable
+            - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
               with:
                   path: |
                       ~/.cargo/registry/index/
@@ -154,8 +211,15 @@ jobs:
             # guarantee as soon as it has a test to dodge.
             - name: cargo test (all features)
               run: |
-                  cargo test --all-features --locked --manifest-path clients/rust/august-vault/Cargo.toml
-                  cargo test --all-features --locked --manifest-path clients/rust/august-withdrawal-queue/Cargo.toml
+                  for m in clients/rust/*/Cargo.toml; do
+                    cargo test --all-features --locked --manifest-path "$m"
+                  done
+            # No allow flags: each crate's [lints] table already allows what Codama emits.
+            - name: Clippy (all features)
+              run: |
+                  for m in clients/rust/*/Cargo.toml; do
+                    cargo clippy --all-targets --all-features --locked --manifest-path "$m" -- -D warnings
+                  done
 
     test:
         name: Build & Test
@@ -166,23 +230,27 @@ jobs:
             SCCACHE_GHA_ENABLED: "true"
             RUSTC_WRAPPER: "sccache"
         steps:
-            - uses: actions/checkout@v4
-            - uses: dtolnay/rust-toolchain@stable
-            - uses: mozilla-actions/sccache-action@v0.0.9
+            - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+              with:
+                  persist-credentials: false
+            - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+              with:
+                  toolchain: stable
+            - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
 
             - name: Cache Solana CLI
               id: cache-solana
-              uses: actions/cache@v4
+              uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
               with:
                   path: ~/.local/share/solana/install
                   key: ${{ runner.os }}-solana-${{ env.SOLANA_VERSION }}
             - name: Cache Anchor CLI
               id: cache-anchor
-              uses: actions/cache@v4
+              uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
               with:
                   path: ~/.cargo/bin/anchor
                   key: ${{ runner.os }}-anchor-${{ env.ANCHOR_VERSION }}
-            - uses: actions/cache@v4
+            - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
               with:
                   path: |
                       ~/.cargo/registry/index/
@@ -196,20 +264,16 @@ jobs:
               if: steps.cache-solana.outputs.cache-hit != 'true'
               run: sh -c "$(curl -sSfL https://release.anza.xyz/v${{ env.SOLANA_VERSION }}/install)"
             - name: Add Solana to PATH
-              run: echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+              run: echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
             - name: Install Anchor CLI
               if: steps.cache-anchor.outputs.cache-hit != 'true'
               run: cargo install --git https://github.com/coral-xyz/anchor --tag v${{ env.ANCHOR_VERSION }} anchor-cli --locked
 
-            - uses: actions/setup-node@v4
+            - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+            - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
               with:
                   node-version: "20"
-            - uses: pnpm/action-setup@v4
-            - uses: actions/cache@v4
-              with:
-                  path: ~/.pnpm-store
-                  key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
-                  restore-keys: ${{ runner.os }}-pnpm-
+                  cache: pnpm
             - name: Install JS deps
               run: pnpm install --frozen-lockfile
 
@@ -243,6 +307,22 @@ jobs:
                     [ "$SZ" -le 1400000 ] || echo "::warning::${prog}.so exceeds 1.4MB ($SZ bytes)"
                   done
 
+            # Phase 1 only: the IDL embeds the program id, which phase 2 rewrites.
+            - name: Generated clients match the IDL
+              run: |
+                  set -euo pipefail
+                  pnpm generate-clients
+                  if [ -n "$(git status --porcelain -- clients/)" ]; then
+                    git status --short -- clients/
+                    git diff --stat -- clients/
+                    echo "::error::clients/ is stale. Run 'pnpm generate-clients' after the build and commit the result."
+                    exit 1
+                  fi
+
+            # Needs target/types from the build above.
+            - name: Typecheck TS tests
+              run: pnpm typecheck
+
             - name: Rust unit tests (program-side math)
               # --workspace so a new program's unit tests are picked up without
               # editing this step.
@@ -256,6 +336,10 @@ jobs:
             # this was safe only because `anchor build` happened to run above.
             - name: LiteSVM integration tests (incl. mainnet-fork layout guard)
               run: cargo test --manifest-path integration-tests/Cargo.toml --tests --locked
+
+            # Before phase 2, which rewrites program sources.
+            - name: Clippy (integration-tests)
+              run: cargo clippy --manifest-path integration-tests/Cargo.toml --all-targets --all-features --locked -- -D warnings
 
             # Phase 2 — the real mainnet program keypair isn't in the repo, so
             # rewrite declare_id! to a fresh localnet keypair and rebuild before
@@ -334,11 +418,15 @@ jobs:
         needs: changes
         if: needs.changes.outputs.code == 'true'
         steps:
-            - uses: actions/checkout@v4
-            - uses: dtolnay/rust-toolchain@stable
+            - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+              with:
+                  persist-credentials: false
+            - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+              with:
+                  toolchain: stable
             - name: Cache solana-verify
               id: cache-sv
-              uses: actions/cache@v4
+              uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
               with:
                   path: ~/.cargo/bin/solana-verify
                   key: solana-verify-0.5.1
@@ -381,7 +469,8 @@ jobs:
                   # Compare the SET of packages, not how many rows there were: two
                   # august_vault rows and no queue row would satisfy a count, verify
                   # the vault twice, and let an unpinned queue binary through.
-                  expected=$(ls -d programs/*/ | xargs -n1 basename | tr '-' '_' | sort | tr '\n' ' ')
+                  expected=$(for d in programs/*/; do basename "$d"; done | tr '-' '_' | sort | tr '\n' ' ')
+                  # shellcheck disable=SC2086 # split on purpose: one package per line
                   pinned=$(printf '%s\n' $seen | sort | tr '\n' ' ')
                   if [ "$pinned" != "$expected" ]; then
                     echo "::error::verified-hashes.txt pins [$pinned] but programs/ holds [$expected] — every program needs exactly one row."
@@ -397,7 +486,7 @@ jobs:
         name: CI Pass
         if: always()
         runs-on: ubuntu-latest
-        needs: [changes, references, fmt, clippy, security, client-check, test, reproducible-build]
+        needs: [changes, references, fmt, clippy, security, js, workflow-lint, client-check, test, reproducible-build]
         steps:
             - name: Check results
               run: |

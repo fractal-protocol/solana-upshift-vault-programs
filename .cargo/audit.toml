@@ -9,7 +9,7 @@
 # Solana, and remove any entry whose underlying crate version is no longer in
 # Cargo.lock.
 #
-# Enforced by the `security` job in .github/workflows/ci.yml.
+# Read by .github/workflows/audit.yml.
 
 [advisories]
 ignore = [

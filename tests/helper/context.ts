@@ -8,40 +8,40 @@
 
 import * as anchor from "@coral-xyz/anchor";
 import { DEFAULT_SHARE_OFFSET } from "./config";
-import {Program} from "@coral-xyz/anchor";
-import {AugustVault} from "../../target/types/august_vault";
-import {PublicKey, LAMPORTS_PER_SOL, Connection, Keypair, SystemProgram} from "@solana/web3.js";
-import {sha256} from "js-sha256"
-import {protocolAuthority, ensureProgramConfig} from "./program-config";
-import * as token from "@solana/spl-token"
-import {getOrCreateAssociatedTokenAccount} from "@solana/spl-token";
+import { Program } from "@coral-xyz/anchor";
+import { AugustVault } from "../../target/types/august_vault";
+import { PublicKey, LAMPORTS_PER_SOL, Connection, Keypair, SystemProgram } from "@solana/web3.js";
+import { sha256 } from "js-sha256";
+import { protocolAuthority, ensureProgramConfig } from "./program-config";
+import * as token from "@solana/spl-token";
+import { getOrCreateAssociatedTokenAccount } from "@solana/spl-token";
 
 export class VaultContext {
-    public connection: Connection
-    public vaultProgram: anchor.Program<AugustVault>
-    public vaultStatePda: PublicKey
-    public nominatedAdminPda: PublicKey
+    public connection: Connection;
+    public vaultProgram: anchor.Program<AugustVault>;
+    public vaultStatePda: PublicKey;
+    public nominatedAdminPda: PublicKey;
 
-    public deployer: Keypair
-    public operator: Keypair
-    public admin: Keypair
-    public feeRecipient: Keypair
-    public usdgMintKeyPair: Keypair
+    public deployer: Keypair;
+    public operator: Keypair;
+    public admin: Keypair;
+    public feeRecipient: Keypair;
+    public usdgMintKeyPair: Keypair;
 
-    public shareMint: PublicKey
-    public usdgTokenMint: PublicKey
+    public shareMint: PublicKey;
+    public usdgTokenMint: PublicKey;
 
-    public vaultUsdgAta: PublicKey
-    public senderShareAta: PublicKey
-    public senderUsdgAta: PublicKey
-    public operatorUsdgAta: PublicKey
-    public feeRecipientUsdgAta: PublicKey
+    public vaultUsdgAta: PublicKey;
+    public senderShareAta: PublicKey;
+    public senderUsdgAta: PublicKey;
+    public operatorUsdgAta: PublicKey;
+    public feeRecipientUsdgAta: PublicKey;
 
     async init() {
-        anchor.setProvider(anchor.AnchorProvider.env())
-        this.connection = anchor.getProvider().connection
+        anchor.setProvider(anchor.AnchorProvider.env());
+        this.connection = anchor.getProvider().connection;
 
-        await this.init_wallet_context()
+        await this.init_wallet_context();
 
         // Initialize program reference first
         this.vaultProgram = anchor.workspace.augustVault as Program<AugustVault>;
@@ -64,18 +64,18 @@ export class VaultContext {
         );
 
         if ((await this.vaultProgram.account.vaultState.fetchNullable(this.vaultStatePda)) == null)
-            await this.airdrop()
+            await this.airdrop();
 
-        await this.init_deposit_mint()
+        await this.init_deposit_mint();
 
         // Derive PDAs before initializing vault
-        await this.init_token_mint_context()
-        await this.init_vault_usdg_ata()
+        await this.init_token_mint_context();
+        await this.init_vault_usdg_ata();
 
         if ((await this.vaultProgram.account.vaultState.fetchNullable(this.vaultStatePda)) == null)
-            await this.init_vault()
+            await this.init_vault();
 
-        await this.init_sender_ata()
+        await this.init_sender_ata();
     }
 
     async init_wallet_context() {
@@ -95,15 +95,15 @@ export class VaultContext {
                 this.deployer.publicKey,
                 9,
                 this.usdgMintKeyPair
-            )
+            );
         } else {
-            this.usdgTokenMint = (await token.getMint(this.connection, this.usdgMintKeyPair.publicKey)).address
+            this.usdgTokenMint = (await token.getMint(this.connection, this.usdgMintKeyPair.publicKey)).address;
         }
     }
 
     async airdrop() {
-        const sig0 = await this.connection.requestAirdrop(this.deployer.publicKey, 4200 * LAMPORTS_PER_SOL)
-        const sig1 = await this.connection.requestAirdrop(this.operator.publicKey, 4200 * LAMPORTS_PER_SOL)
+        const sig0 = await this.connection.requestAirdrop(this.deployer.publicKey, 4200 * LAMPORTS_PER_SOL);
+        const sig1 = await this.connection.requestAirdrop(this.operator.publicKey, 4200 * LAMPORTS_PER_SOL);
 
         const latestBlockHash = await this.connection.getLatestBlockhash();
 
@@ -124,18 +124,14 @@ export class VaultContext {
         const vaultVersion = 0;
         [this.shareMint] = anchor.web3.PublicKey.findProgramAddressSync(
             [Buffer.from("mint"), this.usdgTokenMint.toBuffer(), Buffer.from([vaultVersion])],
-            this.vaultProgram.programId,
+            this.vaultProgram.programId
         );
     }
 
     async init_vault_usdg_ata() {
         const vaultVersion = 0;
         [this.vaultUsdgAta] = anchor.web3.PublicKey.findProgramAddressSync(
-            [
-                Buffer.from("token_vault"),
-                this.usdgTokenMint.toBuffer(),
-                Buffer.from([vaultVersion]),
-            ],
+            [Buffer.from("token_vault"), this.usdgTokenMint.toBuffer(), Buffer.from([vaultVersion])],
             this.vaultProgram.programId
         );
     }
@@ -143,49 +139,64 @@ export class VaultContext {
     // Vault context is now initialized in init() method with deposit_mint-based PDA derivation
 
     async init_sender_ata() {
-        this.senderUsdgAta = (await getOrCreateAssociatedTokenAccount(
-            this.connection,
-            this.deployer,
-            this.usdgTokenMint,
-            this.deployer.publicKey
-        )).address
+        this.senderUsdgAta = (
+            await getOrCreateAssociatedTokenAccount(
+                this.connection,
+                this.deployer,
+                this.usdgTokenMint,
+                this.deployer.publicKey
+            )
+        ).address;
 
-        this.senderShareAta = (await getOrCreateAssociatedTokenAccount(
-            this.connection,
-            this.deployer,
-            this.shareMint,
-            this.deployer.publicKey
-        )).address
+        this.senderShareAta = (
+            await getOrCreateAssociatedTokenAccount(
+                this.connection,
+                this.deployer,
+                this.shareMint,
+                this.deployer.publicKey
+            )
+        ).address;
 
-        this.operatorUsdgAta = (await getOrCreateAssociatedTokenAccount(
-            this.connection,
-            this.operator,
-            this.usdgTokenMint,
-            this.operator.publicKey
-        )).address
+        this.operatorUsdgAta = (
+            await getOrCreateAssociatedTokenAccount(
+                this.connection,
+                this.operator,
+                this.usdgTokenMint,
+                this.operator.publicKey
+            )
+        ).address;
 
-        this.feeRecipientUsdgAta = (await getOrCreateAssociatedTokenAccount(
-            this.connection,
-            this.deployer,
-            this.usdgTokenMint,
-            this.feeRecipient.publicKey
-        )).address
+        this.feeRecipientUsdgAta = (
+            await getOrCreateAssociatedTokenAccount(
+                this.connection,
+                this.deployer,
+                this.usdgTokenMint,
+                this.feeRecipient.publicKey
+            )
+        ).address;
     }
 
     async init_vault() {
         // Vault creation is gated on the ProgramConfig authority.
         await ensureProgramConfig(this.vaultProgram);
         const vaultVersion = 0;
-        await this.vaultProgram.methods.initialize(this.admin.publicKey, this.operator.publicKey, this.feeRecipient.publicKey, vaultVersion, DEFAULT_SHARE_OFFSET)
+        await this.vaultProgram.methods
+            .initialize(
+                this.admin.publicKey,
+                this.operator.publicKey,
+                this.feeRecipient.publicKey,
+                vaultVersion,
+                DEFAULT_SHARE_OFFSET
+            )
             .accounts({
                 vaultState: this.vaultStatePda,
                 shareMint: this.shareMint,
                 vaultTokenAta: this.vaultUsdgAta,
                 depositMint: this.usdgTokenMint,
                 signer: protocolAuthority.publicKey,
-                tokenProgram: token.TOKEN_PROGRAM_ID
+                tokenProgram: token.TOKEN_PROGRAM_ID,
             })
             .signers([protocolAuthority])
-            .rpc()
+            .rpc();
     }
 }

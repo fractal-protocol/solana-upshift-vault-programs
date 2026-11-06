@@ -10,8 +10,8 @@ import * as anchor from "@coral-xyz/anchor";
 
 export const token_mint_mainnet = {
     wsol: "So11111111111111111111111111111111111111112",
-    usdg: "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH"
-}
+    usdg: "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH",
+};
 
 /**
  * Share offset used by the test vaults, matching the program's `EXTRA_SHARES`

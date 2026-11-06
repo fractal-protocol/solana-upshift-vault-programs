@@ -1,0 +1,20 @@
+# Paths that decide what reaches mainnet. Review is required only once branch
+# protection turns on "Require review from Code Owners".
+
+# Program source, build profile and toolchain: all change the bytecode.
+/programs/                   @gr-august @ae2212 @cjeva10
+/verified-hashes.txt         @gr-august @ae2212 @cjeva10
+/Cargo.toml                  @gr-august @ae2212 @cjeva10
+/Cargo.lock                  @gr-august @ae2212 @cjeva10
+/rust-toolchain.toml         @gr-august @ae2212 @cjeva10
+/Anchor.toml                 @gr-august @ae2212 @cjeva10
+
+# Deploy scripts and the npm packages they load while holding the deployer key.
+/deploy/                     @gr-august @ae2212 @cjeva10
+/package.json                @gr-august @ae2212 @cjeva10
+/pnpm-lock.yaml              @gr-august @ae2212 @cjeva10
+/.npmrc                      @gr-august @ae2212 @cjeva10
+
+# CI and release workflows, and the audit ignore lists.
+/.github/                    @gr-august @ae2212 @cjeva10
+.cargo/                      @gr-august @ae2212 @cjeva10
