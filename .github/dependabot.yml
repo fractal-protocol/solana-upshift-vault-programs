@@ -19,9 +19,21 @@ updates:
           interval: weekly
       cooldown:
           default-days: 7
+      # Only minor/patch bumps are grouped. Each major gets its own PR so a
+      # breaking upgrade can't block (or hide inside) the routine ones.
       groups:
           npm:
               patterns: ["*"]
+              update-types: ["minor", "patch"]
+      ignore:
+          # web3.js 2+/3 is the Kit-based API; Anchor 0.32 is built on 1.x.
+          # Revisit when Anchor moves off web3.js 1.
+          - dependency-name: "@solana/web3.js"
+            update-types: ["version-update:semver-major"]
+          # TypeScript 7 (native compiler) fails on the @solana/* type
+          # declarations (CryptoKey/CryptoKeyPair). Revisit when upstream fixes them.
+          - dependency-name: "typescript"
+            update-types: ["version-update:semver-major"]
 
     # Host-side workspaces only. Nothing here reaches the on-chain bytecode.
     - package-ecosystem: cargo
@@ -36,6 +48,18 @@ updates:
       groups:
           cargo-host:
               patterns: ["*"]
+              update-types: ["minor", "patch"]
+      ignore:
+          # integration-tests depends on the programs by path, so Dependabot
+          # also rewrites anchor in programs/*/Cargo.toml when it bumps it here.
+          # That changes the bytecode, which only an upgrade ceremony may do.
+          - dependency-name: "anchor-*"
+          # The Solana/SPL majors have to move with Anchor; a lone bump here
+          # just breaks the build against anchor's own solana types.
+          - dependency-name: "solana-*"
+            update-types: ["version-update:semver-major"]
+          - dependency-name: "spl-*"
+            update-types: ["version-update:semver-major"]
 
     # The programs. Any lockfile change alters the bytecode, invalidates
     # verified-hashes.txt and needs an upgrade ceremony, so routine version
