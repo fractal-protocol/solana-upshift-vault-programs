@@ -19,9 +19,21 @@ updates:
           interval: weekly
       cooldown:
           default-days: 7
+      # Only minor/patch bumps are grouped. Each major gets its own PR so a
+      # breaking upgrade can't block (or hide inside) the routine ones.
       groups:
           npm:
               patterns: ["*"]
+              update-types: ["minor", "patch"]
+      ignore:
+          # web3.js 2+/3 is the Kit-based API; Anchor 0.32 is built on 1.x.
+          # Revisit when Anchor moves off web3.js 1.
+          - dependency-name: "@solana/web3.js"
+            update-types: ["version-update:semver-major"]
+          # TypeScript 7 (native compiler) fails on the @solana/* type
+          # declarations (CryptoKey/CryptoKeyPair). Revisit when upstream fixes them.
+          - dependency-name: "typescript"
+            update-types: ["version-update:semver-major"]
 
     # Host-side workspaces only. Nothing here reaches the on-chain bytecode.
     - package-ecosystem: cargo
