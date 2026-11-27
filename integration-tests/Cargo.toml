@@ -45,8 +45,8 @@ deprecated = "allow"
 [dependencies]
 august-vault = { path = "../programs/august-vault", features = ["no-entrypoint"] }
 august-withdrawal-queue = { path = "../programs/august-withdrawal-queue", features = ["no-entrypoint"] }
-anchor-lang = "0.31.1"
-anchor-spl = "0.31.1"
+anchor-lang = "1.0.3"
+anchor-spl = "1.0.3"
 # 0.18 is the first line that runs SBPFv3 bytecode. It speaks the Solana 3/4
 # types, while everything else here (anchor 0.31, spl, solana-sdk) is on 2.x;
 # src/svm.rs converts at that one boundary, which is all the crates below are for.
@@ -55,20 +55,20 @@ solana-account-v4 = { package = "solana-account", version = "4.3" }
 solana-address-v2 = { package = "solana-address", version = "2.7" }
 solana-transaction-v4 = { package = "solana-transaction", version = "4.1", features = ["serde"] }
 solana-transaction-error-v3 = { package = "solana-transaction-error", version = "3.4", features = ["serde"] }
-bincode = "1"
+bincode = "3"
 serde = "1"
 # Same major as the program crate's dependency; provides the program ID and
 # account deserializers for the share-token-metadata tests.
 mpl-token-metadata = "5.1.1"
-solana-sdk = "2.2.1"
-spl-token = "8.0.0"
-spl-token-2022 = "8.0.1"
-spl-associated-token-account = "6"
+solana-sdk = "5.0.0"
+spl-token = "9.0.0"
+spl-token-2022 = "11.0.0"
+spl-associated-token-account = "8"
 # Decodes `Program data:` logs so the harness can hand tests their emitted events.
-base64 = "0.21"
+base64 = "0.22"
 
 [dev-dependencies]
 proptest = "1"
 # Only for svm.rs's BorshIoError recode test.
-solana-instruction-error = "2.5"
+solana-instruction-error = "3.1"
 test-case = "3.3.1"
